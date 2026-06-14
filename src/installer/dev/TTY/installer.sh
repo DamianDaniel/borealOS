@@ -256,7 +256,7 @@ configure_system() {
         uname="${entry%%|*}"
         upass="${entry##*|}"
         USERS_SCRIPT+="useradd -m -G sudo,audio,video,netdev -s ${SHELL_BIN} ${uname} || true"$'\n'
-        USERS_SCRIPT+="echo '${uname}:${upass}' | chpasswd || die 'Failed to set password for ${uname}'"$'\n'
+        USERS_SCRIPT+="echo '${uname}:${upass}' | chpasswd || { echo ERROR: chpasswd failed for ${uname}; exit 1; }"$'\n'
     done
 
     NET_SCRIPT=""
@@ -293,8 +293,15 @@ chmod 600 /etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
     fi
 
     cp /usr/sbin/locale-gen /mnt/usr/sbin/locale-gen 2>/dev/null || true
-    cp -r /usr/share/i18n /mnt/usr/share/i18n 2>/dev/null || true
     cp /usr/bin/localedef /mnt/usr/bin/localedef 2>/dev/null || true
+    cp -r /usr/share/i18n /mnt/usr/share/i18n 2>/dev/null || true
+    cp -r /usr/share/locale /mnt/usr/share/locale 2>/dev/null || true
+    cp /usr/bin/chpasswd /mnt/usr/bin/chpasswd 2>/dev/null || true
+    cp /usr/sbin/chpasswd /mnt/usr/sbin/chpasswd 2>/dev/null || true
+    cp -r /lib/x86_64-linux-gnu/libpam*.so* /mnt/lib/x86_64-linux-gnu/ 2>/dev/null || true
+    cp -r /lib/x86_64-linux-gnu/security /mnt/lib/x86_64-linux-gnu/security 2>/dev/null || true
+    cp -r /etc/pam.d /mnt/etc/pam.d 2>/dev/null || true
+    grep -q 'netdev' /mnt/etc/group || echo 'netdev:x:999:' >> /mnt/etc/group
 
     chroot /mnt /bin/bash <<CHROOT || die "System configuration in chroot failed"
 set -e
