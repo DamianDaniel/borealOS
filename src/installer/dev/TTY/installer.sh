@@ -245,18 +245,45 @@ configure_network() {
 }
 
 configure_system() {
-    step "Configuring system..."
+    step "Copying required tools into target..."
 
     for d in dev proc sys run; do
         mount --bind /$d /mnt/$d || die "Failed to bind mount /$d"
     done
 
+    cp /usr/sbin/locale-gen          /mnt/usr/sbin/locale-gen          2>/dev/null || true
+    cp /usr/bin/localedef            /mnt/usr/bin/localedef            2>/dev/null || true
+    cp -r /usr/share/i18n            /mnt/usr/share/i18n               2>/dev/null || true
+    cp /usr/share/locale/locale.alias /mnt/usr/share/locale/locale.alias 2>/dev/null || true
+
+    for grub_bin in grub-install grub-mkconfig update-grub; do
+        src=$(command -v $grub_bin 2>/dev/null)
+        [ -n "$src" ] && cp "$src" /mnt/usr/sbin/$grub_bin 2>/dev/null || true
+    done
+    [ -d /usr/lib/grub ] && cp -r /usr/lib/grub /mnt/usr/lib/grub 2>/dev/null || true
+    [ -d /usr/share/grub ] && cp -r /usr/share/grub /mnt/usr/share/grub 2>/dev/null || true
+
+    for bin in parted mkfs.fat mkfs.ext4 dosfsck; do
+        src=$(command -v $bin 2>/dev/null)
+        [ -n "$src" ] && cp "$src" /mnt/usr/sbin/$bin 2>/dev/null || true
+    done
+
+    if [ "$SHELL_BIN" = "/usr/bin/fish" ]; then
+        src=$(command -v fish 2>/dev/null)
+        [ -n "$src" ] && cp "$src" /mnt/usr/bin/fish || die "fish not found in live env"
+        [ -d /usr/share/fish ] && cp -r /usr/share/fish /mnt/usr/share/fish 2>/dev/null || true
+    fi
+
+    grep -q 'netdev' /mnt/etc/group || echo 'netdev:x:999:' >> /mnt/etc/group
+
+    step "Configuring system..."
+
     USERS_SCRIPT=""
     for entry in "${EXTRA_USERS[@]}"; do
         uname="${entry%%|*}"
         upass="${entry##*|}"
-        USERS_SCRIPT+="useradd -m -G sudo,audio,video,netdev -s ${SHELL_BIN} ${uname} || true"$'\n'
-        USERS_SCRIPT+="echo '${uname}:${upass}' | chpasswd || { echo ERROR: chpasswd failed for ${uname}; exit 1; }"$'\n'
+        USERS_SCRIPT+="useradd -m -G sudo,audio,video -s ${SHELL_BIN} ${uname} || true"$'\n'
+        USERS_SCRIPT+="echo \'${uname}:${upass}\' | chpasswd || { echo chpasswd failed for ${uname}; exit 1; }"$'\n'
     done
 
     NET_SCRIPT=""
@@ -291,17 +318,6 @@ NMC
 chmod 600 /etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
         fi
     fi
-
-    cp /usr/sbin/locale-gen /mnt/usr/sbin/locale-gen 2>/dev/null || true
-    cp /usr/bin/localedef /mnt/usr/bin/localedef 2>/dev/null || true
-    cp -r /usr/share/i18n /mnt/usr/share/i18n 2>/dev/null || true
-    cp -r /usr/share/locale /mnt/usr/share/locale 2>/dev/null || true
-    cp /usr/bin/chpasswd /mnt/usr/bin/chpasswd 2>/dev/null || true
-    cp /usr/sbin/chpasswd /mnt/usr/sbin/chpasswd 2>/dev/null || true
-    cp -r /lib/x86_64-linux-gnu/libpam*.so* /mnt/lib/x86_64-linux-gnu/ 2>/dev/null || true
-    cp -r /lib/x86_64-linux-gnu/security /mnt/lib/x86_64-linux-gnu/security 2>/dev/null || true
-    cp -r /etc/pam.d /mnt/etc/pam.d 2>/dev/null || true
-    grep -q 'netdev' /mnt/etc/group || echo 'netdev:x:999:' >> /mnt/etc/group
 
     chroot /mnt /bin/bash <<CHROOT || die "System configuration in chroot failed"
 set -e
@@ -341,18 +357,15 @@ echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 
-
 echo "root:$ROOT_PASS" | chpasswd
 $USERS_SCRIPT
 $NET_SCRIPT
 
-update-rc.d NetworkManager defaults 2>/dev/null || \
-    ln -sf /etc/init.d/NetworkManager /etc/rc2.d/S99NetworkManager || true
+update-rc.d NetworkManager defaults 2>/dev/null || ln -sf /etc/init.d/NetworkManager /etc/rc2.d/S99NetworkManager 2>/dev/null || true
 
 case "$DE_CHOICE" in
     "KDE Plasma")
-        update-rc.d sddm defaults 2>/dev/null || \
-            ln -sf /etc/init.d/sddm /etc/rc2.d/S99sddm || true
+        update-rc.d sddm defaults 2>/dev/null || ln -sf /etc/init.d/sddm /etc/rc2.d/S99sddm || true
         mkdir -p /etc/sddm.conf.d
         cat > /etc/sddm.conf.d/borealos.conf <<SDDM
 [General]
@@ -362,8 +375,7 @@ Background=/usr/share/wallpapers/BorealOS/default.png
 SDDM
         ;;
     "XFCE")
-        update-rc.d lightdm defaults 2>/dev/null || \
-            ln -sf /etc/init.d/lightdm /etc/rc2.d/S99lightdm || true
+        update-rc.d lightdm defaults 2>/dev/null || ln -sf /etc/init.d/lightdm /etc/rc2.d/S99lightdm || true
         mkdir -p /etc/lightdm
         cat >> /etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
@@ -398,7 +410,7 @@ bindsym \$mod+d exec dmenu_run
 bindsym \$mod+Shift+q kill
 bindsym \$mod+Shift+e exec swaymsg exit
 bar {
-    statusbar_command while date +'%Y-%m-%d %H:%M'; do sleep 1; done
+    statusbar_command while date +\'%Y-%m-%d %H:%M\'; do sleep 1; done
     colors {
         background #0d1b2a
         statusline #4dffd2
@@ -410,13 +422,12 @@ SWAY
 esac
 
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS
-sed -i 's/GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="BorealOS"/' /etc/default/grub
+sed -i \'s/GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="BorealOS"/\' /etc/default/grub
 update-grub
 CHROOT
 
     ok "System configured."
 }
-
 cleanup() {
     umount -R /mnt 2>/dev/null || true
 }
