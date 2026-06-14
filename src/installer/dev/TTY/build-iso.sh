@@ -164,6 +164,12 @@ apt-get install -y --no-install-recommends \
     wpasupplicant \
     openssl \
     libdevmapper1.02.1 \
+    libefivar1 \
+    libefiboot1 \
+    grub-efi-amd64 \
+    grub-efi-amd64-bin \
+    grub-common \
+    os-prober \
     python3 \
     $DE_PKGS $SHELL_PKG
 echo 'root:borealOS' | chpasswd

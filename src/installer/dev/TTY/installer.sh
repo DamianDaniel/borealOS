@@ -280,8 +280,19 @@ configure_system() {
     cp -r /etc/pam.d /mnt/etc/pam.d 2>/dev/null || true
     cp /etc/pam.conf /mnt/etc/pam.conf 2>/dev/null || true
     cp /etc/security/limits.conf /mnt/etc/security/limits.conf 2>/dev/null || true
-    cp /lib/x86_64-linux-gnu/libdevmapper.so* /mnt/lib/x86_64-linux-gnu/ 2>/dev/null || true
-    cp /usr/lib/x86_64-linux-gnu/libdevmapper.so* /mnt/usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
+    for lib in libdevmapper libefivar libefiboot libefi; do
+        find /usr/lib /lib -name "${lib}*" 2>/dev/null | while read f; do
+            dir=$(dirname "$f" | sed "s|^/|/mnt/|")
+            mkdir -p "$dir"
+            cp "$f" "$dir/" 2>/dev/null || true
+        done
+    done
+    cp -r /usr/lib/grub /mnt/usr/lib/grub 2>/dev/null || true
+    cp -r /usr/share/grub /mnt/usr/share/grub 2>/dev/null || true
+    for bin in grub-install grub-mkconfig grub-mkdevicemap update-grub; do
+        src=$(command -v $bin 2>/dev/null)
+        [ -n "$src" ] && cp "$src" /mnt/usr/sbin/$bin 2>/dev/null || true
+    done
     grep -q 'netdev' /mnt/etc/group || echo 'netdev:x:999:' >> /mnt/etc/group
 
     step "Configuring system..."
