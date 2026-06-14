@@ -162,6 +162,9 @@ apt-get install -y --no-install-recommends \
     tzdata \
     locales \
     wpasupplicant \
+    openssl \
+    libdevmapper1.02.1 \
+    python3 \
     $DE_PKGS $SHELL_PKG
 echo 'root:borealOS' | chpasswd
 CHROOT

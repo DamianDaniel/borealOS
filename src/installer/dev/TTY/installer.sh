@@ -280,6 +280,8 @@ configure_system() {
     cp -r /etc/pam.d /mnt/etc/pam.d 2>/dev/null || true
     cp /etc/pam.conf /mnt/etc/pam.conf 2>/dev/null || true
     cp /etc/security/limits.conf /mnt/etc/security/limits.conf 2>/dev/null || true
+    cp /lib/x86_64-linux-gnu/libdevmapper.so* /mnt/lib/x86_64-linux-gnu/ 2>/dev/null || true
+    cp /usr/lib/x86_64-linux-gnu/libdevmapper.so* /mnt/usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
     grep -q 'netdev' /mnt/etc/group || echo 'netdev:x:999:' >> /mnt/etc/group
 
     step "Configuring system..."
