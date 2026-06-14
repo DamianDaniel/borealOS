@@ -335,25 +335,6 @@ echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 
-mkdir -p /etc/neofetch
-cat > /etc/neofetch/config.conf <<NEOF
-print_info() {
-    info title
-    info underline
-    info "OS" distro
-    info "Host" model
-    info "Kernel" kernel
-    info "Uptime" uptime
-    info "Shell" shell
-    info "DE/WM" de
-    info "CPU" cpu
-    info "Memory" memory
-    prin ""
-}
-distro_shorthand="off"
-os_arch="off"
-kernel_shorthand="off"
-NEOF
 
 echo "root:$ROOT_PASS" | chpasswd
 $USERS_SCRIPT

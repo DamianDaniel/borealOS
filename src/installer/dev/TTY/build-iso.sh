@@ -115,25 +115,6 @@ cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/wallpapers/BorealOS/waves
 mkdir -p "$WORK/squashfs-root/usr/share/pixmaps"
 cp "$LOGO" "$WORK/squashfs-root/usr/share/pixmaps/borealOS-logo.png"
 
-mkdir -p "$WORK/squashfs-root/etc/neofetch"
-cat > "$WORK/squashfs-root/etc/neofetch/config.conf" <<NEOF
-print_info() {
-    info title
-    info underline
-    info "OS" distro
-    info "Host" model
-    info "Kernel" kernel
-    info "Uptime" uptime
-    info "Shell" shell
-    info "DE/WM" de
-    info "CPU" cpu
-    info "Memory" memory
-    prin ""
-}
-distro_shorthand="off"
-os_arch="off"
-kernel_shorthand="off"
-NEOF
 
 cat > "$WORK/squashfs-root/etc/profile.d/live-welcome.sh" <<'WELCOME'
 if [ "$(tty)" = "/dev/tty1" ] && [ "$(id -u)" = "0" ]; then
@@ -177,7 +158,6 @@ apt-get install -y --no-install-recommends \
     passwd \
     sudo \
     bash \
-    neofetch \
     iproute2 \
     tzdata \
     locales \
