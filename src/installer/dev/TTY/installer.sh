@@ -284,12 +284,14 @@ configure_system() {
 
     step "Configuring system..."
 
+    ROOT_HASH=$(openssl passwd -6 "$ROOT_PASS")
     USERS_SCRIPT=""
     for entry in "${EXTRA_USERS[@]}"; do
         uname="${entry%%|*}"
         upass="${entry##*|}"
         USERS_SCRIPT+="useradd -m -G sudo,audio,video -s ${SHELL_BIN} ${uname} || true"$'\n'
-        USERS_SCRIPT+="echo \'${uname}:${upass}\' | chpasswd || { echo chpasswd failed for ${uname}; exit 1; }"$'\n'
+        uhash=$(openssl passwd -6 "${upass}")
+        USERS_SCRIPT+="sed -i \"s|^${uname}:[^:]*:|${uname}:${uhash}:|\" /etc/shadow"$'\n'
     done
 
     NET_SCRIPT=""
@@ -363,7 +365,7 @@ echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 
-echo "root:$ROOT_PASS" | chpasswd
+sed -i "s|^root:[^:]*:|root:${ROOT_HASH}:|" /etc/shadow
 $USERS_SCRIPT
 $NET_SCRIPT
 
