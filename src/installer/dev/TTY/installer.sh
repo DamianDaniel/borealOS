@@ -274,6 +274,12 @@ configure_system() {
         [ -d /usr/share/fish ] && cp -r /usr/share/fish /mnt/usr/share/fish 2>/dev/null || true
     fi
 
+    cp -r /lib/x86_64-linux-gnu/security /mnt/lib/x86_64-linux-gnu/security 2>/dev/null || true
+    cp /lib/x86_64-linux-gnu/libpam.so* /mnt/lib/x86_64-linux-gnu/ 2>/dev/null || true
+    cp /lib/x86_64-linux-gnu/libpam_misc.so* /mnt/lib/x86_64-linux-gnu/ 2>/dev/null || true
+    cp -r /etc/pam.d /mnt/etc/pam.d 2>/dev/null || true
+    cp /etc/pam.conf /mnt/etc/pam.conf 2>/dev/null || true
+    cp /etc/security/limits.conf /mnt/etc/security/limits.conf 2>/dev/null || true
     grep -q 'netdev' /mnt/etc/group || echo 'netdev:x:999:' >> /mnt/etc/group
 
     step "Configuring system..."
