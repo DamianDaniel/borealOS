@@ -7,11 +7,23 @@ BLD='\033[1m'
 RST='\033[0m'
 
 EXTRA_USERS=()
-DE_CHOICE=""
-SHELL_CHOICE=""
-NET_TYPE=""
+EFI=""
+ROOT=""
 
-die() { echo -e "${RED}ERROR: $1${RST}" >&2; cleanup; exit 1; }
+die() {
+    echo -e "${RED}FATAL: $1${RST}" >&2
+    cleanup
+    echo -e "${RED}Installation failed. Dropping to shell for inspection.${RST}"
+    bash
+    exit 1
+}
+
+step() { echo -e "${CYN}${BLD}=> $1${RST}"; }
+ok()   { echo -e "${GRN}OK: $1${RST}"; }
+
+run() {
+    "$@" || die "Command failed: $*"
+}
 
 banner() {
     clear
@@ -50,7 +62,7 @@ ask_pass() {
             printf -v "$var" '%s' "$p1"
             return
         fi
-        echo -e "${RED}Passwords do not match or are empty. Try again.${RST}"
+        echo -e "${RED}Passwords do not match or are empty.${RST}"
     done
 }
 
@@ -79,7 +91,16 @@ confirm() {
 }
 
 check_root() {
-    [ "$EUID" -eq 0 ] || die "Run as root."
+    [ "$EUID" -eq 0 ] || die "Must run as root."
+}
+
+check_assets() {
+    [ -f /opt/borealOS/rootfs.tar.gz ] || die "/opt/borealOS/rootfs.tar.gz missing."
+    [ -f /opt/borealOS/background_2.png ] || die "Wallpaper assets missing."
+    [ -f /opt/borealOS/de ] || die "/opt/borealOS/de missing."
+    [ -f /opt/borealOS/shell ] || die "/opt/borealOS/shell missing."
+    DE_CHOICE=$(cat /opt/borealOS/de)
+    SHELL_BIN=$(cat /opt/borealOS/shell)
 }
 
 select_disk() {
@@ -91,92 +112,69 @@ select_disk() {
     ask "Target disk (e.g. /dev/sda)" DISK
     [ -b "$DISK" ] || die "$DISK is not a block device."
     echo -e "${RED}${BLD}WARNING: All data on $DISK will be destroyed.${RST}"
-    confirm "Continue?" || die "Aborted."
+    confirm "Continue?" || die "Aborted by user."
 }
 
 partition_disk() {
-    banner
-    echo -e "${BLD}Partitioning $DISK...${RST}"
-    parted -s "$DISK" mklabel gpt || die "Failed to create GPT label"
-    parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB || die "Failed to create EFI partition"
-    parted -s "$DISK" set 1 esp on || die "Failed to set ESP flag"
-    parted -s "$DISK" mkpart primary ext4 513MiB 100% || die "Failed to create root partition"
-    
+    step "Partitioning $DISK..."
+    run parted -s "$DISK" mklabel gpt
+    run parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
+    run parted -s "$DISK" set 1 esp on
+    run parted -s "$DISK" mkpart primary ext4 513MiB 100%
+
     if [[ "$DISK" == *nvme* ]]; then
         EFI="${DISK}p1"; ROOT="${DISK}p2"
     else
         EFI="${DISK}1"; ROOT="${DISK}2"
     fi
-    
-    sleep 1
-    [ -b "$EFI" ] || die "EFI partition $EFI not found"
-    [ -b "$ROOT" ] || die "Root partition $ROOT not found"
-    
-    echo "Formatting EFI partition ($EFI)..."
-    mkfs.fat -F32 -n EFI "$EFI" || die "Failed to format EFI partition"
-    
-    echo "Formatting root partition ($ROOT)..."
-    mkfs.ext4 -F -L borealOS "$ROOT" || die "Failed to format root partition"
-    
-    echo -e "${GRN}Partitioning complete.${RST}"
+
+    run mkfs.fat -F32 -n EFI "$EFI"
+    run mkfs.ext4 -L borealOS "$ROOT"
+    ok "Partitioned."
 }
 
 mount_target() {
-    banner
-    echo -e "${BLD}Mounting target filesystems...${RST}"
-    
-    mount "$ROOT" /mnt || die "Failed to mount root filesystem"
+    step "Mounting..."
+    run mount "$ROOT" /mnt
     mkdir -p /mnt/boot/efi
-    mount "$EFI" /mnt/boot/efi || die "Failed to mount EFI filesystem"
-    
-    echo -e "${GRN}Filesystems mounted successfully.${RST}"
+    run mount "$EFI" /mnt/boot/efi
+    ok "Mounted."
 }
 
 install_rootfs() {
-    banner
-    echo -e "${BLD}Installing base system...${RST}"
-    [ -f /opt/borealOS/rootfs.tar.gz ] || die "Rootfs not found at /opt/borealOS/rootfs.tar.gz"
-    
-    echo "Extracting rootfs to $ROOT..."
-    tar -xzf /opt/borealOS/rootfs.tar.gz -C /mnt || die "Failed to extract rootfs"
-    
-    [ -d /mnt/etc ] || die "Rootfs extraction failed (no /etc directory)"
-    [ -d /mnt/bin ] || die "Rootfs extraction failed (no /bin directory)"
-    
-    echo -e "${GRN}Rootfs extracted successfully.${RST}"
+    step "Extracting base system..."
+    run tar -xzf /opt/borealOS/rootfs.tar.gz -C /mnt
+    ok "Base system extracted."
 }
 
-select_de() {
-    banner
-    menu "Select desktop environment / window manager:" "KDE Plasma" "XFCE" "Sway (Wayland)" "None (TTY only)"
-    DE_CHOICE="$MENU_RESULT"
-}
-
-select_shell() {
-    banner
-    menu "Select default shell:" "bash" "fish" "sh"
-    SHELL_CHOICE="$MENU_RESULT"
+install_wallpapers() {
+    step "Installing wallpapers..."
+    mkdir -p /mnt/usr/share/wallpapers/BorealOS
+    run cp /opt/borealOS/background_2.png   /mnt/usr/share/wallpapers/BorealOS/default.png
+    run cp /opt/borealOS/background_one.png /mnt/usr/share/wallpapers/BorealOS/waves.png
+    mkdir -p /mnt/usr/share/pixmaps
+    run cp /opt/borealOS/logo.png /mnt/usr/share/pixmaps/borealOS-logo.png
+    ok "Wallpapers installed."
 }
 
 select_timezone() {
     banner
     echo -e "${BLD}Timezone selection${RST}"
-    echo "Type part of a timezone name to filter (e.g. 'Europe', 'Berlin', 'US')."
-    echo "Leave blank to list all."
+    echo "Type part of a timezone to filter (e.g. 'Europe', 'Berlin'). Leave blank for all."
     echo
     echo -ne "${CYN}Filter${RST}: "
     read -r tz_filter
 
-    mapfile -t tz_list < <(find /usr/share/zoneinfo -type f | sed 's|/usr/share/zoneinfo/||' | grep -v "^posix\|^right\|\.tab$\|^leap" | sort | grep -i "${tz_filter}")
+    mapfile -t tz_list < <(find /usr/share/zoneinfo -type f -o -type l | sed 's|/usr/share/zoneinfo/||' | grep -v "^posix\|^right\|\.tab$\|^leap\|\.list$" | sort | grep -i "${tz_filter}")
 
     if [ ${#tz_list[@]} -eq 0 ]; then
-        echo -e "${RED}No matches. Enter manually.${RST}"
-        ask "Timezone" TIMEZONE "UTC"
+        echo -e "${RED}No matches.${RST}"
+        ask "Enter timezone manually" TIMEZONE "UTC"
         return
     fi
 
     if [ ${#tz_list[@]} -gt 40 ]; then
-        echo -e "${RED}${#tz_list[@]} results. Refine your filter.${RST}"
+        echo -e "${RED}${#tz_list[@]} results, refine your filter.${RST}"
         select_timezone
         return
     fi
@@ -219,16 +217,17 @@ get_extra_users() {
         [ -z "$uname" ] && break
         ask_pass "Password for $uname" upass
         EXTRA_USERS+=("${uname}|${upass}")
-        echo -e "${GRN}Added: $uname${RST}"
+        ok "Added: $uname"
     done
 }
 
 configure_network() {
     banner
-    menu "Network configuration:" "DHCP (automatic)" "Static IP" "Skip (configure later)"
+    menu "Network configuration:" "DHCP on eth0" "Static IP" "Skip"
     NET_TYPE="$MENU_RESULT"
 
-    if [ "$NET_TYPE" = "Skip (configure later)" ]; then
+    if [ "$NET_TYPE" = "Skip" ]; then
+        NET_IF=""
         return
     fi
 
@@ -239,92 +238,105 @@ configure_network() {
     ask "Network interface" NET_IF "eth0"
 
     if [ "$NET_TYPE" = "Static IP" ]; then
-        ask "IP address with prefix (e.g. 192.168.1.100/24)" NET_IP
+        ask "IP/prefix (e.g. 192.168.1.100/24)" NET_IP
         ask "Gateway" NET_GW
         ask "DNS" NET_DNS "1.1.1.1"
     fi
 }
 
-create_chroot_script() {
-    # Prepare shell package name
-    SHELL_PKG=""
-    case "$SHELL_CHOICE" in
-        fish) SHELL_PKG="fish" ;;
-        sh) SHELL_PKG="" ;;
-        bash|*) SHELL_PKG="" ;;
-    esac
-    
-    # Prepare DE packages
-    DE_PKGS=""
-    case "$DE_CHOICE" in
-        "KDE Plasma") DE_PKGS="kde-plasma-desktop sddm" ;;
-        "XFCE") DE_PKGS="xfce4 xfce4-goodies lightdm lightdm-gtk-greeter" ;;
-        "Sway (Wayland)") DE_PKGS="sway swaybar swaybg swaylock waybar foot" ;;
-    esac
-    
-    cat > /mnt/chroot-install.sh <<SCRIPT
-#!/bin/sh
-set +e
+configure_system() {
+    step "Configuring system..."
 
-echo "Configuring hostname..."
+    for d in dev proc sys run; do
+        mount --bind /$d /mnt/$d || die "Failed to bind mount /$d"
+    done
+
+    USERS_SCRIPT=""
+    for entry in "${EXTRA_USERS[@]}"; do
+        uname="${entry%%|*}"
+        upass="${entry##*|}"
+        USERS_SCRIPT+="useradd -m -G sudo,audio,video,netdev -s ${SHELL_BIN} ${uname} || true"$'\n'
+        USERS_SCRIPT+="echo '${uname}:${upass}' | chpasswd || die 'Failed to set password for ${uname}'"$'\n'
+    done
+
+    NET_SCRIPT=""
+    if [ "$NET_TYPE" = "DHCP on eth0" ] || [ "$NET_TYPE" = "Static IP" ]; then
+        NET_SCRIPT="mkdir -p /etc/NetworkManager/system-connections"$'\n'
+        if [ "$NET_TYPE" = "DHCP on eth0" ]; then
+            NET_SCRIPT+="cat > /etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
+[connection]
+id=${NET_IF}
+type=ethernet
+interface-name=${NET_IF}
+[ipv4]
+method=auto
+[ipv6]
+method=auto
+NMC
+chmod 600 /etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
+        else
+            NET_SCRIPT+="cat > /etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
+[connection]
+id=${NET_IF}
+type=ethernet
+interface-name=${NET_IF}
+[ipv4]
+method=manual
+addresses=${NET_IP}
+gateway=${NET_GW}
+dns=${NET_DNS}
+[ipv6]
+method=auto
+NMC
+chmod 600 /etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
+        fi
+    fi
+
+    chroot /mnt /bin/bash <<CHROOT || die "System configuration in chroot failed"
+set -e
+
 echo "$HOSTNAME" > /etc/hostname
-cat > /etc/hosts <<'EOF'
+cat > /etc/hosts <<HOSTS
 127.0.0.1   localhost
 127.0.1.1   $HOSTNAME
 ::1         localhost ip6-localhost ip6-loopback
-EOF
+HOSTS
 
 ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
 echo "$TIMEZONE" > /etc/timezone
 
-if [ -f /etc/locale.gen ] && command -v locale-gen >/dev/null 2>&1; then
-    sed -i 's/^# *$LOCALE/$LOCALE/' /etc/locale.gen 2>/dev/null || true
-    locale-gen 2>&1 | tail -1 || true
+if grep -q "^#.*$LOCALE" /etc/locale.gen 2>/dev/null; then
+    sed -i "s|^#.*${LOCALE}|${LOCALE}|" /etc/locale.gen
+else
+    echo "$LOCALE UTF-8" >> /etc/locale.gen
 fi
+locale-gen
+
 echo "LANG=$LOCALE" > /etc/locale.conf
 
-echo "Creating fstab..."
-cat > /etc/fstab <<'EOF'
-UUID=$ROOT_UUID  /     ext4  defaults,relatime  0  1
-UUID=$EFI_UUID   /boot/efi  vfat  defaults,relatime  0  2
-EOF
-
-echo "Setting OS branding..."
-cat > /etc/os-release <<'EOF'
+cat > /etc/os-release <<OS
 NAME="BorealOS"
 PRETTY_NAME="BorealOS 1.0"
 ID=borealos
+ID_LIKE=
 VERSION="1.0"
 VERSION_ID="1.0"
 HOME_URL="https://borealos.org"
-SUPPORT_URL="https://borealos.org"
-BUG_REPORT_URL="https://borealos.org"
-EOF
+OS
 
-cat > /etc/lsb-release <<'EOF'
+cat > /etc/lsb-release <<LSB
 DISTRIB_ID=BorealOS
 DISTRIB_RELEASE=1.0
 DISTRIB_CODENAME=boreal
 DISTRIB_DESCRIPTION="BorealOS 1.0"
-EOF
+LSB
 
-echo "BorealOS" > /etc/issue
+echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
-echo "BorealOS" > /etc/debian_version
-
-mkdir -p /usr/share/wallpapers/BorealOS /usr/share/pixmaps
-[ -f /opt/borealOS/background_2.png ] && cp /opt/borealOS/background_2.png /usr/share/wallpapers/BorealOS/default.png
-[ -f /opt/borealOS/background_one.png ] && cp /opt/borealOS/background_one.png /usr/share/wallpapers/BorealOS/waves.png
-[ -f /opt/borealOS/logo.png ] && cp /opt/borealOS/logo.png /usr/share/pixmaps/borealOS-logo.png
-
-echo "Installing packages..."
-apt-get update -qq 2>&1 | tail -2 || true
-apt-get install -y --no-install-recommends parted dosfstools e2fsprogs openrc sudo curl wget 2>&1 | tail -2 || true
-apt-get install -y --no-install-recommends linux-image-amd64 grub-efi-amd64 efibootmgr 2>&1 | tail -2 || true
-apt-get install -y --no-install-recommends network-manager neofetch $DE_PKGS $SHELL_PKG 2>&1 | tail -2 || true
+echo "BorealOS"     > /etc/debian_version
 
 mkdir -p /etc/neofetch
-cat > /etc/neofetch/config.conf <<'EOF'
+cat > /etc/neofetch/config.conf <<NEOF
 print_info() {
     info title
     info underline
@@ -341,73 +353,98 @@ print_info() {
 distro_shorthand="off"
 os_arch="off"
 kernel_shorthand="off"
-EOF
+NEOF
 
-echo "Setting root password..."
-echo "root:$ROOT_PASS" | chpasswd 2>/dev/null || (echo "$ROOT_PASS"; echo "$ROOT_PASS") | passwd root 2>/dev/null || true
-
-echo "Creating users..."
+echo "root:$ROOT_PASS" | chpasswd
 $USERS_SCRIPT
-
-echo "Configuring network..."
 $NET_SCRIPT
 
-if command -v grub-install >/dev/null 2>&1 && [ -d /boot/efi ]; then
-    echo "Installing GRUB..."
-    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS --no-nvram 2>&1 | tail -2 || true
-    [ -f /etc/default/grub ] && sed -i 's/GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="BorealOS"/' /etc/default/grub 2>/dev/null || true
-    command -v update-grub >/dev/null 2>&1 && update-grub 2>&1 | tail -1 || true
-fi
+update-rc.d NetworkManager defaults 2>/dev/null || \
+    ln -sf /etc/init.d/NetworkManager /etc/rc2.d/S99NetworkManager || true
 
-if command -v rc-update >/dev/null 2>&1; then
-    rc-update add NetworkManager default 2>/dev/null || true
-else
-    mkdir -p /etc/rc2.d 2>/dev/null
-    ln -sf /etc/init.d/NetworkManager /etc/rc2.d/S99NetworkManager 2>/dev/null || true
-fi
-
-echo "Chroot configuration complete"
-SCRIPT
-    chmod +x /mnt/chroot-install.sh
+case "$DE_CHOICE" in
+    "KDE Plasma")
+        update-rc.d sddm defaults 2>/dev/null || \
+            ln -sf /etc/init.d/sddm /etc/rc2.d/S99sddm || true
+        mkdir -p /etc/sddm.conf.d
+        cat > /etc/sddm.conf.d/borealos.conf <<SDDM
+[General]
+DisplayServer=x11
+[Theme]
+Background=/usr/share/wallpapers/BorealOS/default.png
+SDDM
+        ;;
+    "XFCE")
+        update-rc.d lightdm defaults 2>/dev/null || \
+            ln -sf /etc/init.d/lightdm /etc/rc2.d/S99lightdm || true
+        mkdir -p /etc/lightdm
+        cat >> /etc/lightdm/lightdm-gtk-greeter.conf <<LDM
+[greeter]
+background=/usr/share/wallpapers/BorealOS/default.png
+LDM
+        mkdir -p /etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+        cat > /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<XFCE
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="last-image" type="string" value="/usr/share/wallpapers/BorealOS/default.png"/>
+          <property name="image-style" type="int" value="5"/>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>
+XFCE
+        ;;
+    "Sway")
+        mkdir -p /etc/sway
+        cat > /etc/sway/config <<SWAY
+set \$mod Mod4
+font pango:monospace 10
+output * bg /usr/share/wallpapers/BorealOS/default.png fill
+input type:keyboard { xkb_layout us }
+bindsym \$mod+Return exec foot
+bindsym \$mod+d exec dmenu_run
+bindsym \$mod+Shift+q kill
+bindsym \$mod+Shift+e exec swaymsg exit
+bar {
+    statusbar_command while date +'%Y-%m-%d %H:%M'; do sleep 1; done
+    colors {
+        background #0d1b2a
+        statusline #4dffd2
+        focused_workspace #4dffd2 #0d1b2a #ffffff
+    }
 }
+SWAY
+        ;;
+esac
 
-chroot_install() {
-    banner
-    echo -e "${BLD}Configuring installed system...${RST}"
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS
+sed -i 's/GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="BorealOS"/' /etc/default/grub
+update-grub
+CHROOT
 
-    for d in dev proc sys run; do mount --bind /$d /mnt/$d || die "Failed to bind /$d"; done
-    cp /etc/resolv.conf /mnt/etc/resolv.conf 2>/dev/null || true
-
-    ROOT_UUID=$(blkid -s UUID -o value "$ROOT") || die "Failed to get root UUID"
-    EFI_UUID=$(blkid -s UUID -o value "$EFI") || die "Failed to get EFI UUID"
-    
-    echo "Creating chroot script with UUIDs..."
-    create_chroot_script
-    
-    echo "Running chroot configuration..."
-    chroot /mnt /bin/sh /chroot-install.sh 2>&1 | tail -30
-
-    echo -e "${GRN}Chroot configuration completed.${RST}"
+    ok "System configured."
 }
 
 cleanup() {
-    echo -e "${CYN}Cleaning up...${RST}"
-    umount /mnt/sys 2>/dev/null || true
-    umount /mnt/proc 2>/dev/null || true
-    umount /mnt/dev 2>/dev/null || true
-    umount /mnt/run 2>/dev/null || true
-    umount /mnt/boot/efi 2>/dev/null || true
-    umount /mnt 2>/dev/null || true
+    umount -R /mnt 2>/dev/null || true
 }
 
 finish() {
     banner
-    echo -e "${GRN}${BLD}Installation complete.${RST}"
+    ok "Installation complete."
     echo
-    echo "  Disk:    $DISK"
-    echo "  DE/WM:   $DE_CHOICE"
-    echo "  Shell:   $SHELL_CHOICE"
-    echo "  Host:    $HOSTNAME"
+    echo "  Disk:        $DISK"
+    echo "  DE/WM:       $DE_CHOICE"
+    echo "  Shell:       $SHELL_BIN"
+    echo "  Host:        $HOSTNAME"
+    echo "  Timezone:    $TIMEZONE"
+    echo "  Network:     $NET_TYPE"
+    echo "  Extra users: ${#EXTRA_USERS[@]}"
     echo
     menu "What now?" "Reboot" "Drop to shell"
     case "$MENU_RESULT" in
@@ -421,16 +458,16 @@ finish() {
 
 main() {
     check_root
+    check_assets
     banner
     echo -e "${BLD}Welcome to the BorealOS Installer${RST}"
+    echo -e "DE: ${DE_CHOICE}  |  Shell: ${SHELL_BIN}"
     echo
     confirm "Begin?" || die "Aborted."
 
     select_disk
     get_user_info
     get_extra_users
-    select_de
-    select_shell
     configure_network
 
     banner
@@ -439,46 +476,18 @@ main() {
     echo "  Hostname:     $HOSTNAME"
     echo "  Timezone:     $TIMEZONE"
     echo "  DE/WM:        $DE_CHOICE"
-    echo "  Shell:        $SHELL_CHOICE"
+    echo "  Shell:        $SHELL_BIN"
     echo "  Network:      $NET_TYPE"
     echo "  Extra users:  ${#EXTRA_USERS[@]}"
     echo
     confirm "Proceed?" || die "Aborted."
 
-    echo -e "${CYN}Starting installation...${RST}"
-    
     partition_disk
-    echo -e "${GRN}✓ Partitioning OK${RST}"; sleep 1
-    
     mount_target
-    echo -e "${GRN}✓ Mounting OK${RST}"
-    
     install_rootfs
-    echo -e "${GRN}✓ Rootfs extraction OK${RST}"
-    
-    # Build user and network configuration scripts
-    USERS_SCRIPT=""
-    for entry in "${EXTRA_USERS[@]}"; do
-        uname="${entry%%|*}"
-        upass="${entry##*|}"
-        USERS_SCRIPT+="useradd -m -s /bin/bash ${uname} 2>/dev/null || true"$'\n'
-        USERS_SCRIPT+="for group in sudo audio video netdev; do getent group \$group >/dev/null 2>&1 && usermod -aG \$group ${uname} 2>/dev/null || true; done"$'\n'
-        USERS_SCRIPT+="echo \"${uname}:${upass}\" | chpasswd 2>/dev/null || true"$'\n'
-    done
-    
-    NET_SCRIPT=""
-    if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        NET_SCRIPT="mkdir -p /etc/NetworkManager/system-connections; cat > /etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<'NMEOF'\n[connection]\nid=${NET_IF}\ntype=ethernet\ninterface-name=${NET_IF}\n[ipv4]\nmethod=auto\n[ipv6]\nmethod=auto\nNMEOF\nchmod 600 /etc/NetworkManager/system-connections/\${NET_IF}.nmconnection"
-    elif [ "$NET_TYPE" = "Static IP" ]; then
-        NET_SCRIPT="mkdir -p /etc/NetworkManager/system-connections; cat > /etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<'NMEOF'\n[connection]\nid=${NET_IF}\ntype=ethernet\ninterface-name=${NET_IF}\n[ipv4]\nmethod=manual\naddresses=${NET_IP}\ngateway=${NET_GW}\ndns=${NET_DNS}\n[ipv6]\nmethod=auto\nNMEOF\nchmod 600 /etc/NetworkManager/system-connections/\${NET_IF}.nmconnection"
-    fi
-    
-    chroot_install
-    echo -e "${GRN}✓ Configuration OK${RST}"
-    
+    install_wallpapers
+    configure_system
     cleanup
-    echo -e "${GRN}✓ Cleanup OK${RST}"
-    
     finish
 }
 
