@@ -292,6 +292,10 @@ chmod 600 /etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
         fi
     fi
 
+    cp /usr/sbin/locale-gen /mnt/usr/sbin/locale-gen 2>/dev/null || true
+    cp -r /usr/share/i18n /mnt/usr/share/i18n 2>/dev/null || true
+    cp /usr/bin/localedef /mnt/usr/bin/localedef 2>/dev/null || true
+
     chroot /mnt /bin/bash <<CHROOT || die "System configuration in chroot failed"
 set -e
 
@@ -305,13 +309,8 @@ HOSTS
 ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
 echo "$TIMEZONE" > /etc/timezone
 
-if grep -q "^#.*$LOCALE" /etc/locale.gen 2>/dev/null; then
-    sed -i "s|^#.*${LOCALE}|${LOCALE}|" /etc/locale.gen
-else
-    echo "$LOCALE UTF-8" >> /etc/locale.gen
-fi
+echo "$LOCALE UTF-8" >> /etc/locale.gen
 locale-gen
-
 echo "LANG=$LOCALE" > /etc/locale.conf
 
 cat > /etc/os-release <<OS
