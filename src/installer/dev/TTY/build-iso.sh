@@ -171,6 +171,7 @@ apt-get install -y --no-install-recommends \
     grub-common \
     os-prober \
     python3 \
+    rsync \
     $DE_PKGS $SHELL_PKG
 echo 'root:borealOS' | chpasswd
 CHROOT
