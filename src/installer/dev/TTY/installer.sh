@@ -352,13 +352,27 @@ set_passwords() {
 }
 
 remove_live_boot() {
-    step "Removing live-boot from installed system..."
-    chroot /mnt dpkg -r live-boot live-boot-initramfs-tools 2>/dev/null || true
-    chroot /mnt dpkg -r live-config live-config-systemd 2>/dev/null || true
-    rm -f /mnt/etc/initramfs-tools/scripts/live* 2>/dev/null || true
-    rm -f /mnt/etc/initramfs-tools/hooks/live* 2>/dev/null || true
-    step "Rebuilding initramfs..."
-    chroot /mnt update-initramfs -u -k all || die "update-initramfs failed"
+    step "Removing live-boot hooks from installed system..."
+
+    chroot /mnt dpkg -r --force-depends live-boot live-boot-initramfs-tools live-config live-config-systemd 2>/dev/null || true
+
+    # Remove all live-boot hooks manually regardless of dpkg success
+    for dir in /mnt/usr/share/initramfs-tools/hooks                 /mnt/usr/share/initramfs-tools/scripts                 /mnt/etc/initramfs-tools/hooks                 /mnt/etc/initramfs-tools/scripts; do
+        find "$dir" -name "*live*" -delete 2>/dev/null || true
+    done
+    rm -rf /mnt/lib/live /mnt/usr/lib/live 2>/dev/null || true
+    rm -f /mnt/etc/live /mnt/etc/live.conf 2>/dev/null || true
+
+    # Verify no live hooks remain
+    if find /mnt/usr/share/initramfs-tools /mnt/etc/initramfs-tools -name "*live*" 2>/dev/null | grep -q .; then
+        warn "Some live-boot hooks could not be removed - initrd may be broken"
+    fi
+
+    step "Rebuilding initramfs without live-boot..."
+    chroot /mnt update-initramfs -u -k all 2>&1 | tail -5 || die "update-initramfs failed"
+
+    # Verify initrd exists
+    ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd found after update-initramfs"
     ok "live-boot removed, initramfs rebuilt."
 }
 
@@ -461,20 +475,19 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
 GRUB_CMDLINE_LINUX=""
 GRUBCFG
 
-    chroot /mnt grub-install \
-        --target=x86_64-efi \
-        --efi-directory=/boot/efi \
-        --bootloader-id=BorealOS \
-        --recheck \
-        || die "grub-install failed"
+    chroot /mnt grub-install         --target=x86_64-efi         --efi-directory=/boot/efi         --bootloader-id=BorealOS         --removable         --recheck         || die "grub-install failed"
 
-    chroot /mnt update-grub || chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg || die "grub-mkconfig failed"
+    chroot /mnt update-grub 2>&1 ||     chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg 2>&1 ||     die "grub-mkconfig failed"
 
+    # --removable writes directly to EFI/BOOT/BOOTX64.EFI
+    # but copy anyway as belt-and-suspenders
     mkdir -p /mnt/boot/efi/EFI/BOOT
-    if [ ! -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ]; then
-        find /mnt/boot/efi/EFI -name "grubx64.efi" | head -1 | \
-            xargs -I{} cp {} /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
-    fi
+    find /mnt/boot/efi/EFI/BorealOS -name "grubx64.efi" 2>/dev/null | head -1 |         xargs -I{} cp {} /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
+
+    step "EFI partition contents:"
+    find /mnt/boot/efi -type f | sort
+    step "grub.cfg preview:"
+    grep -E "menuentry|linux|initrd|search|set root" /mnt/boot/grub/grub.cfg 2>/dev/null | head -20
     ok "GRUB installed."
 }
 
