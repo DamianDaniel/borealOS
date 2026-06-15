@@ -443,7 +443,7 @@ SWAY
 esac
 
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS
-sed -i \'s/GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="BorealOS"/\' /etc/default/grub
+sed -i "s/GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR=BorealOS/" /etc/default/grub
 update-grub
 CHROOT
 
