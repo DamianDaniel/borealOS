@@ -432,11 +432,13 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
 GRUB_CMDLINE_LINUX=""
 GRUBCFG
 
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS --no-nvram || \
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS || \
-die "grub-install failed"
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS || die "grub-install failed"
 
 update-grub || grub-mkconfig -o /boot/grub/grub.cfg || true
+
+mkdir -p /boot/efi/EFI/BOOT
+cp /boot/efi/EFI/BorealOS/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || \
+cp /usr/lib/grub/x86_64-efi/grub.efi  /boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
 CHROOT
 
     ok "System configured."
