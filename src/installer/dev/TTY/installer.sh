@@ -432,15 +432,28 @@ GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
 GRUB_CMDLINE_LINUX=""
 GRUBCFG
 
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS || die "grub-install failed"
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS
+GRUB_RC=$?
+if [ $GRUB_RC -ne 0 ]; then
+    echo "GRUB_INSTALL_FAILED"
+    exit 1
+fi
 
-update-grub || grub-mkconfig -o /boot/grub/grub.cfg || true
+update-grub || grub-mkconfig -o /boot/grub/grub.cfg
 
 mkdir -p /boot/efi/EFI/BOOT
-cp /boot/efi/EFI/BorealOS/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || \
-cp /usr/lib/grub/x86_64-efi/grub.efi  /boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
+cp /boot/efi/EFI/BorealOS/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
+ls -la /boot/efi/EFI/BOOT/BOOTX64.EFI || { echo "BOOTX64.EFI missing!"; exit 1; }
+ls -la /boot/grub/grub.cfg || { echo "grub.cfg missing!"; exit 1; }
 CHROOT
 
+
+    mkdir -p /mnt/boot/efi/EFI/BOOT
+    if [ ! -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ]; then
+        find /mnt/boot/efi/EFI -name "grubx64.efi" | head -1 | xargs -I{} cp {} /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
+    fi
+    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ] || die "BOOTX64.EFI missing after grub-install"
+    [ -f /mnt/boot/grub/grub.cfg ] || die "grub.cfg missing after update-grub"
     ok "System configured."
 }
 
