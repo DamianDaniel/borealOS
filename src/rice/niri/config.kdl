@@ -1,0 +1,212 @@
+// Made with love, by Zoey.
+
+// -------- ENVIRONMENT -------- //
+environment {
+	// VAR=value
+}
+// -------- ENVIRONMENT -------- //
+
+// -------- INPUT -------- //
+input {
+    mouse {
+        accel-profile "flat"
+    }
+    warp-mouse-to-focus
+    focus-follows-mouse max-scroll-amount="0%"
+}
+// -------- INPUT -------- //
+
+// -------- LAYOUT -------- //
+layout {
+    gaps 16
+    center-focused-column "never"
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+    }
+
+    default-column-width { proportion 0.5; }
+
+    focus-ring{
+    	off
+    }
+    border {
+    	off
+    }
+
+}
+// -------- LAYOUT -------- //
+
+// ------- BLUR -------- //
+blur {
+	on
+    passes 3
+    offset 3
+    noise 0
+    saturation 1
+}
+// ------- BLUR -------- //
+
+// -------- WINDOW RULES --------//
+layer-rule { 
+	background-effect {
+		xray false
+	}
+}
+
+window-rule {
+    geometry-corner-radius 22
+    clip-to-geometry true
+    draw-border-with-background false
+	background-effect {
+		blur true
+        xray false
+	}
+}
+
+window-rule {
+    match is-active=false
+    opacity 0.68
+}
+
+window-rule {
+    match is-active=true
+    opacity 0.85
+}
+// -------- WINDOW RULES --------//
+
+
+// -------- Essential Autostart -------- //
+spawn-sh-at-startup "dbus-update-activation-environment XDG_CURRENT_DESKTOP=niri"
+spawn-sh-at-startup "dbus-update-activation-environment WAYLAND_DISPLAY"
+spawn-sh-at-startup "swaybg -m fill -i /usr/share/boreal-artwork/background-ultrawide-logo-neue.png"
+// -------- Essential Autostart -------- //
+
+// -------- User Defined Autostart -------- //
+spawn-at-startup "kitty"
+// -------- User Defined Autostart -------- //
+
+binds {
+    // -------- Essential Keybinds -------- //
+    Mod+Shift+Backslash { show-hotkey-overlay; }
+    Mod+Q repeat=false { close-window; }
+    Mod+O repeat=false { toggle-overview; }
+    Ctrl+Alt+Delete { quit; }
+    Mod+Shift+P { power-off-monitors; }
+    // -------- Essential Keybinds -------- //
+    
+    // -------- User Defind Keybinds -------- //
+	Mod+Return { spawn "kitty"; }
+	Mod+D { spawn-sh "rofi -show drun"; }
+
+    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.1+ -l 1.0"; }
+    XF86AudioLowerVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.1-"; }
+    XF86AudioMute        allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"; }
+    XF86AudioMicMute     allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"; }
+    XF86AudioPlay        allow-when-locked=true { spawn-sh "playerctl play-pause"; }
+    XF86AudioStop        allow-when-locked=true { spawn-sh "playerctl stop"; }
+    XF86AudioPrev        allow-when-locked=true { spawn-sh "playerctl previous"; }
+    XF86AudioNext        allow-when-locked=true { spawn-sh "playerctl next"; }
+    XF86MonBrightnessUp allow-when-locked=true { spawn "brightnessctl" "--class=backlight" "set" "+10%"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn "brightnessctl" "--class=backlight" "set" "10%-"; }
+    // -------- User Defind Keybinds -------- //
+    
+    // -------- focusing --------- //
+    Mod+Left  { focus-column-left; }
+    Mod+Down  { focus-window-down; }
+    Mod+Up    { focus-window-up; }
+    Mod+Right { focus-column-right; }
+
+    Mod+H     { focus-column-left; }
+    Mod+J     { focus-window-down; }
+    Mod+K     { focus-window-up; }
+    Mod+L     { focus-column-right; }
+
+    Mod+Home { focus-column-first; }
+    Mod+End  { focus-column-last; }
+
+    Mod+U              { focus-workspace-down; }
+    Mod+I              { focus-workspace-up; }
+
+    Mod+WheelScrollDown      { focus-column-right; }
+    Mod+WheelScrollUp        { focus-column-left; }
+    Mod+B { focus-monitor-next; }
+    // -------- focusing --------- //
+	
+    // ------- movement -------- //
+    Mod+Ctrl+Left  { move-column-left; }
+    Mod+Ctrl+Down  { move-window-down; }
+    Mod+Ctrl+Up    { move-window-up; }
+    Mod+Ctrl+Right { move-column-right; }
+
+    Mod+Shift+H     { move-column-left; }
+    Mod+Shift+J     { move-window-down; }
+    Mod+Shift+K     { move-window-up; }
+    Mod+Shift+L     { move-column-right; }
+
+    Mod+Ctrl+Home { move-column-to-first; }
+    Mod+Ctrl+End  { move-column-to-last; }
+
+    Mod+Shift+U         { move-column-to-workspace-down; }
+    Mod+Shift+I         { move-column-to-workspace-up; }
+
+    Mod+Shift+WheelScrollDown { move-column-right; }
+    Mod+Shift+WheelScrollUp  { move-column-left; }
+    Mod+Shift+B { move-column-to-monitor-next; }
+    // -------- movement -------- //
+
+    // -------- workspaces -------- //
+    Mod+1 { focus-workspace 1; }
+    Mod+2 { focus-workspace 2; }
+    Mod+3 { focus-workspace 3; }
+    Mod+4 { focus-workspace 4; }
+    Mod+5 { focus-workspace 5; }
+    Mod+6 { focus-workspace 6; }
+    Mod+7 { focus-workspace 7; }
+    Mod+8 { focus-workspace 8; }
+    Mod+9 { focus-workspace 9; }
+
+    Mod+Shift+1 { move-column-to-workspace 1; }
+    Mod+Shift+2 { move-column-to-workspace 2; }
+    Mod+Shift+3 { move-column-to-workspace 3; }
+    Mod+Shift+4 { move-column-to-workspace 4; }
+    Mod+Shift+5 { move-column-to-workspace 5; }
+    Mod+Shift+6 { move-column-to-workspace 6; }
+    Mod+Shift+7 { move-column-to-workspace 7; }
+    Mod+Shift+8 { move-column-to-workspace 8; }
+    Mod+Shift+9 { move-column-to-workspace 9; }
+    // -------- workspaces -------- //
+	
+    // -------- columns -------- //
+    Mod+M { maximize-column; }
+    Mod+Shift+m { fullscreen-window; }
+    Mod+Ctrl+m { expand-column-to-available-width; }
+
+    Mod+W { center-column; }
+
+    Mod+Minus { set-column-width "-10%"; }
+    Mod+Equal { set-column-width "+10%"; }
+    Mod+Shift+Minus { set-window-height "-10%"; }
+    Mod+Shift+Equal { set-window-height "+10%"; }
+
+    Mod+C { toggle-column-tabbed-display; }
+    // -------- columns -------- //
+    
+    // -------- floating --------- //
+    Mod+Shift+Space       { toggle-window-floating; }
+    Mod+Space { switch-focus-between-floating-and-tiling; }
+    // -------- floating --------- //
+    
+    // -------- screenshots -------- //
+    Mod+Print { screenshot-screen; }
+    Mod+Shift+Print { screenshot; }
+    Mod+Ctrl+Print { screenshot-window; }
+
+}
+// -------- BINDS -------- //
+
+// -------- OTHER -------- //
+screenshot-path "~/Pictures/screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
+prefer-no-csd
+// -------- OTHER -------- //
