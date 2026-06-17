@@ -181,16 +181,19 @@ configure_network() {
 
 partition_disk() {
     step "Partitioning $DISK..."
-    parted -s "$DISK" mklabel gpt                     || die "mklabel failed"
-    parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB    || die "EFI partition failed"
-    parted -s "$DISK" set 1 esp on                    || die "esp flag failed"
-    parted -s "$DISK" mkpart primary ext4 513MiB 100% || die "root partition failed"
+    parted -s "$DISK" mklabel gpt                      || die "mklabel failed"
+    parted -s "$DISK" mkpart bios_boot 1MiB 2MiB       || die "BIOS boot partition failed"
+    parted -s "$DISK" set 1 bios_grub on               || die "bios_grub flag failed"
+    parted -s "$DISK" mkpart ESP fat32 2MiB 514MiB     || die "EFI partition failed"
+    parted -s "$DISK" set 2 esp on                     || die "esp flag failed"
+    parted -s "$DISK" mkpart primary ext4 514MiB 100%  || die "root partition failed"
     partprobe "$DISK" 2>/dev/null; sleep 2
     if [[ "$DISK" == *nvme* ]]; then
-        EFI="${DISK}p1"; ROOT="${DISK}p2"
+        BIOS="${DISK}p1"; EFI="${DISK}p2"; ROOT="${DISK}p3"
     else
-        EFI="${DISK}1";  ROOT="${DISK}2"
+        BIOS="${DISK}1";  EFI="${DISK}2";  ROOT="${DISK}3"
     fi
+    [ -b "$BIOS" ] || die "BIOS boot partition $BIOS not found"
     [ -b "$EFI"  ] || die "EFI partition $EFI not found"
     [ -b "$ROOT" ] || die "Root partition $ROOT not found"
     mkfs.fat -F32 -n EFI "$EFI"      || die "mkfs.fat failed"
@@ -456,15 +459,11 @@ GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 GRUBDEF
 
-    chroot /mnt grub-install \
-        --target=x86_64-efi \
-        --efi-directory=/boot/efi \
-        --bootloader-id=BorealOS \
-        --removable \
-        --recheck \
-        2>&1 || die "grub-install failed"
+    chroot /mnt grub-install         --target=i386-pc         "$DISK"         2>&1 || die "BIOS grub-install failed"
 
-    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ] || die "BOOTX64.EFI not written by grub-install"
+    chroot /mnt grub-install         --target=x86_64-efi         --efi-directory=/boot/efi         --bootloader-id=BorealOS         --removable         --recheck         2>&1 || warn "EFI grub-install failed (ok if VM is BIOS-only)"
+
+    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ] || warn "BOOTX64.EFI missing (ok if VM is BIOS-only)"
 
     KVER=$(ls /mnt/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|/mnt/boot/vmlinuz-||')
     [ -n "$KVER" ] || die "No kernel found in /mnt/boot"
@@ -511,7 +510,7 @@ install_wallpapers() {
 verify() {
     step "Verifying..."
     local fail=0
-    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ]    || { warn "BOOTX64.EFI missing";        fail=1; }
+    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ]    || warn "BOOTX64.EFI missing (ok if BIOS-only VM)"
     [ -f /mnt/boot/efi/EFI/BOOT/grub.cfg ]        || { warn "EFI grub.cfg missing";       fail=1; }
     [ -f /mnt/boot/grub/grub.cfg ]                 || { warn "grub.cfg missing";           fail=1; }
     [ -f /mnt/etc/fstab ]                          || { warn "fstab missing";              fail=1; }

@@ -147,6 +147,7 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
     linux-image-amd64 \
     grub-efi-amd64 \
+    grub-pc-bin \
     efibootmgr \
     live-boot \
     live-boot-initramfs-tools \
@@ -167,6 +168,7 @@ apt-get install -y --no-install-recommends \
     libefivar1 \
     libefiboot1 \
     grub-efi-amd64 \
+    grub-pc-bin \
     grub-efi-amd64-bin \
     grub-common \
     os-prober \
