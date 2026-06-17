@@ -11,12 +11,12 @@ EFI="" ROOT="" DISK=""
 DE_CHOICE="" SHELL_BIN=""
 NET_TYPE="" NET_IF="" NET_IP="" NET_GW="" NET_DNS=""
 HOSTNAME="" LOCALE="" TIMEZONE=""
-ROOT_PASS=""
+ROOT_PASS="" ROOT_UUID="" EFI_UUID=""
 
 die() {
     echo -e "\n${RED}${BLD}FATAL: $1${RST}" >&2
-    echo -e "${RED}Dropping to shell. Type 'exit' to quit.${RST}"
     cleanup
+    echo -e "${RED}Dropping to shell.${RST}"
     bash
     exit 1
 }
@@ -92,8 +92,8 @@ check_assets() {
     [ -f /opt/borealOS/background_2.png ] || die "Wallpaper missing."
     [ -f /opt/borealOS/de ]               || die "/opt/borealOS/de missing."
     [ -f /opt/borealOS/shell ]            || die "/opt/borealOS/shell missing."
-    command -v rsync >/dev/null            || die "rsync not found in live env."
-    command -v openssl >/dev/null          || die "openssl not found in live env."
+    command -v rsync        >/dev/null     || die "rsync not in live env."
+    command -v grub-install >/dev/null     || die "grub-install not in live env."
     DE_CHOICE=$(cat /opt/borealOS/de)
     SHELL_BIN=$(cat /opt/borealOS/shell)
 }
@@ -109,128 +109,9 @@ select_disk() {
     confirm "Continue?" || die "Aborted."
 }
 
-partition_disk() {
-    step "Partitioning $DISK..."
-    parted -s "$DISK" mklabel gpt                     || die "mklabel failed"
-    parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB    || die "EFI partition failed"
-    parted -s "$DISK" set 1 esp on                    || die "esp flag failed"
-    parted -s "$DISK" mkpart primary ext4 513MiB 100% || die "root partition failed"
-    partprobe "$DISK" 2>/dev/null; sleep 1
-    if [[ "$DISK" == *nvme* ]]; then
-        EFI="${DISK}p1"; ROOT="${DISK}p2"
-    else
-        EFI="${DISK}1";  ROOT="${DISK}2"
-    fi
-    [ -b "$EFI"  ] || die "EFI partition $EFI not found after partitioning."
-    [ -b "$ROOT" ] || die "Root partition $ROOT not found after partitioning."
-    mkfs.fat -F32 -n EFI "$EFI"      || die "mkfs.fat failed"
-    mkfs.ext4 -F -L borealOS "$ROOT" || die "mkfs.ext4 failed"
-    ROOT_UUID=$(blkid -s UUID -o value "$ROOT") || die "Could not read root UUID"
-    EFI_UUID=$(blkid -s UUID -o value "$EFI")   || die "Could not read EFI UUID"
-    [ -n "$ROOT_UUID" ] || die "Root UUID is empty"
-    [ -n "$EFI_UUID"  ] || die "EFI UUID is empty"
-    ok "Partitioned. Root UUID: $ROOT_UUID"
-}
-
-mount_target() {
-    step "Mounting..."
-    mount "$ROOT" /mnt              || die "mount root failed"
-    mkdir -p /mnt/boot/efi
-    mount "$EFI" /mnt/boot/efi     || die "mount EFI failed"
-    ok "Mounted."
-}
-
-rsync_system() {
-    step "Copying live system to disk (this takes a while)..."
-    rsync -aAX \
-        --exclude=/proc \
-        --exclude=/sys \
-        --exclude=/dev \
-        --exclude=/run \
-        --exclude=/live \
-        --exclude=/mnt \
-        --exclude=/media \
-        --exclude=/tmp \
-        --exclude=/opt/borealOS \
-        --exclude=/usr/local/bin/borealOS-install \
-        --exclude=/etc/profile.d/live-welcome.sh \
-        / /mnt/ || die "rsync failed"
-    mkdir -p /mnt/proc /mnt/sys /mnt/dev /mnt/run /mnt/tmp
-    chmod 1777 /mnt/tmp
-    ok "System copied."
-}
-
-install_wallpapers() {
-    step "Installing wallpapers..."
-    mkdir -p /mnt/usr/share/wallpapers/BorealOS
-    cp /opt/borealOS/background_2.png   /mnt/usr/share/wallpapers/BorealOS/default.png || die "wallpaper copy failed"
-    cp /opt/borealOS/background_one.png /mnt/usr/share/wallpapers/BorealOS/waves.png   || die "wallpaper copy failed"
-    mkdir -p /mnt/usr/share/pixmaps
-    cp /opt/borealOS/logo.png /mnt/usr/share/pixmaps/borealOS-logo.png                 || die "logo copy failed"
-    ok "Wallpapers installed."
-}
-
-write_fstab() {
-    step "Writing /etc/fstab..."
-    cat > /mnt/etc/fstab <<FSTAB
-UUID=${ROOT_UUID}  /         ext4  errors=remount-ro  0  1
-UUID=${EFI_UUID}   /boot/efi vfat  umask=0077         0  2
-FSTAB
-    ok "fstab written."
-}
-
-write_network() {
-    [ "$NET_TYPE" = "Skip" ] && return
-    step "Writing network config..."
-    mkdir -p /mnt/etc/NetworkManager/system-connections
-    local NMFILE="/mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
-    if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        cat > "$NMFILE" <<NMC
-[connection]
-id=${NET_IF}
-type=ethernet
-interface-name=${NET_IF}
-[ipv4]
-method=auto
-[ipv6]
-method=auto
-NMC
-    else
-        cat > "$NMFILE" <<NMC
-[connection]
-id=${NET_IF}
-type=ethernet
-interface-name=${NET_IF}
-[ipv4]
-method=manual
-addresses=${NET_IP}
-gateway=${NET_GW}
-dns=${NET_DNS}
-[ipv6]
-method=auto
-NMC
-    fi
-    chmod 600 "$NMFILE"
-    ok "Network config written."
-}
-
-bind_mounts() {
-    for d in dev proc sys run; do
-        mount --bind /$d /mnt/$d || die "bind mount /$d failed"
-    done
-}
-
-unbind_mounts() {
-    umount -R /mnt/dev  2>/dev/null || true
-    umount -R /mnt/proc 2>/dev/null || true
-    umount -R /mnt/sys  2>/dev/null || true
-    umount -R /mnt/run  2>/dev/null || true
-}
-
 select_timezone() {
     banner
-    echo -e "${BLD}Timezone selection${RST}"
-    echo "Type part of a timezone to filter (e.g. 'Europe', 'Berlin'). Leave blank for all."
+    echo -e "${BLD}Timezone${RST} - type to filter (e.g. Europe, Berlin)"
     echo
     echo -ne "${CYN}Filter${RST}: "
     read -r tz_filter
@@ -243,17 +124,17 @@ select_timezone() {
         ask "Timezone" TIMEZONE "UTC"; return
     fi
     if [ ${#tz_list[@]} -gt 40 ]; then
-        echo -e "${RED}${#tz_list[@]} results — refine your filter.${RST}"
+        echo -e "${RED}${#tz_list[@]} results - refine filter.${RST}"
         select_timezone; return
     fi
     for i in "${!tz_list[@]}"; do echo "  $((i+1))) ${tz_list[$i]}"; done
     echo
     while true; do
-        echo -ne "${CYN}Choice (0=enter manually)${RST}: "
-        read -r choice
-        [ "$choice" = "0" ] && { ask "Timezone" TIMEZONE "UTC"; return; }
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#tz_list[@]} )); then
-            TIMEZONE="${tz_list[$((choice-1))]}"; return
+        echo -ne "${CYN}Choice (0=manual)${RST}: "
+        read -r c
+        [ "$c" = "0" ] && { ask "Timezone" TIMEZONE "UTC"; return; }
+        if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c <= ${#tz_list[@]} )); then
+            TIMEZONE="${tz_list[$((c-1))]}"; return
         fi
         echo -e "${RED}Invalid.${RST}"
     done
@@ -269,11 +150,10 @@ get_user_info() {
 
 get_extra_users() {
     banner
-    echo -e "${BLD}Extra user accounts${RST}"
-    echo "Leave username blank to stop."
+    echo -e "${BLD}Extra user accounts${RST} - leave blank to stop"
     echo
     while true; do
-        echo -ne "${CYN}Username (blank to stop)${RST}: "
+        echo -ne "${CYN}Username (blank=done)${RST}: "
         read -r uname
         [ -z "$uname" ] && break
         ask_pass "Password for $uname" upass
@@ -299,9 +179,120 @@ configure_network() {
     fi
 }
 
+partition_disk() {
+    step "Partitioning $DISK..."
+    parted -s "$DISK" mklabel gpt                     || die "mklabel failed"
+    parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB    || die "EFI partition failed"
+    parted -s "$DISK" set 1 esp on                    || die "esp flag failed"
+    parted -s "$DISK" mkpart primary ext4 513MiB 100% || die "root partition failed"
+    partprobe "$DISK" 2>/dev/null; sleep 2
+    if [[ "$DISK" == *nvme* ]]; then
+        EFI="${DISK}p1"; ROOT="${DISK}p2"
+    else
+        EFI="${DISK}1";  ROOT="${DISK}2"
+    fi
+    [ -b "$EFI"  ] || die "EFI partition $EFI not found"
+    [ -b "$ROOT" ] || die "Root partition $ROOT not found"
+    mkfs.fat -F32 -n EFI "$EFI"      || die "mkfs.fat failed"
+    mkfs.ext4 -F -L borealOS "$ROOT" || die "mkfs.ext4 failed"
+    sleep 1
+    ROOT_UUID=$(blkid -s UUID -o value "$ROOT") || die "blkid root failed"
+    EFI_UUID=$(blkid -s UUID -o value "$EFI")   || die "blkid efi failed"
+    [ -n "$ROOT_UUID" ] || die "Root UUID empty"
+    [ -n "$EFI_UUID"  ] || die "EFI UUID empty"
+    ok "Root UUID: $ROOT_UUID"
+    ok "EFI UUID:  $EFI_UUID"
+}
+
+mount_target() {
+    step "Mounting..."
+    mount "$ROOT" /mnt           || die "mount root failed"
+    mkdir -p /mnt/boot/efi
+    mount "$EFI" /mnt/boot/efi  || die "mount EFI failed"
+    ok "Mounted."
+}
+
+rsync_system() {
+    step "Copying live system to disk..."
+    rsync -aAX \
+        --exclude=/proc/* \
+        --exclude=/sys/* \
+        --exclude=/dev/* \
+        --exclude=/run/* \
+        --exclude=/tmp/* \
+        --exclude=/mnt/* \
+        --exclude=/media/* \
+        --exclude=/live \
+        --exclude=/boot/grub \
+        --exclude=/boot/efi \
+        --exclude=/opt/borealOS \
+        --exclude=/usr/local/bin/borealOS-install \
+        --exclude=/etc/profile.d/live-welcome.sh \
+        / /mnt/ || die "rsync failed"
+    mkdir -p /mnt/{proc,sys,dev,run,tmp,boot/grub,boot/efi}
+    chmod 1777 /mnt/tmp
+    ok "System copied."
+}
+
+bind_mounts() {
+    for d in dev proc sys run; do
+        mount --bind /$d /mnt/$d || die "bind mount /$d failed"
+    done
+}
+
+unbind_mounts() {
+    for d in dev proc sys run; do
+        umount -l /mnt/$d 2>/dev/null || true
+    done
+}
+
+write_fstab() {
+    step "Writing fstab..."
+    cat > /mnt/etc/fstab <<FSTAB
+UUID=${ROOT_UUID}  /         ext4  errors=remount-ro  0  1
+UUID=${EFI_UUID}   /boot/efi vfat  umask=0077         0  2
+FSTAB
+    ok "fstab written."
+}
+
+write_network() {
+    [ "$NET_TYPE" = "Skip" ] && return
+    step "Writing network config..."
+    mkdir -p /mnt/etc/NetworkManager/system-connections
+    local f="/mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
+    if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
+        cat > "$f" <<NMC
+[connection]
+id=${NET_IF}
+type=ethernet
+interface-name=${NET_IF}
+[ipv4]
+method=auto
+[ipv6]
+method=auto
+NMC
+    else
+        cat > "$f" <<NMC
+[connection]
+id=${NET_IF}
+type=ethernet
+interface-name=${NET_IF}
+[ipv4]
+method=manual
+addresses=${NET_IP}
+gateway=${NET_GW}
+dns=${NET_DNS}
+[ipv6]
+method=auto
+NMC
+    fi
+    chmod 600 "$f"
+    ok "Network config written."
+}
+
 configure_system() {
-    step "Configuring base system..."
-    chroot /mnt /bin/bash <<CHROOT || die "Base configuration failed"
+    step "Configuring system..."
+    chroot /mnt /bin/bash <<CHROOT || die "System configuration failed"
 set -e
 echo "${HOSTNAME}" > /etc/hostname
 cat > /etc/hosts <<HOSTS
@@ -311,8 +302,8 @@ cat > /etc/hosts <<HOSTS
 HOSTS
 ln -sf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime
 echo "${TIMEZONE}" > /etc/timezone
+sed -i "s|^# *${LOCALE}|${LOCALE}|" /etc/locale.gen 2>/dev/null || true
 grep -q "^${LOCALE}" /etc/locale.gen 2>/dev/null || echo "${LOCALE} UTF-8" >> /etc/locale.gen
-sed -i "s/^# *${LOCALE}/${LOCALE}/" /etc/locale.gen 2>/dev/null || true
 locale-gen
 echo "LANG=${LOCALE}" > /etc/locale.conf
 cat > /etc/os-release <<OS
@@ -334,45 +325,36 @@ echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 CHROOT
-    ok "Base configured."
+    ok "System configured."
 }
 
 set_passwords() {
     step "Setting passwords..."
-    printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt chpasswd || die "Failed to set root password"
+    printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt chpasswd || die "root password failed"
     for entry in "${EXTRA_USERS[@]}"; do
         local uname="${entry%%|*}"
         local upass="${entry##*|}"
         chroot /mnt useradd -m -G sudo,audio,video,netdev -s "$SHELL_BIN" "$uname" 2>/dev/null || \
         chroot /mnt useradd -m -G sudo,audio,video -s "$SHELL_BIN" "$uname" || \
         die "useradd failed for $uname"
-        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt chpasswd || die "Failed to set password for $uname"
+        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
     done
     ok "Passwords set."
 }
 
 remove_live_boot() {
-    step "Removing live-boot hooks from installed system..."
-
-    chroot /mnt dpkg -r --force-depends live-boot live-boot-initramfs-tools live-config live-config-systemd 2>/dev/null || true
-
-    # Remove all live-boot hooks manually regardless of dpkg success
-    for dir in /mnt/usr/share/initramfs-tools/hooks                 /mnt/usr/share/initramfs-tools/scripts                 /mnt/etc/initramfs-tools/hooks                 /mnt/etc/initramfs-tools/scripts; do
-        find "$dir" -name "*live*" -delete 2>/dev/null || true
-    done
+    step "Removing live-boot..."
+    chroot /mnt dpkg -r --force-depends \
+        live-boot live-boot-initramfs-tools \
+        live-config live-config-systemd 2>/dev/null || true
+    find /mnt/usr/share/initramfs-tools \
+         /mnt/etc/initramfs-tools \
+         /mnt/etc/grub.d \
+         -name "*live*" -delete 2>/dev/null || true
     rm -rf /mnt/lib/live /mnt/usr/lib/live 2>/dev/null || true
-    rm -f /mnt/etc/live /mnt/etc/live.conf 2>/dev/null || true
-
-    # Verify no live hooks remain
-    if find /mnt/usr/share/initramfs-tools /mnt/etc/initramfs-tools -name "*live*" 2>/dev/null | grep -q .; then
-        warn "Some live-boot hooks could not be removed - initrd may be broken"
-    fi
-
-    step "Rebuilding initramfs without live-boot..."
-    chroot /mnt update-initramfs -u -k all 2>&1 | tail -5 || die "update-initramfs failed"
-
-    # Verify initrd exists
-    ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd found after update-initramfs"
+    step "Rebuilding initramfs..."
+    chroot /mnt update-initramfs -u -k all || die "update-initramfs failed"
+    ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd after rebuild"
     ok "live-boot removed, initramfs rebuilt."
 }
 
@@ -402,12 +384,12 @@ INITTAB
 }
 
 setup_de() {
-    step "Configuring DE/WM: $DE_CHOICE..."
+    step "Configuring DE: $DE_CHOICE..."
     mkdir -p /mnt/etc/runlevels/default
+    ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
     case "$DE_CHOICE" in
         "KDE Plasma")
-            ln -sf /etc/init.d/sddm    /mnt/etc/runlevels/default/sddm    2>/dev/null || true
-            ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
+            ln -sf /etc/init.d/sddm /mnt/etc/runlevels/default/sddm 2>/dev/null || true
             mkdir -p /mnt/etc/sddm.conf.d
             cat > /mnt/etc/sddm.conf.d/borealos.conf <<SDDM
 [General]
@@ -418,7 +400,6 @@ SDDM
             ;;
         "XFCE")
             ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm 2>/dev/null || true
-            ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
             mkdir -p /mnt/etc/lightdm
             cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
@@ -442,7 +423,6 @@ LDM
 XFCE
             ;;
         "Sway")
-            ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
             mkdir -p /mnt/etc/sway
             cat > /mnt/etc/sway/config <<SWAY
 set \$mod Mod4
@@ -458,52 +438,97 @@ bar {
 }
 SWAY
             ;;
-        *)
-            ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
-            ;;
     esac
     ok "DE configured."
 }
 
 install_grub() {
     step "Installing GRUB..."
-    cat > /mnt/etc/default/grub <<GRUBCFG
+
+    rm -rf /mnt/boot/efi/EFI 2>/dev/null || true
+
+    cat > /mnt/etc/default/grub <<GRUBDEF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR=BorealOS
 GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
 GRUB_CMDLINE_LINUX=""
-GRUBCFG
+GRUB_DISABLE_OS_PROBER=true
+GRUBDEF
 
-    chroot /mnt grub-install         --target=x86_64-efi         --efi-directory=/boot/efi         --bootloader-id=BorealOS         --removable         --recheck         || die "grub-install failed"
+    chroot /mnt grub-install \
+        --target=x86_64-efi \
+        --efi-directory=/boot/efi \
+        --bootloader-id=BorealOS \
+        --removable \
+        --recheck \
+        2>&1 || die "grub-install failed"
 
-    chroot /mnt update-grub 2>&1 ||     chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg 2>&1 ||     die "grub-mkconfig failed"
+    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ] || die "BOOTX64.EFI not written by grub-install"
 
-    # --removable writes directly to EFI/BOOT/BOOTX64.EFI
-    # but copy anyway as belt-and-suspenders
-    mkdir -p /mnt/boot/efi/EFI/BOOT
-    find /mnt/boot/efi/EFI/BorealOS -name "grubx64.efi" 2>/dev/null | head -1 |         xargs -I{} cp {} /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
+    KVER=$(ls /mnt/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|/mnt/boot/vmlinuz-||')
+    [ -n "$KVER" ] || die "No kernel found in /mnt/boot"
+    [ -f "/mnt/boot/initrd.img-${KVER}" ] || die "No initrd for kernel $KVER"
 
-    step "EFI partition contents:"
-    find /mnt/boot/efi -type f | sort
-    step "grub.cfg preview:"
-    grep -E "menuentry|linux|initrd|search|set root" /mnt/boot/grub/grub.cfg 2>/dev/null | head -20
-    ok "GRUB installed."
+    cat > /mnt/boot/efi/EFI/BOOT/grub.cfg <<EGCFG
+search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+set prefix=(\$root)/boot/grub
+configfile (\$root)/boot/grub/grub.cfg
+EGCFG
+
+    mkdir -p /mnt/boot/grub
+    cat > /mnt/boot/grub/grub.cfg <<GCFG
+set default=0
+set timeout=5
+set menu_color_normal=cyan/black
+set menu_color_highlight=black/cyan
+
+menuentry "BorealOS 1.0" {
+    search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet splash
+    initrd /boot/initrd.img-${KVER}
+}
+menuentry "BorealOS 1.0 (recovery)" {
+    search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro single
+    initrd /boot/initrd.img-${KVER}
+}
+GCFG
+
+    ok "GRUB installed. Kernel: $KVER"
+}
+
+install_wallpapers() {
+    step "Installing wallpapers..."
+    mkdir -p /mnt/usr/share/wallpapers/BorealOS
+    cp /opt/borealOS/background_2.png   /mnt/usr/share/wallpapers/BorealOS/default.png || die "wallpaper copy failed"
+    cp /opt/borealOS/background_one.png /mnt/usr/share/wallpapers/BorealOS/waves.png
+    mkdir -p /mnt/usr/share/pixmaps
+    cp /opt/borealOS/logo.png /mnt/usr/share/pixmaps/borealOS-logo.png
+    ok "Wallpapers installed."
 }
 
 verify() {
-    step "Verifying installation..."
+    step "Verifying..."
     local fail=0
-    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ] || { warn "BOOTX64.EFI missing!"; fail=1; }
-    [ -f /mnt/boot/grub/grub.cfg ]             || { warn "grub.cfg missing!"; fail=1; }
-    [ -f /mnt/etc/fstab ]                      || { warn "fstab missing!"; fail=1; }
-    ls /mnt/boot/vmlinuz-* >/dev/null 2>&1     || { warn "No kernel in /boot!"; fail=1; }
-    ls /mnt/boot/initrd.img-* >/dev/null 2>&1  || { warn "No initrd in /boot!"; fail=1; }
-    [ "$fail" = "1" ] && die "Verification failed — see warnings above."
+    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ]    || { warn "BOOTX64.EFI missing";        fail=1; }
+    [ -f /mnt/boot/efi/EFI/BOOT/grub.cfg ]        || { warn "EFI grub.cfg missing";       fail=1; }
+    [ -f /mnt/boot/grub/grub.cfg ]                 || { warn "grub.cfg missing";           fail=1; }
+    [ -f /mnt/etc/fstab ]                          || { warn "fstab missing";              fail=1; }
+    ls /mnt/boot/vmlinuz-* >/dev/null 2>&1         || { warn "No kernel";                 fail=1; }
+    ls /mnt/boot/initrd.img-* >/dev/null 2>&1      || { warn "No initrd";                 fail=1; }
+    grep -q "${ROOT_UUID}" /mnt/boot/grub/grub.cfg || { warn "UUID not in grub.cfg";      fail=1; }
+    grep -q "${ROOT_UUID}" /mnt/etc/fstab          || { warn "UUID not in fstab";         fail=1; }
+    grep -q "boot=live" /mnt/boot/grub/grub.cfg    && { warn "boot=live in grub.cfg!";   fail=1; }
+    [ "$fail" = "1" ] && die "Verification failed."
     ok "All checks passed."
 }
 
-cleanup() { umount -R /mnt 2>/dev/null || true; }
+cleanup() {
+    unbind_mounts 2>/dev/null || true
+    umount /mnt/boot/efi 2>/dev/null || true
+    umount /mnt 2>/dev/null || true
+}
 
 finish() {
     banner
@@ -528,7 +553,7 @@ main() {
     check_root
     check_assets
     banner
-    echo -e "${BLD}Welcome to the BorealOS Installer${RST}"
+    echo -e "${BLD}BorealOS Installer${RST}"
     echo -e "  DE: ${DE_CHOICE}  |  Shell: ${SHELL_BIN}"
     echo
     confirm "Begin?" || die "Aborted."
@@ -569,5 +594,5 @@ main() {
     finish
 }
 
-trap 'unbind_mounts; cleanup' EXIT
+trap 'unbind_mounts 2>/dev/null; umount /mnt/boot/efi 2>/dev/null; umount /mnt 2>/dev/null' EXIT
 main
