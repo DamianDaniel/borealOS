@@ -15,7 +15,7 @@ set $menu rofi -show drun
 # -------- Monitor Configuration -------- #
 # output <name> mode <resx> <resy>@<refresh>Hz <posx> <posy> <extra_args>
 output DP-1 mode 1920x1080@60Hz allow_tearing on
-output * background /usr/share/boreal-artwork/boreal-neue-background-wallpaper-blurred.png fill
+output * background /usr/share/boreal-artwork/boreal-banner-neue-blurred.png fill
 # -------- Monitor Configuration -------- #
 
 # -------- Window Rules -------- #
@@ -35,7 +35,7 @@ input type:keyboard {
 
 
 # --------- Theme -------- #
-seat seat0 xcursor_theme Bibata-Modern-Classic 24
+#seat seat0 xcursor_theme <cursor_name> 24
 gaps inner 10
 gaps outer 10
 default_border none
