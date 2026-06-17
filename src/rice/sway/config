@@ -15,7 +15,7 @@ set $menu rofi -show drun
 # -------- Monitor Configuration -------- #
 # output <name> mode <resx> <resy>@<refresh>Hz <posx> <posy> <extra_args>
 output DP-1 mode 1920x1080@60Hz allow_tearing on
-output * background /usr/share/boreal-artwork/boreal-banner-neue-blurred.png fill
+output * background /usr/share/boreal-artwork/background-ultrawide-logo-neue.png fill
 # -------- Monitor Configuration -------- #
 
 # -------- Window Rules -------- #
