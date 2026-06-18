@@ -204,8 +204,6 @@ apt-get install -y --no-install-recommends \
     os-prober \
     python3 \
     rsync \
-    fastfetch \
-    kitty \
     $SHELL_PKG
 
 apt-get install -y \
@@ -219,8 +217,8 @@ apt-get install -y \
     xterm \
     xwayland
 
-for pkg in $DE_PKGS; do
-    apt-get install -y "$pkg" || warn "Optional package not found: $pkg"
+for pkg in fastfetch kitty $DE_PKGS; do
+    apt-get install -y "$pkg" || echo "WARN: optional package not found: $pkg"
 done
 
 echo 'root:borealOS' | chpasswd

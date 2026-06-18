@@ -267,11 +267,7 @@ iface lo inet loopback
 IFACES
 
     if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        cat >> /mnt/etc/network/interfaces <<IFACES
-
-auto ${NET_IF}
-iface ${NET_IF} inet dhcp
-IFACES
+        true
         mkdir -p /mnt/etc/NetworkManager/system-connections
         cat > /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
 [connection]
