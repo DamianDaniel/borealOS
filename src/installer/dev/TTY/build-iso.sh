@@ -227,6 +227,12 @@ for pkg in fastfetch kitty; do
 done
 
 echo 'root:borealOS' | chpasswd
+
+for dm in lightdm sddm gdm3 xdm; do
+    rm -f /etc/runlevels/default/\$dm 2>/dev/null || true
+    find /etc/rc*.d -name "*\$dm*" -delete 2>/dev/null || true
+    update-rc.d \$dm disable 2>/dev/null || true
+done
 CHROOT
 
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"

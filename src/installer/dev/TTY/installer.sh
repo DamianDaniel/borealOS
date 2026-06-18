@@ -157,8 +157,12 @@ get_extra_users() {
         read -r uname
         [ -z "$uname" ] && break
         ask_pass "Password for $uname" upass
-        EXTRA_USERS+=("${uname}|${upass}")
-        ok "Added: $uname"
+        local usudo="n"
+        echo -ne "${CYN}Give $uname sudo rights? [y/N]${RST}: "
+        read -r usudo
+        [[ "$usudo" =~ ^[Yy]$ ]] && usudo="y" || usudo="n"
+        EXTRA_USERS+=("${uname}|${upass}|${usudo}")
+        ok "Added: $uname (sudo: $usudo)"
     done
 }
 
@@ -259,58 +263,63 @@ FSTAB
 }
 
 write_network() {
-    step "Writing network config..."
-
     cat > /mnt/etc/network/interfaces <<IFACES
 auto lo
 iface lo inet loopback
 IFACES
+    rm -rf /mnt/etc/network/interfaces.d/* 2>/dev/null || true
+
+    mkdir -p /mnt/etc/NetworkManager
+    cat > /mnt/etc/NetworkManager/NetworkManager.conf <<NMCONF
+[main]
+plugins=keyfile
+dhcp=internal
+
+[ifupdown]
+managed=false
+
+[device]
+wifi.scan-rand-mac-address=no
+NMCONF
+
+    [ "$NET_TYPE" = "Skip" ] && { ok "Network skipped."; return; }
+
+    step "Writing network config..."
+    mkdir -p /mnt/etc/NetworkManager/system-connections
+    local f="/mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
 
     if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        true
-        mkdir -p /mnt/etc/NetworkManager/system-connections
-        cat > /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
+        cat > "$f" <<NMC
 [connection]
 id=${NET_IF}
 type=ethernet
 interface-name=${NET_IF}
+autoconnect=true
+
 [ipv4]
 method=auto
+
 [ipv6]
 method=auto
 NMC
-        chmod 600 /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection
-    elif [ "$NET_TYPE" = "Static IP" ]; then
-        cat >> /mnt/etc/network/interfaces <<IFACES
-
-auto ${NET_IF}
-iface ${NET_IF} inet static
-    address ${NET_IP}
-    gateway ${NET_GW}
-    dns-nameservers ${NET_DNS}
-IFACES
-        mkdir -p /mnt/etc/NetworkManager/system-connections
-        cat > /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
+    else
+        cat > "$f" <<NMC
 [connection]
 id=${NET_IF}
 type=ethernet
 interface-name=${NET_IF}
+autoconnect=true
+
 [ipv4]
 method=manual
-addresses=${NET_IP}
-gateway=${NET_GW}
-dns=${NET_DNS}
+address1=${NET_IP},${NET_GW}
+dns=${NET_DNS};
+
 [ipv6]
 method=auto
 NMC
-        chmod 600 /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection
-    else
-        cat >> /mnt/etc/network/interfaces <<IFACES
-
-allow-hotplug eth0
-iface eth0 inet dhcp
-IFACES
     fi
+    chmod 600 "$f"
     ok "Network config written."
 }
 
@@ -365,11 +374,14 @@ set_passwords() {
     printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt chpasswd || die "root password failed"
     for entry in "${EXTRA_USERS[@]}"; do
         local uname="${entry%%|*}"
-        local upass="${entry##*|}"
-        chroot /mnt useradd -m -G sudo,audio,video,netdev -s "$SHELL_BIN" "$uname" 2>/dev/null || \
-        chroot /mnt useradd -m -G sudo,audio,video -s "$SHELL_BIN" "$uname" || \
-        die "useradd failed for $uname"
-        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
+        local rest="${entry#*|}"
+        local upass="${rest%%|*}"
+        local usudo="${rest##*|}"
+        local groups="audio,video,netdev"
+        [ "$usudo" = "y" ] && groups="sudo,${groups}"
+        chroot /mnt useradd -m -G "$groups" -s "$SHELL_BIN" "$uname" 2>/dev/null ||         chroot /mnt useradd -m -G "audio,video" -s "$SHELL_BIN" "$uname" ||         die "useradd failed for $uname"
+        printf '%s:%s
+' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
     done
     ok "Passwords set."
 }
@@ -417,12 +429,10 @@ INITTAB
 
 setup_de() {
     step "Configuring DE: $DE_CHOICE..."
-    mkdir -p /mnt/etc/runlevels/default
-    ln -sf /etc/init.d/networking    /mnt/etc/runlevels/default/networking    2>/dev/null || true
+    mkdir -p /mnt/etc/runlevels/default /mnt/etc/rc2.d
+    rm -f /mnt/etc/rc2.d/S*networking /mnt/etc/runlevels/default/networking 2>/dev/null || true
     ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
-    mkdir -p /mnt/etc/rc2.d
-    ln -sf ../init.d/networking     /mnt/etc/rc2.d/S01networking     2>/dev/null || true
-    ln -sf ../init.d/NetworkManager /mnt/etc/rc2.d/S02NetworkManager 2>/dev/null || true
+    ln -sf ../init.d/NetworkManager   /mnt/etc/rc2.d/S02NetworkManager         2>/dev/null || true
     case "$DE_CHOICE" in
         "KDE Plasma")
             ln -sf /etc/init.d/sddm /mnt/etc/runlevels/default/sddm 2>/dev/null || true
