@@ -259,12 +259,21 @@ FSTAB
 }
 
 write_network() {
-    [ "$NET_TYPE" = "Skip" ] && return
     step "Writing network config..."
-    mkdir -p /mnt/etc/NetworkManager/system-connections
-    local f="/mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
+
+    cat > /mnt/etc/network/interfaces <<IFACES
+auto lo
+iface lo inet loopback
+IFACES
+
     if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        cat > "$f" <<NMC
+        cat >> /mnt/etc/network/interfaces <<IFACES
+
+auto ${NET_IF}
+iface ${NET_IF} inet dhcp
+IFACES
+        mkdir -p /mnt/etc/NetworkManager/system-connections
+        cat > /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
 [connection]
 id=${NET_IF}
 type=ethernet
@@ -274,8 +283,18 @@ method=auto
 [ipv6]
 method=auto
 NMC
-    else
-        cat > "$f" <<NMC
+        chmod 600 /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection
+    elif [ "$NET_TYPE" = "Static IP" ]; then
+        cat >> /mnt/etc/network/interfaces <<IFACES
+
+auto ${NET_IF}
+iface ${NET_IF} inet static
+    address ${NET_IP}
+    gateway ${NET_GW}
+    dns-nameservers ${NET_DNS}
+IFACES
+        mkdir -p /mnt/etc/NetworkManager/system-connections
+        cat > /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection <<NMC
 [connection]
 id=${NET_IF}
 type=ethernet
@@ -288,13 +307,27 @@ dns=${NET_DNS}
 [ipv6]
 method=auto
 NMC
+        chmod 600 /mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection
+    else
+        cat >> /mnt/etc/network/interfaces <<IFACES
+
+allow-hotplug eth0
+iface eth0 inet dhcp
+IFACES
     fi
-    chmod 600 "$f"
     ok "Network config written."
 }
 
 configure_system() {
     step "Configuring system..."
+
+    cat > /mnt/etc/apt/sources.list <<SOURCES
+deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+SOURCES
+    rm -f /mnt/etc/apt/sources.list.d/*.list 2>/dev/null || true
+
     chroot /mnt /bin/bash <<CHROOT || die "System configuration failed"
 set -e
 echo "${HOSTNAME}" > /etc/hostname
@@ -389,24 +422,30 @@ INITTAB
 setup_de() {
     step "Configuring DE: $DE_CHOICE..."
     mkdir -p /mnt/etc/runlevels/default
+    ln -sf /etc/init.d/networking    /mnt/etc/runlevels/default/networking    2>/dev/null || true
     ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
+    mkdir -p /mnt/etc/rc2.d
+    ln -sf ../init.d/networking     /mnt/etc/rc2.d/S01networking     2>/dev/null || true
+    ln -sf ../init.d/NetworkManager /mnt/etc/rc2.d/S02NetworkManager 2>/dev/null || true
     case "$DE_CHOICE" in
         "KDE Plasma")
             ln -sf /etc/init.d/sddm /mnt/etc/runlevels/default/sddm 2>/dev/null || true
+            ln -sf ../init.d/sddm /mnt/etc/rc2.d/S03sddm 2>/dev/null || true
             mkdir -p /mnt/etc/sddm.conf.d
             cat > /mnt/etc/sddm.conf.d/borealos.conf <<SDDM
 [General]
 DisplayServer=x11
 [Theme]
-Background=/usr/share/wallpapers/BorealOS/default.png
+Background=/usr/share/boreal-artwork/wallpaper-default.png
 SDDM
             ;;
         "XFCE")
             ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm 2>/dev/null || true
+            ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm 2>/dev/null || true
             mkdir -p /mnt/etc/lightdm
             cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
-background=/usr/share/wallpapers/BorealOS/default.png
+background=/usr/share/boreal-artwork/wallpaper-default.png
 LDM
             mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
             cat > /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<XFCE
@@ -416,7 +455,7 @@ LDM
     <property name="screen0" type="empty">
       <property name="monitor0" type="empty">
         <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/wallpapers/BorealOS/default.png"/>
+          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
           <property name="image-style" type="int" value="5"/>
         </property>
       </property>
@@ -429,10 +468,10 @@ XFCE
             mkdir -p /mnt/etc/sway
             cat > /mnt/etc/sway/config <<SWAY
 set \$mod Mod4
-output * bg /usr/share/wallpapers/BorealOS/default.png fill
+output * bg /usr/share/boreal-artwork/wallpaper-default.png fill
 input type:keyboard { xkb_layout us }
 bindsym \$mod+Return exec foot
-bindsym \$mod+d exec dmenu_run
+bindsym \$mod+d exec wofi --show run
 bindsym \$mod+Shift+q kill
 bindsym \$mod+Shift+e exec swaymsg exit
 bar {
@@ -440,6 +479,91 @@ bar {
     colors { background #0d1b2a; statusline #4dffd2 }
 }
 SWAY
+            ;;
+        "Hyprland")
+            mkdir -p /mnt/etc/hypr
+            cat > /mnt/etc/hypr/hyprland.conf <<HYPR
+\$mod = SUPER
+monitor=,preferred,auto,1
+exec-once = waybar
+general {
+    gaps_in = 5
+    gaps_out = 10
+    border_size = 2
+    col.active_border = rgba(4dffd2ff)
+    col.inactive_border = rgba(0d1b2aff)
+}
+decoration {
+    rounding = 8
+    blur { enabled = true; size = 5; passes = 2 }
+}
+bind = \$mod, Return, exec, foot
+bind = \$mod, D, exec, wofi --show run
+bind = \$mod SHIFT, Q, killactive
+bind = \$mod SHIFT, E, exit
+bind = \$mod, left, movefocus, l
+bind = \$mod, right, movefocus, r
+bind = \$mod, up, movefocus, u
+bind = \$mod, down, movefocus, d
+HYPR
+            mkdir -p /mnt/etc/xdg/waybar
+            cat > /mnt/etc/xdg/waybar/config <<WAYBAR
+{
+    "layer": "top",
+    "modules-left": ["hyprland/workspaces"],
+    "modules-center": ["clock"],
+    "modules-right": ["network","cpu","memory"],
+    "clock": { "format": "{:%Y-%m-%d %H:%M}" },
+    "network": { "format-ethernet": "eth {ipaddr}", "format-disconnected": "no net" },
+    "cpu": { "format": "cpu {usage}%" },
+    "memory": { "format": "mem {}%" }
+}
+WAYBAR
+            cat > /mnt/etc/xdg/waybar/style.css <<CSS
+* { font-family: monospace; font-size: 13px; }
+window#waybar { background: #0d1b2a; color: #4dffd2; }
+.modules-left, .modules-right { padding: 0 10px; }
+CSS
+            for u in "${EXTRA_USERS[@]}"; do
+                local uname="${u%%|*}"
+                mkdir -p /mnt/home/${uname}/.config/hypr
+                cp /mnt/etc/hypr/hyprland.conf /mnt/home/${uname}/.config/hypr/hyprland.conf
+                chroot /mnt chown -R ${uname}:${uname} /home/${uname}/.config
+            done
+            ;;
+        "Niri")
+            mkdir -p /mnt/etc/niri
+            cat > /mnt/etc/niri/config.kdl <<NIRI
+input {
+    keyboard { xkb { layout "us" } }
+    touchpad { tap }
+}
+output "Virtual-1" {
+    mode "1920x1080@60"
+    scale 1.0
+}
+layout {
+    gaps 16
+    border { width 2; active-color "#4dffd2"; inactive-color "#0d1b2a" }
+    focus-ring { off }
+}
+binds {
+    Mod+Return { spawn "foot"; }
+    Mod+D { spawn "wofi" "--show" "run"; }
+    Mod+Shift+Q { close-window; }
+    Mod+Shift+E { quit; }
+    Mod+Left  { focus-column-left; }
+    Mod+Right { focus-column-right; }
+    Mod+Up    { focus-window-up; }
+    Mod+Down  { focus-window-down; }
+}
+NIRI
+            for u in "${EXTRA_USERS[@]}"; do
+                local uname="${u%%|*}"
+                mkdir -p /mnt/home/${uname}/.config/niri
+                cp /mnt/etc/niri/config.kdl /mnt/home/${uname}/.config/niri/config.kdl
+                chroot /mnt chown -R ${uname}:${uname} /home/${uname}/.config
+            done
             ;;
     esac
     ok "DE configured."
@@ -497,13 +621,12 @@ GCFG
     ok "GRUB installed. Kernel: $KVER"
 }
 
-install_wallpapers() {
-    step "Installing wallpapers..."
-    mkdir -p /mnt/usr/share/wallpapers/BorealOS
-    cp /opt/borealOS/background_2.png   /mnt/usr/share/wallpapers/BorealOS/default.png || die "wallpaper copy failed"
-    cp /opt/borealOS/background_one.png /mnt/usr/share/wallpapers/BorealOS/waves.png
-    mkdir -p /mnt/usr/share/pixmaps
-    cp /opt/borealOS/logo.png /mnt/usr/share/pixmaps/borealOS-logo.png
+install_artwork() {
+    step "Installing artwork..."
+    mkdir -p /mnt/usr/share/boreal-artwork
+    cp /opt/borealOS/background_2.png   /mnt/usr/share/boreal-artwork/wallpaper-default.png || die "artwork copy failed"
+    cp /opt/borealOS/background_one.png /mnt/usr/share/boreal-artwork/wallpaper-waves.png
+    cp /opt/borealOS/logo.png           /mnt/usr/share/boreal-artwork/logo.png
     ok "Wallpapers installed."
 }
 
@@ -577,7 +700,7 @@ main() {
     partition_disk
     mount_target
     rsync_system
-    install_wallpapers
+    install_artwork
     write_fstab
     write_network
     bind_mounts

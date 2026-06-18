@@ -32,15 +32,19 @@ echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
 echo "  1) KDE Plasma"
 echo "  2) XFCE"
 echo "  3) Sway (Wayland)"
-echo "  4) None (TTY only)"
+echo "  4) Hyprland (Wayland)"
+echo "  5) Niri (Wayland)"
+echo "  6) None (TTY only)"
 while true; do
     echo -ne "${CYN}Choice${RST}: "
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop sddm"; DE_NAME="KDE Plasma"; break ;;
         2) DE_PKGS="xfce4 xfce4-goodies lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; break ;;
-        3) DE_PKGS="sway swaybar swaybg swaylock waybar foot"; DE_NAME="Sway"; break ;;
-        4) DE_PKGS=""; DE_NAME="None"; break ;;
+        3) DE_PKGS="sway swaybar swaybg swaylock waybar foot wofi"; DE_NAME="Sway"; break ;;
+        4) DE_PKGS="hyprland waybar foot wofi xwayland"; DE_NAME="Hyprland"; break ;;
+        5) DE_PKGS="niri foot xwayland"; DE_NAME="Niri"; break ;;
+        6) DE_PKGS=""; DE_NAME="None"; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
 done
@@ -78,6 +82,10 @@ cp "$ROOTFS_TAR"        "$WORK/squashfs-root/opt/borealOS/rootfs.tar.gz" || die 
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_2.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/opt/borealOS/background_one.png"
 cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
+mkdir -p "$WORK/squashfs-root/usr/share/boreal-artwork"
+cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
+cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
+cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 
@@ -109,11 +117,6 @@ echo "BorealOS 1.0"  > "$WORK/squashfs-root/etc/issue.net"
 echo "BorealOS"      > "$WORK/squashfs-root/etc/debian_version"
 echo "borealOS-live" > "$WORK/squashfs-root/etc/hostname"
 
-mkdir -p "$WORK/squashfs-root/usr/share/wallpapers/BorealOS"
-cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/wallpapers/BorealOS/default.png"
-cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/wallpapers/BorealOS/waves.png"
-mkdir -p "$WORK/squashfs-root/usr/share/pixmaps"
-cp "$LOGO" "$WORK/squashfs-root/usr/share/pixmaps/borealOS-logo.png"
 
 
 cat > "$WORK/squashfs-root/etc/profile.d/live-welcome.sh" <<'WELCOME'
