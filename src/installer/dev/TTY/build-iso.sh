@@ -8,6 +8,7 @@ INSTALLER_SH="./installer.sh"
 WALLPAPER_DEFAULT="./background_2.png"
 WALLPAPER_ALT="./background_one.png"
 LOGO="./logo.png"
+RICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../rice"
 
 RED='\033[0;31m'
 GRN='\033[0;32m'
@@ -41,9 +42,9 @@ while true; do
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop sddm"; DE_NAME="KDE Plasma"; break ;;
         2) DE_PKGS="xfce4 xfce4-goodies lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; break ;;
-        3) DE_PKGS="sway swaybar swaybg swaylock waybar foot wofi"; DE_NAME="Sway"; break ;;
-        4) DE_PKGS="hyprland waybar foot wofi xwayland"; DE_NAME="Hyprland"; break ;;
-        5) DE_PKGS="niri foot xwayland"; DE_NAME="Niri"; break ;;
+        3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DE_NAME="Sway"; break ;;
+        4) DE_PKGS="hyprland waybar foot wofi"; DE_NAME="Hyprland"; break ;;
+        5) DE_PKGS="foot"; DE_NAME="Niri"; echo -e "${RED}NOTE: niri has no Debian package. It will not be pre-installed. Configure manually post-install.${RST}"; break ;;
         6) DE_PKGS=""; DE_NAME="None"; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
@@ -91,6 +92,25 @@ chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 
 echo "$DE_NAME"   > "$WORK/squashfs-root/opt/borealOS/de"
 echo "$SHELL_BIN" > "$WORK/squashfs-root/opt/borealOS/shell"
+
+echo "==> Copying rice configs to skel..."
+SKEL="$WORK/squashfs-root/etc/skel"
+copy_rice() {
+    local src="$RICE_DIR/$1" dst="$SKEL/$2"
+    mkdir -p "$(dirname "$dst")"
+    if [ -f "$src" ]; then
+        cp "$src" "$dst" && echo "  copied: $2"
+    else
+        warn "  missing rice config: $1"
+    fi
+}
+copy_rice "fastfetch/config.jsonc" ".config/fastfetch/config.jsonc"
+copy_rice "kitty/kitty.conf"       ".config/kitty/kitty.conf"
+copy_rice "kitty/dark.conf"        ".config/kitty/dark.conf"
+copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
+copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
+copy_rice "sway/config"            ".config/sway/config"
+
 
 echo "==> Applying branding..."
 cat > "$WORK/squashfs-root/etc/os-release" <<OS
@@ -147,22 +167,33 @@ cp /etc/resolv.conf "$WORK/squashfs-root/etc/resolv.conf"
 chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation in chroot failed"
 set -e
 apt-get update -qq
+
 apt-get install -y --no-install-recommends \
     linux-image-amd64 \
     grub-efi-amd64 \
+    grub-efi-amd64-bin \
     grub-pc-bin \
+    grub-common \
     efibootmgr \
     live-boot \
     live-boot-initramfs-tools \
     openrc \
     network-manager \
+    ifupdown \
     parted \
     dosfstools \
     e2fsprogs \
     passwd \
     sudo \
     bash \
+    bash-completion \
     iproute2 \
+    iputils-ping \
+    net-tools \
+    curl \
+    wget \
+    nano \
+    less \
     tzdata \
     locales \
     wpasupplicant \
@@ -170,14 +201,28 @@ apt-get install -y --no-install-recommends \
     libdevmapper1.02.1 \
     libefivar1 \
     libefiboot1 \
-    grub-efi-amd64 \
-    grub-pc-bin \
-    grub-efi-amd64-bin \
-    grub-common \
     os-prober \
     python3 \
     rsync \
-    $DE_PKGS $SHELL_PKG
+    fastfetch \
+    kitty \
+    $SHELL_PKG
+
+apt-get install -y \
+    xserver-xorg \
+    xserver-xorg-core \
+    xserver-xorg-input-all \
+    xserver-xorg-video-all \
+    xinit \
+    xauth \
+    x11-xserver-utils \
+    xterm \
+    xwayland
+
+for pkg in $DE_PKGS; do
+    apt-get install -y "$pkg" || warn "Optional package not found: $pkg"
+done
+
 echo 'root:borealOS' | chpasswd
 CHROOT
 
