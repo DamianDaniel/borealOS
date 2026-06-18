@@ -217,8 +217,13 @@ apt-get install -y \
     xterm \
     xwayland
 
-for pkg in fastfetch kitty $DE_PKGS; do
-    apt-get install -y "$pkg" || echo "WARN: optional package not found: $pkg"
+if [ -n "$DE_PKGS" ]; then
+    apt-get install -y $DE_PKGS || die "Failed to install DE packages: $DE_PKGS"
+fi
+
+for pkg in fastfetch kitty; do
+    apt-get install -y "$pkg" 2>/dev/null || echo "WARN: $pkg not available, skipping"
+    dpkg --configure -a 2>/dev/null || true
 done
 
 echo 'root:borealOS' | chpasswd
