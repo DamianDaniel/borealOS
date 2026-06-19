@@ -9,7 +9,7 @@ WALLPAPER_DEFAULT="./background_2.png"
 WALLPAPER_ALT="./background_one.png"
 LOGO="./logo.png"
 BANNER="./borealOS-text-and-logo-transparent.png"
-RICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../rice"
+RICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../rice"
 
 RED='\033[0;31m'
 GRN='\033[0;32m'
