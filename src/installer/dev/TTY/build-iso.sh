@@ -8,6 +8,7 @@ INSTALLER_SH="./installer.sh"
 WALLPAPER_DEFAULT="./background_2.png"
 WALLPAPER_ALT="./background_one.png"
 LOGO="./logo.png"
+BANNER="./borealOS-text-and-logo-transparent.png"
 RICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../rice"
 
 RED='\033[0;31m'
@@ -19,7 +20,7 @@ RST='\033[0m'
 die() { echo -e "${RED}ERROR: $1${RST}" >&2; exit 1; }
 ok()  { echo -e "${GRN}$1${RST}"; }
 
-for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$WALLPAPER_ALT" "$LOGO"; do
+for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$WALLPAPER_ALT" "$LOGO" "$BANNER"; do
     [ -f "$f" ] || die "Missing: $f"
 done
 [ "$EUID" -eq 0 ] || die "Run as root."
@@ -87,6 +88,49 @@ mkdir -p "$WORK/squashfs-root/usr/share/boreal-artwork"
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
+cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
+
+echo "==> Removing Debian artwork..."
+find "$WORK/squashfs-root/usr/share" -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" -delete 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/usr/share/images/desktop-base" 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/usr/share/images/vendor-logos" 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/backgrounds" -name "*debian*" -delete 2>/dev/null || true
+
+echo "==> Creating GRUB theme..."
+mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
+python3 -c "
+from PIL import Image
+bg = Image.open('$WALLPAPER_DEFAULT').convert('RGB').resize((1920,1080))
+bg.save('$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png')
+t = Image.open('$BANNER').convert('RGBA')
+t.thumbnail((800,200))
+t.save('$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png')
+"
+cp /home/claude/grub-theme.txt      "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
+cp /home/claude/grub-select_c.png   "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_c.png"
+cp /home/claude/grub-select_w.png   "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_w.png"
+cp /home/claude/grub-select_e.png   "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_e.png"
+
+echo "==> Creating Plymouth theme..."
+mkdir -p "$WORK/squashfs-root/usr/share/plymouth/themes/boreal"
+python3 -c "
+from PIL import Image, ImageFilter, ImageDraw
+bg = Image.open('$WALLPAPER_DEFAULT').convert('RGB').resize((1920,1080))
+dark = Image.new('RGB',(1920,1080),(13,27,42))
+Image.blend(bg,dark,0.55).save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png')
+logo = Image.open('$BANNER').convert('RGBA')
+logo.thumbnail((600,150))
+logo.save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png')
+dot = Image.new('RGBA',(12,12),(0,0,0,0))
+ImageDraw.Draw(dot).ellipse([0,0,11,11],fill=(77,255,210,255))
+dot.save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot.png')
+dim = Image.new('RGBA',(12,12),(0,0,0,0))
+ImageDraw.Draw(dim).ellipse([0,0,11,11],fill=(77,255,210,60))
+dim.save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot-dim.png')
+"
+cp /home/claude/plymouth-script.script "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.script"
+cp /home/claude/plymouth-theme.plymouth "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.plymouth"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 
@@ -233,6 +277,61 @@ CHROOT
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
 
+if [ "$DE_NAME" = "Niri" ]; then
+    echo "==> Building niri from source (this will take a while)..."
+    mount --bind /dev  "$WORK/squashfs-root/dev"
+    mount --bind /proc "$WORK/squashfs-root/proc"
+    mount --bind /sys  "$WORK/squashfs-root/sys"
+    cp /etc/resolv.conf "$WORK/squashfs-root/etc/resolv.conf"
+
+    chroot "$WORK/squashfs-root" /bin/bash <<NIRICHROOT || die "niri build failed"
+set -e
+apt-get install -y --no-install-recommends \
+    rustc cargo \
+    git cmake \
+    build-essential pkg-config meson ninja-build \
+    libwayland-dev libwayland-egl1 \
+    libegl1-mesa-dev libgles2-mesa-dev \
+    libxcb-composite0-dev libxcb-present-dev libxcb-xfixes0-dev libxcb1-dev \
+    libinput-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb-dev \
+    libseat-dev libpam0g-dev libelogind-dev \
+    libdrm-dev libpixman-1-dev libgbm-dev \
+    libxrandr-dev libpcre3-dev libcap-dev \
+    libgtk-3-dev libglib2.0-dev \
+    libpulse-dev libffi-dev libexpat1-dev \
+    libdbus-1-dev libdbus-glib-1-dev \
+    seatd xwayland wayland-protocols \
+    wlr-randr grim slurp swaybg
+
+cd /tmp
+git clone --depth 1 --branch "$(git ls-remote --tags https://github.com/YaLTeR/niri.git | grep -oP 'v[0-9.]+$' | sort -V | tail -1)" https://github.com/YaLTeR/niri.git niri-src
+cd niri-src
+cargo build --release
+install -Dm755 target/release/niri /usr/local/bin/niri
+
+install -Dm644 resources/niri-session /usr/local/bin/niri-session
+chmod +x /usr/local/bin/niri-session
+
+mkdir -p /usr/local/share/wayland-sessions
+cat > /usr/local/share/wayland-sessions/niri.desktop <<DESK
+[Desktop Entry]
+Name=Niri
+Comment=A scrollable-tiling Wayland compositor
+Exec=niri-session
+Type=Application
+DESK
+
+cd /
+rm -rf /tmp/niri-src
+
+apt-get remove -y --purge rustc cargo git cmake meson ninja-build build-essential 2>/dev/null || true
+apt-get autoremove -y 2>/dev/null || true
+NIRICHROOT
+
+    umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
+    ok "niri built and installed."
+fi
+
 echo "==> Disabling display managers in live env..."
 for dm in lightdm sddm gdm3 xdm; do
     find "$WORK/squashfs-root/etc" -name "*${dm}*" -path "*/rc*.d/*" -delete 2>/dev/null || true
@@ -260,15 +359,17 @@ cp "$VMLINUZ" "$WORK/iso/boot/vmlinuz"
 cp "$INITRD"  "$WORK/iso/boot/initrd.img"
 
 echo "==> Writing GRUB config..."
+mkdir -p "$WORK/iso/boot/grub/themes/boreal"
+cp -r "$WORK/squashfs-root/usr/share/grub/themes/boreal/." "$WORK/iso/boot/grub/themes/boreal/"
+
 cat > "$WORK/iso/boot/grub/grub.cfg" <<'GRUB'
 set timeout_style=menu
 set timeout=10
 set default=0
-set menu_color_normal=cyan/black
-set menu_color_highlight=black/cyan
+set theme=/boot/grub/themes/boreal/theme.txt
 
 menuentry "BorealOS Live Installer" {
-    linux /boot/vmlinuz boot=live quiet splash
+    linux /boot/vmlinuz boot=live quiet splash plymouth.ignore-serial-consoles
     initrd /boot/initrd.img
 }
 

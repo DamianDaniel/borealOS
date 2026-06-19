@@ -366,6 +366,18 @@ echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 CHROOT
+    step "Removing Debian artwork..."
+    find /mnt/usr/share -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" -delete 2>/dev/null || true
+    rm -rf /mnt/usr/share/images/desktop-base 2>/dev/null || true
+    rm -rf /mnt/usr/share/images/vendor-logos 2>/dev/null || true
+    find /mnt/usr/share/backgrounds -name "*debian*" -delete 2>/dev/null || true
+    find /mnt/usr/share/pixmaps -name "*debian*" -delete 2>/dev/null || true
+
+    step "Installing Plymouth theme..."
+    mkdir -p /mnt/usr/share/plymouth/themes/boreal
+    cp -r /usr/share/plymouth/themes/boreal/. /mnt/usr/share/plymouth/themes/boreal/ 2>/dev/null ||         warn "Plymouth theme not in live env — skipping"
+    chroot /mnt plymouth-set-default-theme boreal 2>/dev/null || true
+
     ok "System configured."
 }
 
@@ -576,6 +588,12 @@ NIRI
 }
 
 install_grub() {
+    step "Installing GRUB theme..."
+    mkdir -p /mnt/boot/grub/themes/boreal
+    if [ -d /usr/share/grub/themes/boreal ]; then
+        cp -r /usr/share/grub/themes/boreal/. /mnt/boot/grub/themes/boreal/
+    fi
+
     step "Installing GRUB..."
 
     rm -rf /mnt/boot/efi/EFI 2>/dev/null || true
@@ -609,12 +627,16 @@ EGCFG
     cat > /mnt/boot/grub/grub.cfg <<GCFG
 set default=0
 set timeout=5
-set menu_color_normal=cyan/black
-set menu_color_highlight=black/cyan
+if [ -f /boot/grub/themes/boreal/theme.txt ]; then
+    set theme=/boot/grub/themes/boreal/theme.txt
+else
+    set menu_color_normal=cyan/black
+    set menu_color_highlight=black/cyan
+fi
 
 menuentry "BorealOS 1.0" {
     search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
-    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet splash
+    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet splash plymouth.ignore-serial-consoles
     initrd /boot/initrd.img-${KVER}
 }
 menuentry "BorealOS 1.0 (recovery)" {
