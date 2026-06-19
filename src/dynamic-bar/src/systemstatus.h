@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QTextStream>
+#include <QtQml/qqmlregistration.h>
 
 class SystemStatus : public QObject {
     Q_OBJECT

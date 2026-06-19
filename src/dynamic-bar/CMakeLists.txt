@@ -12,7 +12,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 
 # Create your executable with just the C++ sources
 add_executable(BorealDynamicBar
-        src/main.cpp
+        src/Main.cpp
 )
 
 # Define the QML module (This replaces qt_add_resources and manual registration!)
@@ -31,3 +31,5 @@ target_link_libraries(BorealDynamicBar PRIVATE
         Qt6::Qml
         Qt6::Quick
 )
+
+target_include_directories(BorealDynamicBar PRIVATE src)
