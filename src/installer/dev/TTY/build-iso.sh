@@ -228,15 +228,17 @@ done
 
 echo 'root:borealOS' | chpasswd
 
-for dm in lightdm sddm gdm3 xdm; do
-    rm -f /etc/runlevels/default/\$dm 2>/dev/null || true
-    find /etc/rc*.d -name "*\$dm*" -delete 2>/dev/null || true
-    update-rc.d \$dm disable 2>/dev/null || true
-done
 CHROOT
 
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
+
+echo "==> Disabling display managers in live env..."
+for dm in lightdm sddm gdm3 xdm; do
+    find "$WORK/squashfs-root/etc" -name "*${dm}*" -path "*/rc*.d/*" -delete 2>/dev/null || true
+    rm -f "$WORK/squashfs-root/etc/runlevels/default/${dm}"
+    rm -f "$WORK/squashfs-root/etc/runlevels/boot/${dm}"
+done
 
 tar -xOf "$ROOTFS_TAR" ./etc/inittab > "$WORK/squashfs-root/etc/inittab" 2>/dev/null || true
 sed -i 's|^\(1:[0-9]*:respawn:.*getty\)|\1 --autologin root|' "$WORK/squashfs-root/etc/inittab"
