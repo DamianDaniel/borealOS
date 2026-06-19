@@ -13,9 +13,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 
 # Define the executable and include source files
 add_executable(BorealDynamicBar
-        src/main.cpp
-        src/window_manager.cpp
-        src/window_manager.h
+        src/Main.cpp
         qml/main.qml # Directly embedding QML into the binary build
 )
 
@@ -28,7 +26,7 @@ target_link_libraries(BorealDynamicBar PRIVATE
 )
 
 # Tell Qt where to bundle the QML resources
-qt_add_resources(MyDynamicBar "qml"
+qt_add_resources(BorealDynamicBar "qml"
         PREFIX "/qt/qml"
         FILES qml/main.qml
 )
