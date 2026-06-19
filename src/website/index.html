@@ -542,7 +542,7 @@
     <p class="hero-tagline">Lightweight. Featured. Novel.</p>
     <p class="hero-desc">
       A Debian-based Linux distribution built for intermediate users who know what they want.
-      BorealOS replaces systemd with <strong>dinit</strong> &mdash; a lightweight init system that starts and supervises services using dependency-based, parallel startup, providing a simple and efficient alternative to systemd.
+      BorealOS replaces systemd with <strong>OpenRC</strong> &mdash; a lightweight init system that starts and supervises services using dependency-based, parallel startup, providing a simple and efficient alternative to systemd.
     </p>
     <div class="hero-ctas">
       <a href="#download" class="btn btn-primary">Download ISO</a>
@@ -559,7 +559,7 @@
       <p class="section-label">What it is</p>
       <h2>Debian without the bloat</h2>
       <p>
-        BorealOS starts where Debian leaves off. The base is solid and familiar, but the init system is swapped out for <strong>dinit</strong> &mdash; a lightweight init system and service manager for Unix-like operating systems. It starts services based on dependencies, supports parallel booting, and continuously supervises services, restarting them if needed. Unlike systemd, it focuses only on initialization and service management, making it fast, simple, and resource-efficient.
+        BorealOS starts where Debian leaves off. The base is solid and familiar, but the init system is swapped out for <strong>OpenRC</strong> &mdash; a lightweight init system and service manager for Unix-like operating systems. It starts services based on dependencies, supports parallel booting, and continuously supervises services, restarting them if needed. Unlike systemd, it focuses only on initialization and service management, making it fast, simple, and resource-efficient.
       </p>
       <p>
         The project targets intermediate Linux users who want a clean, well-documented system with pre-configured desktops and a community-driven development model. No hand-holding, no unnecessary abstraction.
@@ -573,8 +573,8 @@
       <table class="spec-table">
         <tr><td>Base</td><td>Debian</td></tr>
         <tr><td>Architecture</td><td>x86_64</td></tr>
-        <tr><td>Init System</td><td><code>dinit</code></td></tr>
-        <tr><td>Default Shell</td><td><code>sh</code> / <code>fish</code></td></tr>
+        <tr><td>Init System</td><td><code>OpenRC</code></td></tr>
+        <tr><td>Default Shell</td><td><code>bash</code> / <code>sh</code> / <code>fish</code></td></tr>
         <tr><td>Target Users</td><td>Intermediate Linux users</td></tr>
         <tr><td>Desktops</td><td>KDE Plasma, XFCE, Sway</td></tr>
         <tr><td>Development</td><td>Community-driven</td></tr>
@@ -590,14 +590,14 @@
   <h2>Key Features</h2>
   <div class="features-grid">
     <div class="feature-card">
-      <div class="feature-icon"><img width="50%" src="img/dinit-logo.png"></div>
-      <h3>dinit</h3>
+      <div class="feature-icon" style="color: gold;">OpenRC</div>
+      <h3>OpenRC</h3>
       <p>A lightweight init system that starts and supervises services using dependency-based, parallel startup, providing a simple and efficient alternative to systemd.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon"><img width="15%" src="img/kde-logo.png"><img width="25%" src="img/xfce-logo.png"><img style="padding-left: 4%;" width="15.5%" src="img/sway-logo.png"></div>
+      <div class="feature-icon"><img width="15%" src="img/kde-logo.png"><img width="25%" src="img/xfce-logo.png"></div>
       <h3>Pre-riced Desktops</h3>
-      <p>Choose KDE Plasma, XFCE, or Sway at install. Each comes configured out of the box &mdash; no post-install ricing required.</p>
+      <p>Choose from KDE Plasma, XFCE, Hyprland, Niri iso installations. Each comes configured out of the box &mdash; no post-install ricing required.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon"><img width="13.5%" src="img/debian.png"></div>
@@ -647,11 +647,11 @@
         <p class="iso-meta">borealOS-xfce.iso</p>
       </div>
       <div class="iso-card">
-        <div class="iso-name">Sway</div>
-        <div class="iso-type">Tiling Wayland WM</div>
-        <p class="iso-desc">Keyboard-driven tiling window manager for Wayland. Minimal resource usage, maximum control. For users who live in the terminal.</p>
-        <button class="download-btn" onclick="triggerDownload('sway')">Download ISO</button>
-        <p class="iso-meta">borealOS-sway.iso</p>
+        <div class="iso-name">Niri</div>
+        <div class="iso-type">Scrolling Wayland WM</div>
+        <p class="iso-desc">Scrolling window manager for Wayland. Good looks. Fast Preformance.</p><br><br>
+        <button class="download-btn" onclick="triggerDownload('niri')">Download ISO</button>
+        <p class="iso-meta">borealOS-niri.iso</p>
       </div>
     </div>
     <p class="notice">ISOs not yet available &mdash; project is under active development. Watch the <a href="https://github.com/DamianDaniel/borealOS" target="_blank" style="color: var(--teal);">GitHub repo</a> for releases.</p>
