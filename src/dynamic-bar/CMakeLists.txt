@@ -14,7 +14,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 # Define the executable and include source files
 add_executable(BorealDynamicBar
         src/Main.cpp
-        qml/main.qml # Directly embedding QML into the binary build
+        qml/main.qml
+        src/systemstatus.h # Directly embedding QML into the binary build
 )
 
 # Link Qt6 libraries
