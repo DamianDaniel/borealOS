@@ -7,6 +7,7 @@
 
 class SystemStatus : public QObject {
     Q_OBJECT
+    QML_ELEMENT
     Q_PROPERTY(QString currentTime READ currentTime NOTIFY timeChanged)
     Q_PROPERTY(int batteryLevel READ batteryLevel NOTIFY batteryChanged)
 

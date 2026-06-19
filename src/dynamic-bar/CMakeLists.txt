@@ -1,33 +1,33 @@
 cmake_minimum_required(VERSION 3.16)
-project(BorealDynamicBar LANGUAGES CXX)
+project(MyDynamicBar LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enable automatic compilation handling for Qt
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 
-# Define the executable and include source files
+# Create your executable with just the C++ sources
 add_executable(BorealDynamicBar
-        src/Main.cpp
-        qml/main.qml
-        src/systemstatus.h # Directly embedding QML into the binary build
+        src/main.cpp
 )
 
-# Link Qt6 libraries
+# Define the QML module (This replaces qt_add_resources and manual registration!)
+qt_add_qml_module(BorealDynamicBar
+        URI org.borealos.components
+        VERSION 1.0
+        SOURCES
+        src/systemstatus.h # Qt will scan this for QML_ELEMENT
+        QML_FILES
+        qml/main.qml
+)
+
 target_link_libraries(BorealDynamicBar PRIVATE
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
-)
-
-# Tell Qt where to bundle the QML resources
-qt_add_resources(BorealDynamicBar "qml"
-        PREFIX "/qt/qml"
-        FILES qml/main.qml
 )
