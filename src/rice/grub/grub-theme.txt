@@ -1,0 +1,1 @@
+Put crazy grub config here
