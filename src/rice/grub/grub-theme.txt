@@ -22,7 +22,7 @@ terminal-top: "15%"
     width = 50%
     height = 35%
     item_font = "DejaVu Sans Regular 16"
-    item_color = "#7fffff"
+    item_color = "#3f5a5a"
     selected_item_color = "#ffffff"
     item_height = 36
     item_padding = 12
@@ -37,5 +37,5 @@ terminal-top: "15%"
     align = "center"
     font = "DejaVu Sans Regular 12"
     color = "#4dffd2"
-    text = "↑ ↓ navigate    Enter boot    e edit    c console"
+    text = "up/down: navigate    enter: boot    e: edit    c: console"
 }
