@@ -46,7 +46,7 @@ while true; do
         2) DE_PKGS="xfce4 xfce4-goodies lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; break ;;
         3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DE_NAME="Sway"; break ;;
         4) DE_PKGS="hyprland waybar foot wofi"; DE_NAME="Hyprland"; break ;;
-        5) DE_PKGS="foot"; DE_NAME="Niri"; echo -e "${RED}NOTE: niri has no Debian package. It will not be pre-installed. Configure manually post-install.${RST}"; break ;;
+        5) DE_PKGS="foot"; DE_NAME="Niri"; echo -e "${RED}NOTE: niri has no Debian package. It will be built from source.${RST}"; break ;;
         6) DE_PKGS=""; DE_NAME="None"; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
@@ -259,7 +259,7 @@ umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root
 ok "==> Packages installed."
 
 if [ "$DE_NAME" = "Niri" ]; then
-    echo "==> Building niri from source (this will take a while)..."
+    echo "==> Building niri from source (this will take 10-20 minutes)..."
     mount --bind /dev  "$WORK/squashfs-root/dev"
     mount --bind /proc "$WORK/squashfs-root/proc"
     mount --bind /sys  "$WORK/squashfs-root/sys"
@@ -267,31 +267,32 @@ if [ "$DE_NAME" = "Niri" ]; then
 
     chroot "$WORK/squashfs-root" /bin/bash <<NIRICHROOT || die "niri build failed"
 set -e
-apt-get install -y --no-install-recommends \
-    rustc cargo \
-    git cmake \
-    build-essential pkg-config meson ninja-build \
-    libwayland-dev libwayland-egl1 \
-    libegl1-mesa-dev libgles2-mesa-dev \
-    libxcb-composite0-dev libxcb-present-dev libxcb-xfixes0-dev libxcb1-dev \
-    libinput-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb-dev \
-    libseat-dev libpam0g-dev libelogind-dev \
-    libdrm-dev libpixman-1-dev libgbm-dev \
-    libxrandr-dev libpcre3-dev libcap-dev \
-    libgtk-3-dev libglib2.0-dev \
-    libpulse-dev libffi-dev libexpat1-dev \
-    libdbus-1-dev libdbus-glib-1-dev \
-    seatd xwayland wayland-protocols \
-    wlr-randr grim slurp swaybg
+apt-get update -qq
+apt-get install -y --no-install-recommends     rustc cargo     git cmake build-essential pkg-config meson ninja-build     libwayland-dev libwayland-egl1     libegl1-mesa-dev libgles2-mesa-dev     libxcb-composite0-dev libxcb-present-dev libxcb-xfixes0-dev libxcb1-dev     libinput-dev     libxkbcommon-dev libxkbcommon-x11-dev libxcb-xkb-dev     libseat-dev libpam0g-dev libelogind-dev     libdrm-dev libpixman-1-dev libgbm-dev     libxrandr-dev libpcre3-dev libcap-dev     libgtk-3-dev libglib2.0-dev     libpulse-dev libffi-dev libexpat1-dev     libdbus-1-dev     xwayland wayland-protocols wayland-utils     swaybg waybar wlr-randr grim slurp     libudev-dev libsystemd-dev     libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev     libclang-dev clang
 
+LATEST_TAG=$(git ls-remote --tags https://github.com/YaLTeR/niri.git 2>/dev/null |     grep -oP 'refs/tags/v[0-9.]+$' | sort -V | tail -1 | sed 's|refs/tags/||')
+echo "==> Cloning niri ${LATEST_TAG}..."
 cd /tmp
-git clone --depth 1 --branch "$(git ls-remote --tags https://github.com/YaLTeR/niri.git | grep -oP 'v[0-9.]+$' | sort -V | tail -1)" https://github.com/YaLTeR/niri.git niri-src
+git clone --depth 1 --branch "$LATEST_TAG" https://github.com/YaLTeR/niri.git niri-src
 cd niri-src
+
+echo "==> Compiling niri (this takes a while)..."
 cargo build --release
+
 install -Dm755 target/release/niri /usr/local/bin/niri
 
-install -Dm644 resources/niri-session /usr/local/bin/niri-session
-chmod +x /usr/local/bin/niri-session
+if [ -f resources/niri-session ]; then
+    install -Dm755 resources/niri-session /usr/local/bin/niri-session
+else
+    cat > /usr/local/bin/niri-session <<SESSION
+#!/bin/sh
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_DESKTOP=niri
+export XDG_CURRENT_DESKTOP=niri
+exec niri --session
+SESSION
+    chmod +x /usr/local/bin/niri-session
+fi
 
 mkdir -p /usr/local/share/wayland-sessions
 cat > /usr/local/share/wayland-sessions/niri.desktop <<DESK
@@ -300,12 +301,13 @@ Name=Niri
 Comment=A scrollable-tiling Wayland compositor
 Exec=niri-session
 Type=Application
+DesktopNames=niri
 DESK
 
 cd /
 rm -rf /tmp/niri-src
 
-apt-get remove -y --purge rustc cargo git cmake meson ninja-build build-essential 2>/dev/null || true
+apt-get remove -y --purge     rustc cargo git cmake meson ninja-build build-essential     libclang-dev clang 2>/dev/null || true
 apt-get autoremove -y 2>/dev/null || true
 NIRICHROOT
 
