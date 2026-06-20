@@ -9,8 +9,7 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     QQmlApplicationEngine engine;
 
-
-    const QUrl url(QStringLiteral("qrc:/org/borealos/components/qml/main.qml"));
+    const QUrl url(QStringLiteral("qrc:/qt/qml/org/borealos/components/qml/main.qml"));
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
                      &app, [url](QObject *obj, const QUrl &objUrl) {
