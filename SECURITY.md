@@ -17,8 +17,8 @@ borealOS is in early, pre-release development (no tagged releases yet). Security
 
 | Version          | Supported          |
 | ----------------- | ------------------ |
-| `main` (latest)    | :white_check_mark: |
-| Older commits/forks | :x:                 |
+| `main` (latest)    | Yes                |
+| Older commits/forks | No                 |
 
 This table will be updated once tagged releases begin.
 
