@@ -11,7 +11,7 @@ terminal-top: "15%"
 + image {
     top = 6%
     left = 50%-205
-    width = 410
+    width = 596
     height = 200
     file = "title.png"
 }
@@ -22,7 +22,7 @@ terminal-top: "15%"
     width = 50%
     height = 35%
     item_font = "DejaVu Sans Regular 16"
-    item_color = "#3f5a5a"
+    item_color = "#4a9d9d"
     selected_item_color = "#ffffff"
     item_height = 36
     item_padding = 12
