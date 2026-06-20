@@ -46,7 +46,7 @@ while true; do
         2) DE_PKGS="xfce4 xfce4-goodies lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; break ;;
         3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DE_NAME="Sway"; break ;;
         4) DE_PKGS="hyprland waybar foot wofi"; DE_NAME="Hyprland"; break ;;
-        5) DE_PKGS="foot"; DE_NAME="Niri"; echo -e "${GRN}NOTE: niri has no Debian package. It will be built from source.${RST}"; break ;;
+        5) DE_PKGS="foot"; DE_NAME="Niri"; echo -e "${RED}NOTE: niri has no Debian package. It will not be pre-installed. Configure manually post-install.${RST}"; break ;;
         6) DE_PKGS=""; DE_NAME="None"; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
