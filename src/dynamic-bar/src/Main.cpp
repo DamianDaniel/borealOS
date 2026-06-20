@@ -9,6 +9,10 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     QQmlApplicationEngine engine;
 
+    // Quickshell is typically run using the 'qs' or 'quickshell' command.
+    // To support running this application as a standalone executable while
+    // using Quickshell types, the Quickshell QML plugin must be available
+    // in the QML import path.
 
     const QUrl url(QStringLiteral("qrc:/org/borealos/components/qml/main.qml"));
 
