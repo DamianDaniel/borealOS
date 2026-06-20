@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
     // using Quickshell types, the Quickshell QML plugin must be available
     // in the QML import path.
 
-    const QUrl url(QStringLiteral("qrc:/org/borealos/components/qml/main.qml"));
+    const QUrl url(QStringLiteral("qrc:/qt/qml/org/borealos/components/qml/main.qml"));
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
                      &app, [url](QObject *obj, const QUrl &objUrl) {
