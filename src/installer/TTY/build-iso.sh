@@ -26,6 +26,7 @@ done
 [ "$EUID" -eq 0 ] || die "Run as root."
 
 command -v xorriso       >/dev/null || apt-get install -y xorriso       || die "Failed to install xorriso"
+command -v convert        >/dev/null || apt-get install -y imagemagick    || die "Failed to install imagemagick"
 command -v grub-mkrescue >/dev/null || apt-get install -y grub-efi-amd64-bin grub-pc-bin mtools || die "Failed to install grub tools"
 command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools || die "Failed to install squashfs-tools"
 
@@ -99,38 +100,18 @@ find "$WORK/squashfs-root/usr/share/backgrounds" -name "*debian*" -delete 2>/dev
 
 echo "==> Creating GRUB theme..."
 mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
-python3 -c "
-from PIL import Image
-bg = Image.open('$WALLPAPER_DEFAULT').convert('RGB').resize((1920,1080))
-bg.save('$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png')
-t = Image.open('$BANNER').convert('RGBA')
-t.thumbnail((800,200))
-t.save('$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png')
-"
-cp /home/claude/grub-theme.txt      "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-cp /home/claude/grub-select_c.png   "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_c.png"
-cp /home/claude/grub-select_w.png   "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_w.png"
-cp /home/claude/grub-select_e.png   "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_e.png"
+convert "$WALLPAPER_DEFAULT" -resize 1920x1080!     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null ||     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
+convert "$BANNER" -resize 800x200 -background none     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null ||     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
+cp "$RICE_DIR/grub/grub-theme.txt" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" || die "Missing rice/grub/grub-theme.txt"
 
 echo "==> Creating Plymouth theme..."
 mkdir -p "$WORK/squashfs-root/usr/share/plymouth/themes/boreal"
-python3 -c "
-from PIL import Image, ImageFilter, ImageDraw
-bg = Image.open('$WALLPAPER_DEFAULT').convert('RGB').resize((1920,1080))
-dark = Image.new('RGB',(1920,1080),(13,27,42))
-Image.blend(bg,dark,0.55).save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png')
-logo = Image.open('$BANNER').convert('RGBA')
-logo.thumbnail((600,150))
-logo.save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png')
-dot = Image.new('RGBA',(12,12),(0,0,0,0))
-ImageDraw.Draw(dot).ellipse([0,0,11,11],fill=(77,255,210,255))
-dot.save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot.png')
-dim = Image.new('RGBA',(12,12),(0,0,0,0))
-ImageDraw.Draw(dim).ellipse([0,0,11,11],fill=(77,255,210,60))
-dim.save('$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot-dim.png')
-"
-cp /home/claude/plymouth-script.script "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.script"
-cp /home/claude/plymouth-theme.plymouth "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.plymouth"
+convert "$WALLPAPER_DEFAULT" -resize 1920x1080!     -fill "#0d1b2a" -colorize 55     "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png" 2>/dev/null ||     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png"
+convert "$BANNER" -resize 600x150 -background none     "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png" 2>/dev/null ||     cp "$BANNER" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png"
+convert -size 12x12 xc:none -fill "#4dffd2" -draw "circle 5,5 5,0"     "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot.png"
+convert -size 12x12 xc:none -fill "#4dffd23c" -draw "circle 5,5 5,0"     "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot-dim.png"
+cp "$RICE_DIR/plymouth/boreal.script"   "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.script"   || die "Missing rice/plymouth/boreal.script"
+cp "$RICE_DIR/plymouth/boreal.plymouth" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.plymouth" || die "Missing rice/plymouth/boreal.plymouth"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 

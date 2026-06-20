@@ -1,1 +1,41 @@
-Put crazy grub config here
+desktop-image: "background.png"
+desktop-color: "#0d1b2a"
+title-text: ""
+message-font: "DejaVu Sans Regular 14"
+message-color: "#4dffd2"
+terminal-width: "80%"
+terminal-height: "70%"
+terminal-left: "10%"
+terminal-top: "15%"
+
++ image {
+    top = 6%
+    left = 50%-205
+    width = 410
+    height = 200
+    file = "title.png"
+}
+
++ boot_menu {
+    top = 52%
+    left = 25%
+    width = 50%
+    height = 35%
+    item_font = "DejaVu Sans Regular 16"
+    item_color = "#7fffff"
+    selected_item_color = "#ffffff"
+    item_height = 36
+    item_padding = 12
+    item_spacing = 4
+    scrollbar = false
+}
+
++ label {
+    top = 90%
+    left = 0
+    width = 100%
+    align = "center"
+    font = "DejaVu Sans Regular 12"
+    color = "#4dffd2"
+    text = "↑ ↓ navigate    Enter boot    e edit    c console"
+}

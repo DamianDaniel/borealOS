@@ -269,59 +269,47 @@ iface lo inet loopback
 IFACES
     rm -rf /mnt/etc/network/interfaces.d/* 2>/dev/null || true
 
-    mkdir -p /mnt/etc/NetworkManager
-    cat > /mnt/etc/NetworkManager/NetworkManager.conf <<NMCONF
-[main]
-plugins=keyfile
-dhcp=internal
-
-[ifupdown]
-managed=false
-
-[device]
-wifi.scan-rand-mac-address=no
-NMCONF
-
     [ "$NET_TYPE" = "Skip" ] && { ok "Network skipped."; return; }
 
     step "Writing network config..."
-    mkdir -p /mnt/etc/NetworkManager/system-connections
-    local f="/mnt/etc/NetworkManager/system-connections/${NET_IF}.nmconnection"
+    mkdir -p /mnt/etc/rc2.d /mnt/etc/runlevels/default
 
     if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        cat > "$f" <<NMC
-[connection]
-id=${NET_IF}
-type=ethernet
-interface-name=${NET_IF}
-autoconnect=true
+        cat >> /mnt/etc/network/interfaces <<IFACES
 
-[ipv4]
-method=auto
-
-[ipv6]
-method=auto
-NMC
+auto ${NET_IF}
+iface ${NET_IF} inet dhcp
+IFACES
+        cat > /mnt/etc/dhcpcd.conf <<DHCP
+hostname
+clientid
+persistent
+option rapid_commit
+option domain_name_servers, domain_name, domain_search, routers
+option ntp_servers
+option interface_mtu
+slaac private
+interface ${NET_IF}
+static domain_name_servers=1.1.1.1 8.8.8.8
+DHCP
+        rm -f /mnt/etc/rc2.d/S*dhcpcd /mnt/etc/rc2.d/S*NetworkManager 2>/dev/null || true
+        rm -f /mnt/etc/runlevels/default/dhcpcd /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
+        ln -sf ../init.d/dhcpcd /mnt/etc/rc2.d/S02dhcpcd
+        ln -sf /etc/init.d/dhcpcd /mnt/etc/runlevels/default/dhcpcd 2>/dev/null || true
     else
-        cat > "$f" <<NMC
-[connection]
-id=${NET_IF}
-type=ethernet
-interface-name=${NET_IF}
-autoconnect=true
+        cat >> /mnt/etc/network/interfaces <<IFACES
 
-[ipv4]
-method=manual
-address1=${NET_IP},${NET_GW}
-dns=${NET_DNS};
-
-[ipv6]
-method=auto
-NMC
+auto ${NET_IF}
+iface ${NET_IF} inet static
+    address ${NET_IP}
+    gateway ${NET_GW}
+    dns-nameservers ${NET_DNS}
+IFACES
     fi
-    chmod 600 "$f"
+
     ok "Network config written."
 }
+
 
 configure_system() {
     step "Configuring system..."

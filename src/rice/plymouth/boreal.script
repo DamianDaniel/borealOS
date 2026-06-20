@@ -1,0 +1,51 @@
+bg_image = Image("background.png");
+bg_image = bg_image.Scale(Window.GetWidth(), Window.GetHeight());
+bg_sprite = Sprite(bg_image);
+bg_sprite.SetPosition(0, 0, -100);
+
+logo_image = Image("logo.png");
+logo_w = Math.Int(Window.GetWidth() * 0.32);
+ratio = logo_image.GetHeight() / logo_image.GetWidth();
+logo_h = Math.Int(logo_w * ratio);
+logo_scaled = logo_image.Scale(logo_w, logo_h);
+logo_sprite = Sprite(logo_scaled);
+logo_sprite.SetPosition(
+    Math.Int(Window.GetWidth() / 2 - logo_w / 2),
+    Math.Int(Window.GetHeight() / 2 - logo_h / 2 - 40),
+    0
+);
+
+num_dots = 12;
+dot_img = Image("dot.png");
+dot_dim_img = Image("dot-dim.png");
+dot_sprites = [];
+dot_r = 36;
+dot_cx = Math.Int(Window.GetWidth() / 2);
+dot_cy = Math.Int(Window.GetHeight() / 2 + logo_h / 2 + 36);
+
+for (i = 0; i < num_dots; i++) {
+    angle = 2 * 3.14159265 * i / num_dots;
+    x = Math.Int(dot_cx + dot_r * Math.Cos(angle) - 6);
+    y = Math.Int(dot_cy + dot_r * Math.Sin(angle) - 6);
+    s = Sprite(dot_dim_img);
+    s.SetPosition(x, y, 1);
+    dot_sprites[i] = s;
+}
+
+active = 0;
+tick = 0;
+
+fun refresh() {
+    tick++;
+    if (tick % 4 == 0) {
+        for (i = 0; i < num_dots; i++) {
+            if (i == active) {
+                dot_sprites[i].SetImage(dot_img);
+            } else {
+                dot_sprites[i].SetImage(dot_dim_img);
+            }
+        }
+        active = (active + 1) % num_dots;
+    }
+}
+Plymouth.SetRefreshFunction(refresh);

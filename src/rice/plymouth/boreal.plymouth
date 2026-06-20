@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=BorealOS
+Description=BorealOS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/boreal
+ScriptFile=/usr/share/plymouth/themes/boreal/boreal.script
