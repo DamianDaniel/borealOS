@@ -38,7 +38,7 @@ Maintainers have the right to remove, edit, or reject comments, commits, code, i
 
 If you experience or witness unacceptable behavior, please report it by opening a confidential report to the maintainer:
 
-- **Contact:** [@DamianDaniel](https://github.com/DamianDaniel) — via a private message, or by [opening a GitHub issue](https://github.com/DamianDaniel/borealOS/issues) marked clearly if the matter is not sensitive
+- **Contact:** [@DamianDaniel](https://github.com/DamianDaniel) via a private message, or by [opening a GitHub issue](https://github.com/DamianDaniel/borealOS/issues) marked clearly if the matter is not sensitive
 - For sensitive reports, please avoid posting details publicly; reach out directly first
 
 All reports will be reviewed and investigated promptly and fairly, and the privacy and security of the reporter will be respected.
