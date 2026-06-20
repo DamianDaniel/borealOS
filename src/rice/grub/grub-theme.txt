@@ -10,7 +10,7 @@ terminal-top: "15%"
 
 + image {
     top = 6%
-    left = 50%-205
+    left = 30%-205
     width = 596
     height = 200
     file = "title.png"
