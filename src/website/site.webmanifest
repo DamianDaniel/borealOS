@@ -1,0 +1,29 @@
+{
+  "name": "BorealOS",
+  "short_name": "BorealOS",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#5bbfcf",
+  "theme_color": "#4ee86a",
+  "description": "Official BorealOS website.",
+  "icons": [
+    {
+      "src": "/img/boreal.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/img/boreal.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/img/boreal.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
