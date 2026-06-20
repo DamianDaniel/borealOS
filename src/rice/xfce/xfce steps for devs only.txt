@@ -1,0 +1,3 @@
+1. put the xfce folder into ~/.config
+2. put the lightdm folder into /usr/share
+3. the image is for reminding u which wallpaper we are using as default
