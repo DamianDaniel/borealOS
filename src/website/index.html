@@ -83,7 +83,7 @@
 
   .nav-links a:hover { color: var(--teal); }
 
-  /* HERO */
+
   .hero {
     position: relative;
     min-height: 100vh;
@@ -95,14 +95,19 @@
   .hero-bg {
     position: absolute;
     inset: 0;
-    background:
-      linear-gradient(180deg,
-        #6ef09030 0%,
-        #3ec8c840 20%,
-        #2a7a9a60 45%,
-        #1a4a6a 65%,
-        #0a1a28 100%
-      );
+
+
+    background-image:
+      linear-gradient(
+      180deg,
+        rgba(10, 26, 40, 0.15),
+        rgba(10, 26, 40, 0.45)
+      ),
+      url("img/backgrnd.png");
+
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
   }
 
   .aurora {
@@ -533,7 +538,7 @@
 
 <div class="hero">
   <div class="hero-bg"></div>
-  <div class="aurora"></div>
+<!--  <div class="aurora"></div>-->
   <div class="treeline"></div>
 
   <div class="hero-content">
@@ -558,17 +563,17 @@
     <div class="about-text">
       <p class="section-label">What it is</p>
       <h2>Debian without the bloat</h2>
-      <p>
-        BorealOS starts where Debian leaves off. The base is solid and familiar, but the init system is swapped out for <strong>OpenRC</strong> &mdash; a lightweight init system and service manager for Unix-like operating systems. It starts services based on dependencies, supports parallel booting, and continuously supervises services, restarting them if needed. Unlike systemd, it focuses only on initialization and service management, making it fast, simple, and resource-efficient.
+      <p> 
+        BorealOS starts where Debian leaves off. We pre-configure the looks of every DE/WM so you can get to work right away. The base is solid and familiar, but the init system is swapped out for <strong>OpenRC</strong> &mdash; a lightweight init system and service manager for Unix-like operating systems. It starts services based on dependencies, supports parallel booting, and continuously supervises services, restarting them if needed. Unlike systemd, it focuses only on initialization and service management, making it fast, simple, and resource-efficient.
       </p>
       <p>
         The project targets intermediate Linux users who want a clean, well-documented system with pre-configured desktops and a community-driven development model. No hand-holding, no unnecessary abstraction.
       </p>
       <p>
-        The shell defaults to <code>sh</code>, with <code>fish</code> available as an option at setup. Desktops and window managers come pre-riced. Documentation is treated as a first-class deliverable, with a focus on man pages.
+        The shell defaults to <code>sh</code>, with <code>bash</code> and <code>fish</code> available as options at setup. Desktops and window managers come pre-riced. Documentation is treated as a first-class deliverable, with a focus on man pages.
       </p>
     </div>
-    <div style="padding-top: 13%;">
+    <div style="padding-top: 1%;">
       <p class="section-label">Specifications</p>
       <table class="spec-table">
         <tr><td>Base</td><td>Debian</td></tr>
@@ -576,7 +581,7 @@
         <tr><td>Init System</td><td><code>OpenRC</code></td></tr>
         <tr><td>Default Shell</td><td><code>bash</code> / <code>sh</code> / <code>fish</code></td></tr>
         <tr><td>Target Users</td><td>Intermediate Linux users</td></tr>
-        <tr><td>Desktops</td><td>KDE Plasma, XFCE, Sway</td></tr>
+        <tr><td>Desktops</td><td>KDE Plasma, XFCE, Niri, Hyprland</td></tr>
         <tr><td>Development</td><td>Community-driven</td></tr>
       </table>
     </div>
@@ -610,7 +615,7 @@
       <p>Risky operations are flagged before execution. Not babysitting &mdash; just giving you the chance to catch mistakes before they matter.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon"><img width="20%" src="img/docu-icon.png""></div>
+      <div class="feature-icon"><img width="15%" src="img/docu-icon.png""></div>
       <h3>Documentation First</h3>
       <p>Man pages are a priority, not an afterthought. Coverage for installation, init system usage, desktop customization, and troubleshooting.</p>
     </div>
