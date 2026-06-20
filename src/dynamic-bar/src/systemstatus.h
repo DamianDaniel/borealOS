@@ -28,14 +28,14 @@ signals:
 
 private:
     void updateStatus() {
-        // 1. Fetch Real Time
-        QString newTime = QDateTime::currentDateTime().toString("h:mm AM/PM");
+
+        QString newTime = QDateTime::currentDateTime().toString("h:mm AP");
         if (newTime != m_timeString) {
             m_timeString = newTime;
             emit timeChanged();
         }
 
-        // 2. Fetch Real Battery Percentage
+
         int newBattery = readBatterySysfs();
         if (newBattery != m_batteryLevel) {
             m_batteryLevel = newBattery;
@@ -44,7 +44,7 @@ private:
     }
 
     int readBatterySysfs() {
-        // Try BAT1 first (common on Steam Deck), fall back to BAT0
+
         QFile file("/sys/class/power_supply/BAT1/capacity");
         if (!file.exists()) {
             file.setFileName("/sys/class/power_supply/BAT0/capacity");
