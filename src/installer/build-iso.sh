@@ -163,14 +163,22 @@ title-text: ""
 THEME
 fi
 
-echo "==> Writing xorg input config..."
+echo "==> Writing xorg config..."
 mkdir -p "$WORK/squashfs-root/etc/X11/xorg.conf.d"
-cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/10-input.conf" <<'XORGCONF'
+rm -f "$WORK/squashfs-root/etc/X11/xorg.conf" 2>/dev/null || true
+
+cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/10-libinput.conf" <<'XORGCONF'
+Section "ServerFlags"
+    Option "AutoAddDevices" "true"
+    Option "AutoEnableDevices" "true"
+EndSection
+
 Section "InputClass"
     Identifier "libinput pointer"
     MatchIsPointer "on"
     Driver "libinput"
     Option "AccelSpeed" "0"
+    Option "AccelProfile" "flat"
 EndSection
 
 Section "InputClass"
@@ -180,12 +188,21 @@ Section "InputClass"
 EndSection
 
 Section "InputClass"
-    Identifier "evdev pointer"
-    MatchIsPointer "on"
-    MatchDevicePath "/dev/input/event*"
-    Driver "evdev"
+    Identifier "libinput touchpad"
+    MatchIsTouchpad "on"
+    Driver "libinput"
+    Option "Tapping" "on"
 EndSection
 XORGCONF
+
+cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/20-mouse-fallback.conf" <<'MOUSEFB'
+Section "InputClass"
+    Identifier "evdev mice"
+    MatchIsPointer "on"
+    MatchDevicePath "/dev/input/mice"
+    Driver "evdev"
+EndSection
+MOUSEFB
 
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
@@ -402,13 +419,12 @@ apt-get install -y \
     xinit xauth x11-xserver-utils x11-utils xterm xwayland \
     libgl1-mesa-dri libgl1 mesa-utils \
     dbus dbus-x11 at-spi2-core \
-    virtualbox-guest-x11 virtualbox-guest-utils 2>/dev/null || apt-get install -y --no-install-recommends \
-    xserver-xorg-input-all xserver-xorg-input-libinput \
-    xserver-xorg-input-evdev xserver-xorg-input-mouse xserver-xorg-input-kbd \
-    xserver-xorg-video-all xserver-xorg-video-vesa xserver-xorg-video-fbdev \
-    xinit xauth x11-xserver-utils x11-utils xterm xwayland \
-    libgl1-mesa-dri libgl1 mesa-utils \
-    dbus dbus-x11 at-spi2-core
+    libinput10 libinput-dev \
+    udev
+
+for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
+    apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
+done
 
 if [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
@@ -552,6 +568,10 @@ NIRICHROOT
     umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
     ok "niri built."
 fi
+
+echo "==> Enabling udev in OpenRC for live env..."
+ln -sf /etc/init.d/udev "$WORK/squashfs-root/etc/runlevels/sysinit/udev" 2>/dev/null || true
+ln -sf /etc/init.d/udev-trigger "$WORK/squashfs-root/etc/runlevels/sysinit/udev-trigger" 2>/dev/null || true
 
 echo "==> Setting up auto-login for live env..."
 tar -xOf "$ROOTFS_TAR" ./etc/inittab > "$WORK/squashfs-root/etc/inittab" 2>/dev/null || true
