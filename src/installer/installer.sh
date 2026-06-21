@@ -280,6 +280,8 @@ FSTAB
 }
 
 write_network() {
+    # Only loopback in interfaces - dhcpcd handles ethernet automatically
+    # (dhcpcd skips interfaces listed in /etc/network/interfaces as DHCP)
     cat > /mnt/etc/network/interfaces <<IFACES
 auto lo
 iface lo inet loopback
@@ -292,11 +294,7 @@ IFACES
     mkdir -p /mnt/etc/rc2.d /mnt/etc/runlevels/default
 
     if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        cat >> /mnt/etc/network/interfaces <<IFACES
-
-auto ${NET_IF}
-iface ${NET_IF} inet dhcp
-IFACES
+        # dhcpcd with no interface arg = configures ALL ethernet interfaces automatically
         cat > /mnt/etc/dhcpcd.conf <<DHCP
 hostname
 clientid
@@ -306,7 +304,6 @@ option domain_name_servers, domain_name, domain_search, routers
 option ntp_servers
 option interface_mtu
 slaac private
-interface ${NET_IF}
 static domain_name_servers=1.1.1.1 8.8.8.8
 DHCP
         rm -f /mnt/etc/rc2.d/S*dhcpcd /mnt/etc/rc2.d/S*NetworkManager 2>/dev/null || true
@@ -483,10 +480,15 @@ SDDM
             ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm 2>/dev/null || true
             ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm 2>/dev/null || true
             mkdir -p /mnt/etc/lightdm
-            cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
+            if ls /opt/borealOS/lightdm/* >/dev/null 2>&1; then
+                cp -r /opt/borealOS/lightdm/. /mnt/etc/lightdm/
+                ok "lightdm rice config applied."
+            else
+                cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
 background=/usr/share/boreal-artwork/wallpaper-default.png
 LDM
+            fi
             mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
             cat > /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<XFCE
 <?xml version="1.0" encoding="UTF-8"?>

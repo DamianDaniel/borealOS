@@ -86,6 +86,13 @@ cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 echo "$DE_NAME"   > "$WORK/squashfs-root/opt/borealOS/de"
+mkdir -p "$WORK/squashfs-root/opt/borealOS/lightdm"
+if [ -d "$RICE_DIR/lightdm" ]; then
+    cp -r "$RICE_DIR/lightdm/." "$WORK/squashfs-root/opt/borealOS/lightdm/"
+    ok "Copied lightdm rice configs"
+else
+    warn "No rice/lightdm/ found - using defaults"
+fi
 echo "$DE_START"  > "$WORK/squashfs-root/opt/borealOS/de-start"
 echo "$SHELL_BIN" > "$WORK/squashfs-root/opt/borealOS/shell"
 
@@ -101,7 +108,7 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-convert "$BANNER" -resize 800x196 -background none \
+convert "$BANNER" -trim -resize 720x274 -background none -gravity center -extent 720x274 \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 convert -size 760x44 xc:none \
@@ -122,10 +129,10 @@ desktop-color: "#0d1b2a"
 title-text: ""
 
 + image {
-    top = 6%
-    left = 50%-400
-    width = 800
-    height = 196
+    top = 5%
+    left = 50%-360
+    width = 720
+    height = 274
     file = "title.png"
 }
 
