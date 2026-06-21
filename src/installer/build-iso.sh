@@ -154,6 +154,30 @@ title-text: ""
 THEME
 fi
 
+echo "==> Writing xorg input config..."
+mkdir -p "$WORK/squashfs-root/etc/X11/xorg.conf.d"
+cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/10-input.conf" <<'XORGCONF'
+Section "InputClass"
+    Identifier "libinput pointer"
+    MatchIsPointer "on"
+    Driver "libinput"
+    Option "AccelSpeed" "0"
+EndSection
+
+Section "InputClass"
+    Identifier "libinput keyboard"
+    MatchIsKeyboard "on"
+    Driver "libinput"
+EndSection
+
+Section "InputClass"
+    Identifier "evdev pointer"
+    MatchIsPointer "on"
+    MatchDevicePath "/dev/input/event*"
+    Driver "evdev"
+EndSection
+XORGCONF
+
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
 copy_rice() {
@@ -272,35 +296,27 @@ case "$DE" in
 #!/bin/bash
 export XDG_SESSION_TYPE=x11
 export XDG_CURRENT_DESKTOP=XFCE
+export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --fork --print-address 2>/dev/null)
 
-mkdir -p /root/.config/xfce4/xfconf/xfce-perchannel-xml
-cat > /root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<'XDESKTOP'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-desktop" version="1.0">
-  <property name="backdrop" type="empty">
-    <property name="screen0" type="empty">
-      <property name="monitorVGA-1" type="empty">
-        <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-          <property name="image-style" type="int" value="5"/>
-        </property>
-      </property>
-      <property name="monitor0" type="empty">
-        <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-          <property name="image-style" type="int" value="5"/>
-        </property>
-      </property>
-    </property>
-  </property>
-</channel>
-XDESKTOP
+# Set wallpaper for every possible monitor name after XFCE starts
+(sleep 8
+ WP=/usr/share/boreal-artwork/wallpaper-default.png
+ for screen in screen0; do
+   for mon in VGA-1 VGA1 HDMI-1 HDMI1 Virtual-1 Virtual1 DP-1 DP1 monitor0 monitorVGA-1; do
+     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
+     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
+   done
+ done
+ xfdesktop --reload 2>/dev/null || true
+) &
 
-(sleep 10; while true; do
-    DISPLAY=:0 dbus-launch calamares 2>/tmp/calamares.log || \
-    DISPLAY=:0 calamares 2>/tmp/calamares.log
-    sleep 3
-done) &
+# Launch calamares loop after desktop is ready
+(sleep 12
+ while true; do
+   DISPLAY=:0 calamares 2>/tmp/calamares.log
+   sleep 3
+ done
+) &
 
 exec startxfce4
 XINITRC
@@ -371,10 +387,19 @@ apt-get install -y --no-install-recommends \
 
 apt-get install -y \
     xserver-xorg xserver-xorg-core \
-    xserver-xorg-input-all xserver-xorg-input-libinput xserver-xorg-input-evdev \
+    xserver-xorg-input-all xserver-xorg-input-libinput \
+    xserver-xorg-input-evdev xserver-xorg-input-mouse xserver-xorg-input-kbd \
     xserver-xorg-video-all xserver-xorg-video-vesa xserver-xorg-video-fbdev \
     xinit xauth x11-xserver-utils x11-utils xterm xwayland \
-    libgl1-mesa-dri libgl1 mesa-utils
+    libgl1-mesa-dri libgl1 mesa-utils \
+    dbus dbus-x11 at-spi2-core \
+    virtualbox-guest-x11 virtualbox-guest-utils 2>/dev/null || apt-get install -y --no-install-recommends \
+    xserver-xorg-input-all xserver-xorg-input-libinput \
+    xserver-xorg-input-evdev xserver-xorg-input-mouse xserver-xorg-input-kbd \
+    xserver-xorg-video-all xserver-xorg-video-vesa xserver-xorg-video-fbdev \
+    xinit xauth x11-xserver-utils x11-utils xterm xwayland \
+    libgl1-mesa-dri libgl1 mesa-utils \
+    dbus dbus-x11 at-spi2-core
 
 if [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
@@ -440,16 +465,10 @@ sequence:
     - partition
     - mount
     - unpackfs
-    - machineid
     - fstab
     - locale
     - keyboard
-    - localecfg
     - users
-    - displaymanager
-    - networkcfg
-    - hwclock
-    - services-systemd
     - bootloader
     - unmount
   - show:
