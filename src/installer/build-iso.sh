@@ -374,7 +374,7 @@ apt-get install -y \
     xserver-xorg-input-all xserver-xorg-input-libinput xserver-xorg-input-evdev \
     xserver-xorg-video-all xserver-xorg-video-vesa xserver-xorg-video-fbdev \
     xinit xauth x11-xserver-utils x11-utils xterm xwayland \
-    libgl1-mesa-dri libgl1-mesa-glx mesa-utils
+    libgl1-mesa-dri libgl1 mesa-utils
 
 if [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
