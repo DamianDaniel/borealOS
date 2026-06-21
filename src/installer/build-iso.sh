@@ -343,7 +343,7 @@ apt-get install -y --no-install-recommends \
     $SHELL_PKG
 
 if [ -n "$DE_PKGS" ]; then
-    apt-get install -y $DE_PKGS || echo "WARN: some DE packages failed"
+    apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
 for pkg in fastfetch kitty calamares calamares-qt6; do
@@ -359,6 +359,19 @@ cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
 echo "$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l) debs cached"
 
 echo 'root:borealOS' | chpasswd
+
+echo "==> Ensuring no display manager auto-starts in live env..."
+apt-get remove --purge -y lightdm sddm gdm3 xdm wdm nodm 2>/dev/null || true
+for dm in lightdm sddm gdm3 xdm wdm; do
+    find /etc/rc*.d -name "*${dm}*" -delete 2>/dev/null || true
+    rm -f /etc/runlevels/default/${dm} 2>/dev/null || true
+    rm -f /etc/runlevels/boot/${dm} 2>/dev/null || true
+    if [ -f /etc/init.d/${dm} ]; then
+        printf '#!/bin/sh\nexit 0\n' > /etc/init.d/${dm}
+    fi
+done
+
+rm -f /etc/X11/default-display-manager 2>/dev/null || true
 CHROOT
 
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
