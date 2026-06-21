@@ -272,40 +272,92 @@ cat > "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical" <<'GRAPHICAL'
 DE=$(cat /opt/borealOS/de 2>/dev/null || echo "None")
 DE_START=$(cat /opt/borealOS/de-start 2>/dev/null || echo "")
 
+if [ -z "$DE_START" ] || [ "$DE" = "None" ]; then
+    echo "No graphical DE in this ISO. Press Enter to return."
+    read -r; exit 0
+fi
+
 echo "Starting $DE graphical environment..."
 sleep 1
 
+launch_calamares() {
+    sleep 10
+    while true; do
+        DISPLAY=:0 dbus-launch calamares 2>/tmp/calamares.log || \
+        DISPLAY=:0 calamares 2>/tmp/calamares.log
+        sleep 3
+    done
+}
+
 case "$DE" in
-    "XFCE"|"KDE Plasma")
-        cat > /root/.xinitrc <<XINITRC
+    "XFCE")
+        cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
 export XDG_SESSION_TYPE=x11
-(while true; do sleep 3 && calamares 2>/dev/null; sleep 2; done) &
-exec $DE_START
+export XDG_CURRENT_DESKTOP=XFCE
+
+mkdir -p /root/.config/xfce4/xfconf/xfce-perchannel-xml
+cat > /root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<'XDESKTOP'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitorVGA-1" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+          <property name="image-style" type="int" value="5"/>
+        </property>
+      </property>
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+          <property name="image-style" type="int" value="5"/>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>
+XDESKTOP
+
+(sleep 10; while true; do
+    DISPLAY=:0 dbus-launch calamares 2>/tmp/calamares.log || \
+    DISPLAY=:0 calamares 2>/tmp/calamares.log
+    sleep 3
+done) &
+
+exec startxfce4
 XINITRC
         chmod +x /root/.xinitrc
-        startx 2>/tmp/xorg.log
+        startx -- -nolisten tcp 2>/tmp/xorg.log
+        ;;
+    "KDE Plasma")
+        cat > /root/.xinitrc <<'XINITRC'
+#!/bin/bash
+export XDG_SESSION_TYPE=x11
+(sleep 10; while true; do
+    DISPLAY=:0 calamares 2>/tmp/calamares.log
+    sleep 3
+done) &
+exec startplasma-x11
+XINITRC
+        chmod +x /root/.xinitrc
+        startx -- -nolisten tcp 2>/tmp/xorg.log
         ;;
     "Sway")
         export XDG_SESSION_TYPE=wayland
         export XDG_CURRENT_DESKTOP=sway
-        cat >> /etc/sway/config <<SWAYEXTRA
-exec sh -c 'sleep 3 && while true; do calamares 2>/dev/null; sleep 2; done'
-SWAYEXTRA
-        sway 2>/tmp/sway.log
+        (sleep 10; while true; do calamares 2>/tmp/calamares.log; sleep 3; done) &
+        exec sway 2>/tmp/sway.log
         ;;
     "Hyprland")
         export XDG_SESSION_TYPE=wayland
-        echo 'exec-once = sh -c "sleep 3 && while true; do calamares; sleep 2; done"' >> /etc/hypr/hyprland.conf
-        Hyprland 2>/tmp/hyprland.log
+        (sleep 10; while true; do calamares 2>/tmp/calamares.log; sleep 3; done) &
+        exec Hyprland 2>/tmp/hyprland.log
         ;;
     "Niri")
         export XDG_SESSION_TYPE=wayland
-        niri-session 2>/tmp/niri.log
-        ;;
-    *)
-        echo "No graphical environment available."
-        sleep 3
+        (sleep 10; while true; do calamares 2>/tmp/calamares.log; sleep 3; done) &
+        exec niri-session 2>/tmp/niri.log
         ;;
 esac
 GRAPHICAL
@@ -337,10 +389,15 @@ apt-get install -y --no-install-recommends \
     openssl libdevmapper1.02.1 libefivar1 libefiboot1 \
     os-prober python3 rsync \
     fonts-dejavu-core \
-    xserver-xorg xserver-xorg-core xserver-xorg-input-all \
-    xserver-xorg-video-all xinit xauth x11-xserver-utils xterm xwayland \
     wpasupplicant \
     $SHELL_PKG
+
+apt-get install -y \
+    xserver-xorg xserver-xorg-core \
+    xserver-xorg-input-all xserver-xorg-input-libinput xserver-xorg-input-evdev \
+    xserver-xorg-video-all xserver-xorg-video-vesa xserver-xorg-video-fbdev \
+    xinit xauth x11-xserver-utils x11-utils xterm xwayland \
+    libgl1-mesa-dri libgl1-mesa-glx mesa-utils
 
 if [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
