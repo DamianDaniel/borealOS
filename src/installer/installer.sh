@@ -423,6 +423,17 @@ remove_live_boot() {
          /mnt/etc/grub.d \
          -name "*live*" -delete 2>/dev/null || true
     rm -rf /mnt/lib/live /mnt/usr/lib/live 2>/dev/null || true
+    rm -f /mnt/etc/profile.d/boreal-live.sh 2>/dev/null || true
+    rm -f /mnt/usr/local/bin/boreal-start-graphical 2>/dev/null || true
+
+    step "Fixing Plymouth hooks..."
+    mkdir -p /mnt/usr/share/plymouth/themes/debian-logo
+    touch /mnt/usr/share/plymouth/themes/debian-logo/debian-logo.png
+
+    if [ -f /mnt/usr/share/plymouth/themes/boreal/boreal.plymouth ]; then
+        chroot /mnt plymouth-set-default-theme boreal 2>/dev/null || true
+    fi
+
     step "Rebuilding initramfs..."
     chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
     ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd after rebuild"

@@ -9,27 +9,24 @@ WALLPAPER_DEFAULT="./background_2.png"
 WALLPAPER_ALT="./background_one.png"
 LOGO="./logo.png"
 BANNER="./borealOS-text-and-logo-transparent.png"
+BRANDING_ZIP="./borealOS-branding.zip"
 RICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../rice"
 
-RED='\033[0;31m'
-GRN='\033[0;32m'
-CYN='\033[0;36m'
-BLD='\033[1m'
-RST='\033[0m'
-
-die() { echo -e "${RED}ERROR: $1${RST}" >&2; exit 1; }
-ok()  { echo -e "${GRN}$1${RST}"; }
-warn(){ echo -e "${RED}WARN: $1${RST}"; }
+RED='\033[0;31m'; GRN='\033[0;32m'; CYN='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
+die()  { echo -e "${RED}ERROR: $1${RST}" >&2; exit 1; }
+ok()   { echo -e "${GRN}$1${RST}"; }
+warn() { echo -e "${RED}WARN: $1${RST}"; }
 
 for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$WALLPAPER_ALT" "$LOGO" "$BANNER"; do
     [ -f "$f" ] || die "Missing: $f"
 done
 [ "$EUID" -eq 0 ] || die "Run as root."
 
-command -v xorriso       >/dev/null || apt-get install -y xorriso       || die "Failed to install xorriso"
-command -v convert       >/dev/null || apt-get install -y imagemagick   || die "Failed to install imagemagick"
-command -v grub-mkrescue >/dev/null || apt-get install -y grub-efi-amd64-bin grub-pc-bin mtools || die "Failed to install grub tools"
-command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools || die "Failed to install squashfs-tools"
+command -v xorriso       >/dev/null || apt-get install -y xorriso        || die "Failed to install xorriso"
+command -v convert       >/dev/null || apt-get install -y imagemagick    || die "Failed to install imagemagick"
+command -v grub-mkrescue >/dev/null || apt-get install -y grub-efi-amd64-bin grub-pc-bin mtools || die "Failed to install grub"
+command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools  || die "Failed to install squashfs-tools"
+command -v unzip         >/dev/null || apt-get install -y unzip           || die "Failed to install unzip"
 
 echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
@@ -43,12 +40,12 @@ while true; do
     echo -ne "${CYN}Choice${RST}: "
     read -r de_choice
     case "$de_choice" in
-        1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; break ;;
-        2) DE_PKGS="xfce4 xfce4-goodies"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; break ;;
-        3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DM_PKGS=""; DE_NAME="Sway"; break ;;
-        4) DE_PKGS="hyprland waybar foot wofi"; DM_PKGS=""; DE_NAME="Hyprland"; break ;;
-        5) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; break ;;
-        6) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; break ;;
+        1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
+        2) DE_PKGS="xfce4 xfce4-goodies"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
+        3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DM_PKGS=""; DE_NAME="Sway"; DE_START="sway"; break ;;
+        4) DE_PKGS="hyprland waybar foot wofi"; DM_PKGS=""; DE_NAME="Hyprland"; DE_START="Hyprland"; break ;;
+        5) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
+        6) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
 done
@@ -89,9 +86,10 @@ cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 echo "$DE_NAME"   > "$WORK/squashfs-root/opt/borealOS/de"
+echo "$DE_START"  > "$WORK/squashfs-root/opt/borealOS/de-start"
 echo "$SHELL_BIN" > "$WORK/squashfs-root/opt/borealOS/shell"
 
-echo "==> Setting up artwork..."
+echo "==> Setting up BorealOS artwork..."
 mkdir -p "$WORK/squashfs-root/usr/share/boreal-artwork"
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
@@ -103,13 +101,21 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-convert "$BANNER" -resize 800x200 -background none \
+convert "$BANNER" -resize 800x196 -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
+convert -size 760x44 xc:none \
+    -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
+    -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
+    "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_c.png" 2>/dev/null || true
+convert -size 4x44 xc:"#4dffd2" \
+    "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_w.png" 2>/dev/null || true
+convert -size 4x44 xc:"#4dffd2" \
+    "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_e.png" 2>/dev/null || true
+
 if [ -f "$RICE_DIR/grub/grub-theme.txt" ]; then
     cp "$RICE_DIR/grub/grub-theme.txt" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
 else
-    warn "rice/grub/grub-theme.txt not found, using built-in theme"
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
 desktop-color: "#0d1b2a"
@@ -117,32 +123,33 @@ title-text: ""
 
 + image {
     top = 6%
-    left = 50%-205
-    width = 410
-    height = 200
+    left = 50%-400
+    width = 800
+    height = 196
     file = "title.png"
 }
 
 + boot_menu {
-    top = 52%
-    left = 25%
-    width = 50%
-    height = 35%
+    top = 53%
+    left = 20%
+    width = 60%
+    height = 36%
     item_color = "#7fffff"
     selected_item_color = "#ffffff"
-    item_height = 36
-    item_padding = 12
-    item_spacing = 4
+    selected_item_pixmap_style = "select_*.png"
+    item_height = 44
+    item_padding = 18
+    item_spacing = 6
     scrollbar = false
 }
 
 + label {
-    top = 90%
+    top = 92%
     left = 0
     width = 100%
     align = "center"
     color = "#4dffd2"
-    text = "Use arrows to navigate    Enter to boot"
+    text = "↑ ↓ navigate    Enter boot    e edit    c console"
 }
 THEME
 fi
@@ -152,30 +159,30 @@ mkdir -p "$WORK/squashfs-root/usr/share/plymouth/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! -fill "#0d1b2a" -colorize 55 \
     "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png"
-convert "$BANNER" -resize 600x150 -background none \
+convert "$BANNER" -resize 600x148 -background none \
     "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png"
 convert -size 12x12 xc:none -fill "#4dffd2" -draw "circle 5,5 5,0" \
-    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot.png"
+    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot.png" 2>/dev/null || true
 convert -size 12x12 xc:none -fill "#4dffd23c" -draw "circle 5,5 5,0" \
-    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot-dim.png"
+    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot-dim.png" 2>/dev/null || true
+
 if [ -f "$RICE_DIR/plymouth/boreal.script" ]; then
     cp "$RICE_DIR/plymouth/boreal.script"   "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.script"
     cp "$RICE_DIR/plymouth/boreal.plymouth" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.plymouth"
 else
-    warn "rice/plymouth files not found, Plymouth theme may not work"
+    warn "rice/plymouth files not found"
 fi
+
+mkdir -p "$WORK/squashfs-root/usr/share/plymouth/themes/debian-logo"
+touch "$WORK/squashfs-root/usr/share/plymouth/themes/debian-logo/debian-logo.png"
 
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
 copy_rice() {
     local src="$RICE_DIR/$1" dst="$SKEL/$2"
     mkdir -p "$(dirname "$dst")"
-    if [ -f "$src" ]; then
-        cp "$src" "$dst" && echo "  copied: $2"
-    else
-        warn "  missing rice config: $1"
-    fi
+    [ -f "$src" ] && cp "$src" "$dst" && echo "  copied: $2" || warn "  missing: $1"
 }
 copy_rice "fastfetch/config.jsonc" ".config/fastfetch/config.jsonc"
 copy_rice "kitty/kitty.conf"       ".config/kitty/kitty.conf"
@@ -193,42 +200,118 @@ ID_LIKE=
 VERSION="1.0"
 VERSION_ID="1.0"
 HOME_URL="https://borealos.org"
-SUPPORT_URL="https://borealos.org"
-BUG_REPORT_URL="https://borealos.org"
 OS
-
 cat > "$WORK/squashfs-root/etc/lsb-release" <<LSB
 DISTRIB_ID=BorealOS
 DISTRIB_RELEASE=1.0
 DISTRIB_CODENAME=boreal
 DISTRIB_DESCRIPTION="BorealOS 1.0"
 LSB
-
 echo "BorealOS"      > "$WORK/squashfs-root/etc/issue"
 echo "BorealOS 1.0"  > "$WORK/squashfs-root/etc/issue.net"
 echo "BorealOS"      > "$WORK/squashfs-root/etc/debian_version"
 echo "borealOS-live" > "$WORK/squashfs-root/etc/hostname"
 
-cat > "$WORK/squashfs-root/etc/profile.d/live-welcome.sh" <<'WELCOME'
-if [ "$(tty)" = "/dev/tty1" ] && [ "$(id -u)" = "0" ]; then
-    clear
-    cat <<'BANNER'
+echo "==> Writing live TTY menu..."
+cat > "$WORK/squashfs-root/etc/profile.d/boreal-live.sh" <<'LIVEMENU'
+#!/bin/bash
+[ "$(tty)" = "/dev/tty1" ] || exit 0
+[ "$(id -u)" = "0" ]       || exit 0
+grep -q "boot=live" /proc/cmdline 2>/dev/null || exit 0
 
+DE=$(cat /opt/borealOS/de 2>/dev/null || echo "None")
+DE_START=$(cat /opt/borealOS/de-start 2>/dev/null || echo "")
+
+while true; do
+    clear
+    printf '\033[0;36m\033[1m'
+    cat <<'BANNER'
   ____                       _  ___  ____
  | __ )  ___  _ __ ___  __ _| |/ _ \/ ___|
  |  _ \ / _ \| '__/ _ \/ _` | | | | \___ \
  | |_) | (_) | | |  __/ (_| | | |_| |___) |
  |____/ \___/|_|  \___|\__,_|_|\___/|____/
-
-  Welcome to BorealOS Live
-  Run: borealOS-install   to install
-
 BANNER
-    borealOS-install
-fi
-WELCOME
+    printf '\033[0m'
+    echo ""
+    echo "  BorealOS 1.0 Live  |  DE: $DE"
+    echo ""
+    echo "  1) Terminal Installer"
+    echo "  2) Graphical Live Environment"
+    echo "  3) Shell"
+    echo ""
+    echo -n "  Choice: "
+    read -r choice
+    case "$choice" in
+        1)
+            clear
+            borealOS-install
+            break
+            ;;
+        2)
+            if [ -z "$DE_START" ] || [ "$DE" = "None" ]; then
+                echo "No graphical DE in this ISO."
+                sleep 2
+            else
+                clear
+                /usr/local/bin/boreal-start-graphical
+                break
+            fi
+            ;;
+        3)
+            clear
+            break
+            ;;
+    esac
+done
+LIVEMENU
+chmod +x "$WORK/squashfs-root/etc/profile.d/boreal-live.sh"
 
-echo "==> Installing packages into squashfs..."
+cat > "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical" <<'GRAPHICAL'
+#!/bin/bash
+DE=$(cat /opt/borealOS/de 2>/dev/null || echo "None")
+DE_START=$(cat /opt/borealOS/de-start 2>/dev/null || echo "")
+
+echo "Starting $DE graphical environment..."
+sleep 1
+
+case "$DE" in
+    "XFCE"|"KDE Plasma")
+        cat > /root/.xinitrc <<XINITRC
+#!/bin/bash
+export XDG_SESSION_TYPE=x11
+(while true; do sleep 3 && calamares 2>/dev/null; sleep 2; done) &
+exec $DE_START
+XINITRC
+        chmod +x /root/.xinitrc
+        startx 2>/tmp/xorg.log
+        ;;
+    "Sway")
+        export XDG_SESSION_TYPE=wayland
+        export XDG_CURRENT_DESKTOP=sway
+        cat >> /etc/sway/config <<SWAYEXTRA
+exec sh -c 'sleep 3 && while true; do calamares 2>/dev/null; sleep 2; done'
+SWAYEXTRA
+        sway 2>/tmp/sway.log
+        ;;
+    "Hyprland")
+        export XDG_SESSION_TYPE=wayland
+        echo 'exec-once = sh -c "sleep 3 && while true; do calamares; sleep 2; done"' >> /etc/hypr/hyprland.conf
+        Hyprland 2>/tmp/hyprland.log
+        ;;
+    "Niri")
+        export XDG_SESSION_TYPE=wayland
+        niri-session 2>/tmp/niri.log
+        ;;
+    *)
+        echo "No graphical environment available."
+        sleep 3
+        ;;
+esac
+GRAPHICAL
+chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical"
+
+echo "==> Installing packages..."
 mount --bind /dev  "$WORK/squashfs-root/dev"
 mount --bind /proc "$WORK/squashfs-root/proc"
 mount --bind /sys  "$WORK/squashfs-root/sys"
@@ -244,40 +327,36 @@ apt-get install -y --no-install-recommends \
     efibootmgr \
     live-boot live-boot-initramfs-tools \
     openrc \
-    network-manager ifupdown \
-    dhcpcd5 \
+    network-manager ifupdown dhcpcd5 \
     parted dosfstools e2fsprogs \
     passwd sudo \
     bash bash-completion \
     iproute2 iputils-ping net-tools \
     curl wget nano less \
     tzdata locales \
-    wpasupplicant \
     openssl libdevmapper1.02.1 libefivar1 libefiboot1 \
     os-prober python3 rsync \
     fonts-dejavu-core \
+    xserver-xorg xserver-xorg-core xserver-xorg-input-all \
+    xserver-xorg-video-all xinit xauth x11-xserver-utils xterm xwayland \
+    wpasupplicant \
     $SHELL_PKG
 
 if [ -n "$DE_PKGS" ]; then
     apt-get install -y $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
-for pkg in fastfetch kitty; do
+for pkg in fastfetch kitty calamares calamares-qt6; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
 
 mkdir -p /opt/borealOS/debs
-
-apt-get install -y --download-only \
-    xserver-xorg xserver-xorg-core xserver-xorg-input-all \
-    xserver-xorg-video-all xinit xauth x11-xserver-utils xterm xwayland 2>/dev/null || true
 if [ -n "$DM_PKGS" ]; then
     apt-get install -y --download-only $DM_PKGS 2>/dev/null || true
 fi
 apt-get install -y --download-only plymouth plymouth-themes 2>/dev/null || true
-
 cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
-echo "$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l) debs cached for target installation"
+echo "$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l) debs cached"
 
 echo 'root:borealOS' | chpasswd
 CHROOT
@@ -285,14 +364,66 @@ CHROOT
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
 
+echo "==> Setting up Calamares branding..."
+if [ -f "$BRANDING_ZIP" ]; then
+    mkdir -p "$WORK/squashfs-root/usr/share/calamares/branding"
+    unzip -o "$BRANDING_ZIP" -d /tmp/calamares-branding/ 2>/dev/null || true
+    if [ -d /tmp/calamares-branding/branding/default ]; then
+        cp -r /tmp/calamares-branding/branding/default \
+            "$WORK/squashfs-root/usr/share/calamares/branding/boreal"
+        ok "Calamares branding installed."
+    fi
+    rm -rf /tmp/calamares-branding
+else
+    warn "borealOS-branding.zip not found — Calamares will use default branding"
+fi
+
+mkdir -p "$WORK/squashfs-root/etc/calamares"
+cat > "$WORK/squashfs-root/etc/calamares/settings.conf" <<'CALSETTINGS'
+---
+modules-search: [ local, /usr/lib/calamares/modules ]
+sequence:
+  - show:
+    - welcome
+    - locale
+    - keyboard
+    - partition
+    - users
+    - summary
+  - exec:
+    - partition
+    - mount
+    - unpackfs
+    - machineid
+    - fstab
+    - locale
+    - keyboard
+    - localecfg
+    - users
+    - displaymanager
+    - networkcfg
+    - hwclock
+    - services-systemd
+    - bootloader
+    - unmount
+  - show:
+    - finished
+branding: boreal
+prompt-install: true
+dont-chroot: false
+CALSETTINGS
+
 echo "==> Removing Debian artwork (after package install)..."
 find "$WORK/squashfs-root/usr/share" \
-    \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" \) \
+    \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" \
+       -not -path "*/plymouth/themes/debian-logo*" \) \
     -delete 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/images/desktop-base" 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/images/vendor-logos" 2>/dev/null || true
-find "$WORK/squashfs-root/usr/share/backgrounds" -name "*debian*" -delete 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/backgrounds" -maxdepth 2 -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/icons" -name "*debian*" -delete 2>/dev/null || true
+find "$WORK/squashfs-root/boot/grub" -name "*debian*" -delete 2>/dev/null || true
 
 if [ "$DE_NAME" = "Niri" ]; then
     echo "==> Building niri from source (10-20 minutes)..."
@@ -300,7 +431,6 @@ if [ "$DE_NAME" = "Niri" ]; then
     mount --bind /proc "$WORK/squashfs-root/proc"
     mount --bind /sys  "$WORK/squashfs-root/sys"
     cp /etc/resolv.conf "$WORK/squashfs-root/etc/resolv.conf"
-
     chroot "$WORK/squashfs-root" /bin/bash <<NIRICHROOT || die "niri build failed"
 set -e
 apt-get install -y --no-install-recommends \
@@ -316,30 +446,20 @@ apt-get install -y --no-install-recommends \
     xwayland wayland-protocols
 
 for optpkg in libwayland-egl1 libegl-dev libegl1-mesa-dev libgles-dev libgles2-mesa-dev \
-    libgtk-3-dev libpulse-dev libpcre2-dev wayland-utils \
-    swaybg waybar wlr-randr grim slurp; do
+    libgtk-3-dev libpulse-dev libpcre2-dev wayland-utils swaybg waybar wlr-randr grim slurp; do
     apt-get install -y --no-install-recommends "$optpkg" 2>/dev/null || echo "SKIP: $optpkg"
 done
 
 LATEST_TAG=$(git ls-remote --tags https://github.com/YaLTeR/niri.git 2>/dev/null | \
     grep -oP 'refs/tags/v[0-9.]+$' | sort -V | tail -1 | sed 's|refs/tags/||')
-echo "==> Cloning niri ${LATEST_TAG}..."
-cd /tmp
-git clone --depth 1 --branch "$LATEST_TAG" https://github.com/YaLTeR/niri.git niri-src
-cd niri-src
-echo "==> Compiling niri..."
-cargo build --release
+echo "Cloning niri $LATEST_TAG..."
+cd /tmp && git clone --depth 1 --branch "$LATEST_TAG" https://github.com/YaLTeR/niri.git niri-src
+cd niri-src && cargo build --release
 install -Dm755 target/release/niri /usr/local/bin/niri
 if [ -f resources/niri-session ]; then
     install -Dm755 resources/niri-session /usr/local/bin/niri-session
 else
-    cat > /usr/local/bin/niri-session <<SESSION
-#!/bin/sh
-export XDG_SESSION_TYPE=wayland
-export XDG_SESSION_DESKTOP=niri
-export XDG_CURRENT_DESKTOP=niri
-exec niri --session
-SESSION
+    printf '#!/bin/sh\nexport XDG_SESSION_TYPE=wayland\nexport XDG_CURRENT_DESKTOP=niri\nexec niri --session\n' > /usr/local/bin/niri-session
     chmod +x /usr/local/bin/niri-session
 fi
 mkdir -p /usr/local/share/wayland-sessions
@@ -351,12 +471,10 @@ Exec=niri-session
 Type=Application
 DesktopNames=niri
 DESK
-cd /
-rm -rf /tmp/niri-src
+cd / && rm -rf /tmp/niri-src
 apt-get remove -y --purge rustc cargo git cmake meson ninja-build build-essential libclang-dev clang 2>/dev/null || true
 apt-get autoremove -y 2>/dev/null || true
 NIRICHROOT
-
     umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
     ok "niri built."
 fi
@@ -396,7 +514,7 @@ set timeout=10
 set default=0
 set theme=/boot/grub/themes/boreal/theme.txt
 
-menuentry "BorealOS Live Installer" {
+menuentry "BorealOS Live" {
     linux /boot/vmlinuz boot=live quiet splash plymouth.ignore-serial-consoles
     initrd /boot/initrd.img
 }
