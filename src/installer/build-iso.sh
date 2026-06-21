@@ -154,29 +154,6 @@ title-text: ""
 THEME
 fi
 
-echo "==> Creating Plymouth theme..."
-mkdir -p "$WORK/squashfs-root/usr/share/plymouth/themes/boreal"
-convert "$WALLPAPER_DEFAULT" -resize 1920x1080! -fill "#0d1b2a" -colorize 55 \
-    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png" 2>/dev/null || \
-    cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/background.png"
-convert "$BANNER" -resize 600x148 -background none \
-    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png" 2>/dev/null || \
-    cp "$BANNER" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/logo.png"
-convert -size 12x12 xc:none -fill "#4dffd2" -draw "circle 5,5 5,0" \
-    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot.png" 2>/dev/null || true
-convert -size 12x12 xc:none -fill "#4dffd23c" -draw "circle 5,5 5,0" \
-    "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/dot-dim.png" 2>/dev/null || true
-
-if [ -f "$RICE_DIR/plymouth/boreal.script" ]; then
-    cp "$RICE_DIR/plymouth/boreal.script"   "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.script"
-    cp "$RICE_DIR/plymouth/boreal.plymouth" "$WORK/squashfs-root/usr/share/plymouth/themes/boreal/boreal.plymouth"
-else
-    warn "rice/plymouth files not found"
-fi
-
-mkdir -p "$WORK/squashfs-root/usr/share/plymouth/themes/debian-logo"
-touch "$WORK/squashfs-root/usr/share/plymouth/themes/debian-logo/debian-logo.png"
-
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
 copy_rice() {
@@ -411,7 +388,6 @@ mkdir -p /opt/borealOS/debs
 if [ -n "$DM_PKGS" ]; then
     apt-get install -y --download-only $DM_PKGS 2>/dev/null || true
 fi
-apt-get install -y --download-only plymouth plymouth-themes 2>/dev/null || true
 cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
 echo "$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l) debs cached"
 
@@ -585,7 +561,7 @@ set default=0
 set theme=/boot/grub/themes/boreal/theme.txt
 
 menuentry "BorealOS Live" {
-    linux /boot/vmlinuz boot=live quiet splash plymouth.ignore-serial-consoles
+    linux /boot/vmlinuz boot=live quiet
     initrd /boot/initrd.img
 }
 

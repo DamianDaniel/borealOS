@@ -426,13 +426,11 @@ remove_live_boot() {
     rm -f /mnt/etc/profile.d/boreal-live.sh 2>/dev/null || true
     rm -f /mnt/usr/local/bin/boreal-start-graphical 2>/dev/null || true
 
-    step "Fixing Plymouth hooks..."
-    mkdir -p /mnt/usr/share/plymouth/themes/debian-logo
-    touch /mnt/usr/share/plymouth/themes/debian-logo/debian-logo.png
-
-    if [ -f /mnt/usr/share/plymouth/themes/boreal/boreal.plymouth ]; then
-        chroot /mnt plymouth-set-default-theme boreal 2>/dev/null || true
-    fi
+    step "Removing Plymouth completely..."
+    chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5         plymouth-label plymouth-theme-boreal 2>/dev/null || true
+    find /mnt/usr/share/plymouth /mnt/etc/plymouth          /mnt/usr/share/initramfs-tools/hooks/plymouth          /mnt/usr/share/initramfs-tools/scripts/plymouth          -delete 2>/dev/null || true
+    rm -f /mnt/usr/share/initramfs-tools/hooks/plymouth 2>/dev/null || true
+    rm -f /mnt/etc/initramfs-tools/conf.d/plymouth* 2>/dev/null || true
 
     step "Rebuilding initramfs..."
     chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
@@ -650,7 +648,7 @@ fi
 
 menuentry "BorealOS 1.0" {
     search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
-    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet splash plymouth.ignore-serial-consoles
+    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet
     initrd /boot/initrd.img-${KVER}
 }
 menuentry "BorealOS 1.0 (recovery)" {
