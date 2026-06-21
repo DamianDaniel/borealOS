@@ -108,9 +108,11 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-convert "$BANNER" -trim -resize 720x274 -background none -gravity center -extent 720x274 \
+convert "$BANNER" -trim -resize 300x114 -background none -gravity center -extent 300x114 \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
+convert "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" \
+    "$WORK/iso/boot/grub/themes/boreal/title.png" 2>/dev/null || true
 convert -size 760x44 xc:none \
     -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
     -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
@@ -129,10 +131,10 @@ desktop-color: "#0d1b2a"
 title-text: ""
 
 + image {
-    top = 5%
-    left = 50%-360
-    width = 720
-    height = 274
+    top = 21%
+    left = 50%-150
+    width = 300
+    height = 114
     file = "title.png"
 }
 
