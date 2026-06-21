@@ -1,0 +1,20 @@
+<?xml version="1.1" encoding="UTF-8"?>
+
+<channel name="xfce4-notifyd" version="1.0">
+  <property name="log-max-size-enabled" type="bool" value="true"/>
+  <property name="applications" type="empty">
+    <property name="known_applications" type="array">
+      <value type="string" value="Xfce volume control"/>
+      <value type="string" value="Xfce4-notifyd settings"/>
+    </property>
+  </property>
+  <property name="date-time-custom-format" type="string" value="%a %H:%M:%S"/>
+  <property name="notify-location" type="string" value="top-right"/>
+  <property name="initial-opacity" type="double" value="0.80000000000000004"/>
+  <property name="theme" type="string" value="Default"/>
+  <property name="plugin" type="empty">
+    <property name="after-menu-shown" type="string" value="mark-all-read"/>
+    <property name="log-icon-size" type="int" value="14"/>
+    <property name="log-display-limit" type="int" value="8"/>
+  </property>
+</channel>
