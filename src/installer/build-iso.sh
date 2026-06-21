@@ -108,11 +108,9 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-convert "$BANNER" -trim -resize 300x114 -background none -gravity center -extent 300x114 \
+convert "$BANNER" -trim -resize 400x152! -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
-convert "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" \
-    "$WORK/iso/boot/grub/themes/boreal/title.png" 2>/dev/null || true
 convert -size 760x44 xc:none \
     -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
     -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
@@ -131,10 +129,10 @@ desktop-color: "#0d1b2a"
 title-text: ""
 
 + image {
-    top = 21%
-    left = 50%-150
-    width = 300
-    height = 114
+    top = 18%
+    left = 50%-200
+    width = 400
+    height = 152
     file = "title.png"
 }
 
@@ -165,44 +163,37 @@ fi
 
 echo "==> Writing xorg config..."
 mkdir -p "$WORK/squashfs-root/etc/X11/xorg.conf.d"
-rm -f "$WORK/squashfs-root/etc/X11/xorg.conf" 2>/dev/null || true
 
-cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/10-libinput.conf" <<'XORGCONF'
+# Explicit xorg.conf bypassing libinput/udev entirely
+# Uses /dev/input/mice (always exists) and kbd - no seat/logind needed
+cat > "$WORK/squashfs-root/etc/X11/xorg.conf" <<'XORGCONF'
 Section "ServerFlags"
-    Option "AutoAddDevices" "true"
-    Option "AutoEnableDevices" "true"
+    Option "AutoAddDevices" "false"
+    Option "AutoEnableDevices" "false"
 EndSection
 
-Section "InputClass"
-    Identifier "libinput pointer"
-    MatchIsPointer "on"
-    Driver "libinput"
-    Option "AccelSpeed" "0"
-    Option "AccelProfile" "flat"
+Section "InputDevice"
+    Identifier "Mouse0"
+    Driver "mouse"
+    Option "Protocol" "auto"
+    Option "Device" "/dev/input/mice"
+    Option "ZAxisMapping" "4 5 6 7"
+    Option "Buttons" "5"
 EndSection
 
-Section "InputClass"
-    Identifier "libinput keyboard"
-    MatchIsKeyboard "on"
-    Driver "libinput"
+Section "InputDevice"
+    Identifier "Keyboard0"
+    Driver "kbd"
+    Option "XkbLayout" "us"
+    Option "XkbVariant" ""
 EndSection
 
-Section "InputClass"
-    Identifier "libinput touchpad"
-    MatchIsTouchpad "on"
-    Driver "libinput"
-    Option "Tapping" "on"
+Section "ServerLayout"
+    Identifier "DefaultLayout"
+    InputDevice "Mouse0" "CorePointer"
+    InputDevice "Keyboard0" "CoreKeyboard"
 EndSection
 XORGCONF
-
-cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/20-mouse-fallback.conf" <<'MOUSEFB'
-Section "InputClass"
-    Identifier "evdev mice"
-    MatchIsPointer "on"
-    MatchDevicePath "/dev/input/mice"
-    Driver "evdev"
-EndSection
-MOUSEFB
 
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
@@ -601,7 +592,8 @@ cat > "$WORK/iso/boot/grub/grub.cfg" <<'GRUB'
 insmod all_video
 insmod gfxterm
 insmod png
-set gfxmode=auto
+set gfxmode=1024x768,auto
+set gfxpayload=keep
 terminal_output gfxterm
 set timeout_style=menu
 set timeout=10
