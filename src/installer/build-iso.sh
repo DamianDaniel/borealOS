@@ -108,7 +108,9 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-convert "$BANNER" -trim -resize 400x152! -background none \
+# Resize banner preserving aspect ratio: fit within 400px wide, height auto-scales.
+# logo.png is 3310x1254 (~2.64:1), so 400wide -> ~152px tall. Never use ! (force-stretch).
+convert "$BANNER" -trim -resize 400x -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 convert -size 760x44 xc:none \
@@ -122,6 +124,11 @@ convert -size 4x44 xc:"#4dffd2" \
 
 if [ -f "$RICE_DIR/grub/grub-theme.txt" ]; then
     cp "$RICE_DIR/grub/grub-theme.txt" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
+    # Remove any hardcoded height from the title image block so it can't warp.
+    # GRUB scales correctly when only width is specified.
+    sed -i '/^\s*height\s*=\s*[0-9]/d' \
+        "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
+    ok "Rice grub theme applied (height constraint removed to prevent logo warp)"
 else
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
@@ -132,7 +139,8 @@ title-text: ""
     top = 18%
     left = 50%-200
     width = 400
-    height = 152
+    # No height: GRUB scales to match the image's natural height at this width.
+    # Setting both width AND height to non-matching values causes the egg warp.
     file = "title.png"
 }
 
@@ -164,36 +172,27 @@ fi
 echo "==> Writing xorg config..."
 mkdir -p "$WORK/squashfs-root/etc/X11/xorg.conf.d"
 
-# Explicit xorg.conf bypassing libinput/udev entirely
-# Uses /dev/input/mice (always exists) and kbd - no seat/logind needed
-cat > "$WORK/squashfs-root/etc/X11/xorg.conf" <<'XORGCONF'
-Section "ServerFlags"
-    Option "AutoAddDevices" "false"
-    Option "AutoEnableDevices" "false"
+# Let Xorg + libinput handle device enumeration via udev (the modern way).
+# DO NOT set AutoAddDevices=false here — that was blocking keyboard/mouse in live env.
+# We only force libinput as the catch-all input driver and set a sane keyboard layout.
+cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/00-boreal-input.conf" <<'XORGCONF'
+Section "InputClass"
+    Identifier "libinput catch-all"
+    MatchIsPointer "on"
+    Driver "libinput"
+    Option "NaturalScrolling" "false"
 EndSection
 
-Section "InputDevice"
-    Identifier "Mouse0"
-    Driver "mouse"
-    Option "Protocol" "auto"
-    Option "Device" "/dev/input/mice"
-    Option "ZAxisMapping" "4 5 6 7"
-    Option "Buttons" "5"
-EndSection
-
-Section "InputDevice"
-    Identifier "Keyboard0"
-    Driver "kbd"
+Section "InputClass"
+    Identifier "libinput keyboard catch-all"
+    MatchIsKeyboard "on"
+    Driver "libinput"
     Option "XkbLayout" "us"
-    Option "XkbVariant" ""
-EndSection
-
-Section "ServerLayout"
-    Identifier "DefaultLayout"
-    InputDevice "Mouse0" "CorePointer"
-    InputDevice "Keyboard0" "CoreKeyboard"
 EndSection
 XORGCONF
+
+# Remove any leftover static xorg.conf that might have AutoAddDevices=false
+rm -f "$WORK/squashfs-root/etc/X11/xorg.conf"
 
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
@@ -287,89 +286,81 @@ chmod +x "$WORK/squashfs-root/etc/profile.d/boreal-live.sh"
 
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical" <<'GRAPHICAL'
 #!/bin/bash
-DE=$(cat /opt/borealOS/de 2>/dev/null || echo "None")
-DE_START=$(cat /opt/borealOS/de-start 2>/dev/null || echo "")
+# boreal-start-graphical: launches a minimal XFCE installer session.
+#
+# WHY XFCE ALWAYS:
+#   Calamares is a Qt/X11 application. It requires a running X server, a D-Bus
+#   session, and a composited or at least functional WM. Wayland compositors
+#   (Sway, Hyprland, Niri) do not expose DISPLAY, so Qt6/X11 Calamares can't
+#   connect. Bare WMs without a session manager miss the D-Bus plumbing Calamares
+#   needs. XFCE is the lightest DE that provides all of this reliably.
+#
+#   The user's chosen DE (KDE, Sway, etc.) is still installed into the *target*
+#   system by installer.sh — this session is only for the live install environment.
 
-if [ -z "$DE_START" ] || [ "$DE" = "None" ]; then
-    echo "No graphical DE in this ISO. Press Enter to return."
+DE=$(cat /opt/borealOS/de 2>/dev/null || echo "None")
+
+if [ "$DE" = "None" ]; then
+    echo "This ISO was built without a graphical environment (TTY-only mode)."
+    echo "Use option 1 (Terminal Installer) instead."
+    echo "Press Enter to return."
     read -r; exit 0
 fi
 
-echo "Starting $DE graphical environment..."
+# Check XFCE is available (it's always installed as the installer host DE)
+if ! command -v startxfce4 >/dev/null 2>&1; then
+    echo "ERROR: XFCE installer environment not found."
+    echo "The ISO may need to be rebuilt. Press Enter to return."
+    read -r; exit 0
+fi
+
+echo "Starting BorealOS graphical installer (XFCE host session)..."
+echo "Your chosen DE ($DE) will be installed to the target disk."
 sleep 1
 
-launch_calamares() {
-    sleep 10
-    while true; do
-        DISPLAY=:0 dbus-launch calamares 2>/tmp/calamares.log || \
-        DISPLAY=:0 calamares 2>/tmp/calamares.log
-        sleep 3
-    done
-}
-
-case "$DE" in
-    "XFCE")
-        cat > /root/.xinitrc <<'XINITRC'
+cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
 export XDG_SESSION_TYPE=x11
 export XDG_CURRENT_DESKTOP=XFCE
-export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --fork --print-address 2>/dev/null)
 
-# Set wallpaper for every possible monitor name after XFCE starts
-(sleep 8
+# Start a D-Bus session if one isn't running
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+    eval "$(dbus-launch --sh-syntax --exit-with-session)"
+fi
+
+# Set wallpaper once XFCE desktop is up
+(sleep 6
  WP=/usr/share/boreal-artwork/wallpaper-default.png
  for screen in screen0; do
-   for mon in VGA-1 VGA1 HDMI-1 HDMI1 Virtual-1 Virtual1 DP-1 DP1 monitor0 monitorVGA-1; do
-     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
-     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
+   for mon in VGA-1 VGA1 HDMI-1 HDMI1 Virtual-1 Virtual1 DP-1 DP1 \
+               eDP-1 eDP1 DVI-1 DVI1 monitor0; do
+     xfconf-query -c xfce4-desktop \
+       -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
+     xfconf-query -c xfce4-desktop \
+       -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
    done
  done
  xfdesktop --reload 2>/dev/null || true
 ) &
 
-# Launch calamares loop after desktop is ready
-(sleep 12
+# Launch Calamares installer after desktop has settled.
+# Loop so it restarts if the user closes and re-opens it.
+(sleep 10
  while true; do
    DISPLAY=:0 calamares 2>/tmp/calamares.log
+   RET=$?
+   # Exit code 0 = finished successfully; don't restart
+   [ "$RET" -eq 0 ] && break
    sleep 3
  done
 ) &
 
 exec startxfce4
 XINITRC
-        chmod +x /root/.xinitrc
-        startx -- -nolisten tcp 2>/tmp/xorg.log
-        ;;
-    "KDE Plasma")
-        cat > /root/.xinitrc <<'XINITRC'
-#!/bin/bash
-export XDG_SESSION_TYPE=x11
-(sleep 10; while true; do
-    DISPLAY=:0 calamares 2>/tmp/calamares.log
-    sleep 3
-done) &
-exec startplasma-x11
-XINITRC
-        chmod +x /root/.xinitrc
-        startx -- -nolisten tcp 2>/tmp/xorg.log
-        ;;
-    "Sway")
-        export XDG_SESSION_TYPE=wayland
-        export XDG_CURRENT_DESKTOP=sway
-        (sleep 10; while true; do calamares 2>/tmp/calamares.log; sleep 3; done) &
-        exec sway 2>/tmp/sway.log
-        ;;
-    "Hyprland")
-        export XDG_SESSION_TYPE=wayland
-        (sleep 10; while true; do calamares 2>/tmp/calamares.log; sleep 3; done) &
-        exec Hyprland 2>/tmp/hyprland.log
-        ;;
-    "Niri")
-        export XDG_SESSION_TYPE=wayland
-        (sleep 10; while true; do calamares 2>/tmp/calamares.log; sleep 3; done) &
-        exec niri-session 2>/tmp/niri.log
-        ;;
-esac
+
+chmod +x /root/.xinitrc
+# -nolisten tcp: no remote X connections; good practice in a live env
+startx -- -nolisten tcp 2>/tmp/xorg.log
 GRAPHICAL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical"
 
@@ -404,10 +395,14 @@ apt-get install -y --no-install-recommends \
 
 apt-get install -y \
     xserver-xorg xserver-xorg-core \
-    xserver-xorg-input-all xserver-xorg-input-libinput \
-    xserver-xorg-input-evdev xserver-xorg-input-mouse xserver-xorg-input-kbd \
+    xserver-xorg-input-all \
+    xserver-xorg-input-libinput \
+    xserver-xorg-input-evdev \
+    xserver-xorg-input-mouse \
+    xserver-xorg-input-kbd \
     xserver-xorg-video-all xserver-xorg-video-vesa xserver-xorg-video-fbdev \
     xinit xauth x11-xserver-utils x11-utils xterm xwayland \
+    libinput-tools \
     libgl1-mesa-dri libgl1 mesa-utils \
     dbus dbus-x11 at-spi2-core \
     libinput10 libinput-dev \
@@ -417,7 +412,21 @@ for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
 
-if [ -n "$DE_PKGS" ]; then
+# Always install XFCE as the live installer host environment.
+# Calamares requires X11 + D-Bus + a session manager — XFCE is the lightest DE
+# that provides all of this. Wayland compositors (Sway, Hyprland, Niri) and
+# bare WMs cannot host Calamares reliably in a live session.
+# The user's chosen DE ($DE_PKGS) is also installed so the live env can demo it,
+# but the GUI installer always launches inside XFCE regardless.
+apt-get install -y --no-install-recommends \
+    xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
+    lightdm lightdm-gtk-greeter \
+    || echo "WARN: XFCE installer host DE install incomplete"
+
+if [ -n "$DE_PKGS" ] && [ "$DE_PKGS" != "xfce4 xfce4-goodies" ]; then
+    apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
+elif [ -n "$DE_PKGS" ]; then
+    # User chose XFCE — install the goodies too
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
