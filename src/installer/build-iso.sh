@@ -1,16 +1,21 @@
 #!/bin/bash
 set -e
 
-WORK="$(pwd)/iso-work"
-OUTPUT="borealOS.iso"
-ROOTFS_TAR="./borealOS-rootfs.tar.gz"
-INSTALLER_SH="./installer.sh"
-WALLPAPER_DEFAULT="./background_2.png"
-WALLPAPER_ALT="./background_one.png"
-LOGO="./logo.png"
-BANNER="./borealOS-text-and-logo-transparent.png"
-BRANDING_ZIP="./borealOS-branding.zip"
-RICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../rice"
+# Always resolve paths relative to the script's own directory,
+# not cwd. Prevents stale iso-work folders from accumulating when run as
+# e.g. "sudo bash src/installer/build-iso.sh" from the repo root.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+WORK="$SCRIPT_DIR/iso-work"
+OUTPUT="$SCRIPT_DIR/borealOS.iso"
+ROOTFS_TAR="$SCRIPT_DIR/borealOS-rootfs.tar.gz"
+INSTALLER_SH="$SCRIPT_DIR/installer.sh"
+WALLPAPER_DEFAULT="$SCRIPT_DIR/background_2.png"
+WALLPAPER_ALT="$SCRIPT_DIR/background_one.png"
+LOGO="$SCRIPT_DIR/logo.png"
+BANNER="$SCRIPT_DIR/borealOS-text-and-logo-transparent.png"
+BRANDING_ZIP="$SCRIPT_DIR/borealOS-branding.zip"
+RICE_DIR="$SCRIPT_DIR/../rice"
 
 RED='\033[0;31m'; GRN='\033[0;32m'; CYN='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 die()  { echo -e "${RED}ERROR: $1${RST}" >&2; exit 1; }
@@ -392,6 +397,18 @@ mount --bind /proc "$WORK/squashfs-root/proc"
 mount --bind /sys  "$WORK/squashfs-root/sys"
 cp /etc/resolv.conf "$WORK/squashfs-root/etc/resolv.conf"
 
+# policy-rc.d: tells dpkg/invoke-rc.d to refuse ALL service start/restart
+# actions during the chroot install. This is the standard Debian mechanism —
+# without it, any package whose postinst calls `service X start` or
+# `invoke-rc.d X start` will actually try to start the service inside the
+# chroot, and for DMs that means registering runlevel symlinks.
+cat > "$WORK/squashfs-root/usr/sbin/policy-rc.d" <<'POLICY'
+#!/bin/sh
+# Deny all service actions during chroot build
+exit 101
+POLICY
+chmod +x "$WORK/squashfs-root/usr/sbin/policy-rc.d"
+
 chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation failed"
 set -e
 apt-get update -qq
@@ -509,18 +526,171 @@ umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root
 ok "==> Packages installed."
 
 echo "==> Setting up Calamares branding..."
+BRAND_DEST="$WORK/squashfs-root/usr/share/calamares/branding/boreal"
+mkdir -p "$BRAND_DEST"
+
 if [ -f "$BRANDING_ZIP" ]; then
-    mkdir -p "$WORK/squashfs-root/usr/share/calamares/branding"
+    rm -rf /tmp/calamares-branding
     unzip -o "$BRANDING_ZIP" -d /tmp/calamares-branding/ 2>/dev/null || true
+    # Copy the base files (install.png, languages.png etc) from zip as fallback
     if [ -d /tmp/calamares-branding/branding/default ]; then
-        cp -r /tmp/calamares-branding/branding/default \
-            "$WORK/squashfs-root/usr/share/calamares/branding/boreal"
-        ok "Calamares branding installed."
+        cp /tmp/calamares-branding/branding/default/*.png "$BRAND_DEST/" 2>/dev/null || true
+        cp /tmp/calamares-branding/branding/default/lang "$BRAND_DEST/" -r 2>/dev/null || true
     fi
     rm -rf /tmp/calamares-branding
-else
-    warn "borealOS-branding.zip not found — Calamares will use default branding"
 fi
+
+# --- branding.desc: fully updated for BorealOS ---
+cat > "$BRAND_DEST/branding.desc" << 'BRANDDESC'
+# BorealOS Calamares Branding
+# SPDX-License-Identifier: CC0-1.0
+---
+componentName:  boreal
+
+welcomeStyleCalamares:   false
+welcomeExpandingLogo:    true
+
+windowExpanding:    normal
+windowSize:         900px,600px
+windowPlacement:    center
+
+sidebar:    widget
+navigation: widget
+
+strings:
+    productName:         "BorealOS"
+    shortProductName:    "Boreal"
+    version:             "Alpha"
+    shortVersion:        "alpha"
+    versionedName:       "BorealOS Alpha"
+    shortVersionedName:  "BorealOS Alpha"
+    bootloaderEntryName: "BorealOS"
+    productUrl:          "https://github.com/DamianDaniel/borealOS"
+    supportUrl:          "https://github.com/DamianDaniel/borealOS/issues"
+
+images:
+    productBanner:       "banner.png"
+    productIcon:         "logo.png"
+    productLogo:         "logo.png"
+    productWallpaper:    "wallpaper.png"
+    productWelcome:      "welcome.png"
+
+style:
+    SidebarBackground:        "#0d1f2d"
+    SidebarText:              "#b2f0e8"
+    SidebarTextCurrent:       "#0d1f2d"
+    SidebarBackgroundCurrent: "#3dffd2"
+
+slideshow:      [ "install.png" ]
+slideshowAPI:   1
+
+uploadServer:
+    type:      "none"
+    url:       ""
+    sizeLimit: -1
+BRANDDESC
+
+# --- stylesheet.qss: BorealOS teal/dark-navy palette ---
+cat > "$BRAND_DEST/stylesheet.qss" << 'QSS'
+#mainApp, QDialog {
+    background-color: #0d1f2d;
+    color: #e0f7f4;
+    font-family: "Inter", "Noto Sans", sans-serif;
+    font-size: 11pt;
+}
+#sidebarApp { background-color: #0d1f2d; color: #b2f0e8; }
+#sidebarMenuApp { background-color: #0d1f2d; }
+QPushButton {
+    background-color: #163a4a; color: #3dffd2;
+    border: 1px solid #3dffd2; border-radius: 4px; padding: 6px 16px;
+}
+QPushButton:hover { background-color: #1e5060; color: #ffffff; }
+QPushButton:pressed { background-color: #3dffd2; color: #0d1f2d; }
+QPushButton:disabled { background-color: #0d2535; color: #4a7a7a; border-color: #2a5555; }
+QPushButton#pushButtonNext, QPushButton#pushButtonInstall {
+    background-color: #3dffd2; color: #0d1f2d; font-weight: bold; border: none;
+}
+QPushButton#pushButtonNext:hover, QPushButton#pushButtonInstall:hover {
+    background-color: #7fffd4;
+}
+QProgressBar {
+    background-color: #163a4a; border: 1px solid #3dffd2;
+    border-radius: 4px; text-align: center; color: #e0f7f4; height: 18px;
+}
+QProgressBar::chunk {
+    background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #3dffd2,stop:1 #5fffaa);
+    border-radius: 3px;
+}
+QLineEdit, QComboBox, QSpinBox {
+    background-color: #163a4a; color: #e0f7f4;
+    border: 1px solid #2a6060; border-radius: 4px; padding: 4px 8px;
+    selection-background-color: #3dffd2; selection-color: #0d1f2d;
+}
+QLineEdit:focus, QComboBox:focus { border-color: #3dffd2; }
+QComboBox QAbstractItemView {
+    background-color: #163a4a; color: #e0f7f4;
+    selection-background-color: #3dffd2; selection-color: #0d1f2d;
+    border: 1px solid #3dffd2;
+}
+QListView, QTreeView, QTableView {
+    background-color: #0f2535; color: #e0f7f4;
+    border: 1px solid #2a6060; alternate-background-color: #163a4a;
+}
+QListView::item:selected, QTreeView::item:selected {
+    background-color: #3dffd2; color: #0d1f2d;
+}
+QScrollBar:vertical { background: #0d1f2d; width: 8px; border-radius: 4px; }
+QScrollBar::handle:vertical { background: #3dffd2; border-radius: 4px; min-height: 20px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { background: #0d1f2d; height: 8px; border-radius: 4px; }
+QScrollBar::handle:horizontal { background: #3dffd2; border-radius: 4px; min-width: 20px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+QLabel { color: #e0f7f4; }
+QLabel#labelWelcome, QLabel#labelSubtitle { color: #3dffd2; font-size: 14pt; font-weight: bold; }
+QCheckBox, QRadioButton { color: #e0f7f4; spacing: 6px; }
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 14px; height: 14px; border: 1px solid #3dffd2;
+    background: #163a4a; border-radius: 3px;
+}
+QCheckBox::indicator:checked { background-color: #3dffd2; }
+QRadioButton::indicator { border-radius: 7px; }
+QRadioButton::indicator:checked { background-color: #3dffd2; }
+QGroupBox {
+    border: 1px solid #2a6060; border-radius: 6px;
+    margin-top: 8px; padding-top: 8px; color: #3dffd2; font-weight: bold;
+}
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }
+QTabBar::tab {
+    background: #163a4a; color: #b2f0e8; border: 1px solid #2a6060;
+    border-bottom: none; padding: 6px 14px;
+    border-top-left-radius: 4px; border-top-right-radius: 4px;
+}
+QTabBar::tab:selected { background: #0d1f2d; color: #3dffd2; border-bottom: 2px solid #3dffd2; }
+QTabWidget::pane { border: 1px solid #2a6060; }
+QSS
+
+# --- Convert borealOS images to correct Calamares slot sizes ---
+# banner.png  : top-of-welcome wide banner, max 460x64px
+convert "$BANNER" -trim -resize 460x64 -background none -gravity center \
+    -extent 460x64 "$BRAND_DEST/banner.png" 2>/dev/null || \
+    cp "$BANNER" "$BRAND_DEST/banner.png"
+
+# logo.png    : sidebar step indicator + window icon, 80x80px square
+convert "$LOGO" -resize 80x80 -background none -gravity center \
+    -extent 80x80 "$BRAND_DEST/logo.png" 2>/dev/null || \
+    cp "$LOGO" "$BRAND_DEST/logo.png"
+
+# welcome.png : center of welcome page, 320x150px (fits the window well)
+convert "$LOGO" -resize 320x320 -background none -gravity center \
+    "$BRAND_DEST/welcome.png" 2>/dev/null || \
+    cp "$LOGO" "$BRAND_DEST/welcome.png"
+
+# wallpaper.png : tiled/scaled background for entire Calamares window 900x600
+convert "$WALLPAPER_DEFAULT" -resize 900x600! \
+    "$BRAND_DEST/wallpaper.png" 2>/dev/null || \
+    cp "$WALLPAPER_DEFAULT" "$BRAND_DEST/wallpaper.png"
+
+ok "Calamares branding installed (BorealOS assets + theme)."
 
 mkdir -p "$WORK/squashfs-root/etc/calamares"
 cat > "$WORK/squashfs-root/etc/calamares/settings.conf" <<'CALSETTINGS'
