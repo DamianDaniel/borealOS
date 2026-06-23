@@ -423,6 +423,21 @@ remove_live_boot() {
     rm -f /mnt/etc/profile.d/boreal-live.sh 2>/dev/null || true
     rm -f /mnt/usr/local/bin/boreal-start-graphical 2>/dev/null || true
 
+    # Remove the minimal XFCE installer host environment unless the user
+    # actually chose XFCE as their DE. If they chose XFCE, the full
+    # xfce4-goodies suite was installed on top — nothing to remove.
+    if [ "$DE_CHOICE" != "XFCE" ]; then
+        step "Removing XFCE installer host (not the chosen DE)..."
+        chroot /mnt apt-get remove --purge -y \
+            xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
+            xfce4-session xfce4-panel thunar \
+            2>/dev/null || true
+        chroot /mnt apt-get autoremove --purge -y 2>/dev/null || true
+        ok "XFCE installer host removed."
+    else
+        ok "XFCE is the chosen DE — keeping full install."
+    fi
+
     step "Removing Plymouth completely..."
     chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5         plymouth-label plymouth-theme-boreal 2>/dev/null || true
     find /mnt/usr/share/plymouth /mnt/etc/plymouth          /mnt/usr/share/initramfs-tools/hooks/plymouth          /mnt/usr/share/initramfs-tools/scripts/plymouth          -delete 2>/dev/null || true

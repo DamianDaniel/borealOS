@@ -416,11 +416,15 @@ done
 # Calamares requires X11 + D-Bus + a session manager — XFCE is the lightest DE
 # that provides all of this. Wayland compositors (Sway, Hyprland, Niri) and
 # bare WMs cannot host Calamares reliably in a live session.
-# The user's chosen DE ($DE_PKGS) is also installed so the live env can demo it,
-# but the GUI installer always launches inside XFCE regardless.
+# The user's chosen DE ($DE_PKGS) is also installed, but the GUI installer
+# always launches inside XFCE via 'startx' from the TTY autologin session.
+#
+# NO lightdm/sddm here — we use startx from the TTY autologin.
+# Installing any DM causes it to register an OpenRC init script and/or write
+# /etc/X11/default-display-manager, which hijacks the TTY autologin flow
+# and drops the user into a greeter instead of the boreal-live.sh menu.
 apt-get install -y --no-install-recommends \
     xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
-    lightdm lightdm-gtk-greeter \
     || echo "WARN: XFCE installer host DE install incomplete"
 
 if [ -n "$DE_PKGS" ] && [ "$DE_PKGS" != "xfce4 xfce4-goodies" ]; then
