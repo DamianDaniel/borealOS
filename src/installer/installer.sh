@@ -241,21 +241,39 @@ rsync_system() {
 }
 
 install_bundled_packages() {
-    step "Installing X server, display manager and Plymouth from cached debs..."
+    step "Installing display manager and cached debs into target system..."
+    mkdir -p /mnt/tmp/debs
+
+    # gui-debs: lightdm + greeter, downloaded-not-installed during ISO build.
+    # Safe to install into the TARGET (not the live env — that's intentional).
+    local gui_count
+    gui_count=$(ls /opt/borealOS/gui-debs/*.deb 2>/dev/null | wc -l)
+    if [ "$gui_count" -gt 0 ]; then
+        cp /opt/borealOS/gui-debs/*.deb /mnt/tmp/debs/
+        ok "Queued $gui_count gui debs (lightdm)"
+    fi
+
+    # debs: user's chosen DM (sddm for KDE, etc.) and other bundled packages
     local deb_count
     deb_count=$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l)
-    if [ "$deb_count" -eq 0 ]; then
-        warn "No cached debs found in /opt/borealOS/debs/ — skipping"
+    if [ "$deb_count" -gt 0 ]; then
+        cp /opt/borealOS/debs/*.deb /mnt/tmp/debs/
+        ok "Queued $deb_count bundled debs"
+    fi
+
+    local total
+    total=$(ls /mnt/tmp/debs/*.deb 2>/dev/null | wc -l)
+    if [ "$total" -eq 0 ]; then
+        warn "No cached debs found — skipping"
         return
     fi
-    mkdir -p /mnt/tmp/debs
-    cp /opt/borealOS/debs/*.deb /mnt/tmp/debs/
+
     chroot /mnt /bin/bash <<DPKG
 dpkg -i --force-depends /tmp/debs/*.deb 2>/dev/null || true
 dpkg --configure -a 2>/dev/null || true
 rm -rf /tmp/debs
 DPKG
-    ok "Bundled packages installed ($deb_count debs)."
+    ok "Bundled packages installed ($total debs)."
 }
 
 bind_mounts() {
@@ -437,6 +455,10 @@ remove_live_boot() {
     else
         ok "XFCE is the chosen DE — keeping full install."
     fi
+
+    # Clean up the live-only deb caches from the target system
+    rm -rf /mnt/opt/borealOS/gui-debs 2>/dev/null || true
+    rm -rf /mnt/opt/borealOS/debs 2>/dev/null || true
 
     step "Removing Plymouth completely..."
     chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5         plymouth-label plymouth-theme-boreal 2>/dev/null || true

@@ -318,6 +318,24 @@ echo "Starting BorealOS graphical installer (XFCE host session)..."
 echo "Your chosen DE ($DE) will be installed to the target disk."
 sleep 1
 
+# Install lightdm NOW — right before we need X — not at ISO build time.
+# The debs were downloaded (not installed) during build and cached here.
+# This is the only safe way to have a DM available without it auto-starting
+# at boot and hijacking the TTY autologin → boreal-live.sh flow.
+echo "Installing display manager for this session..."
+if ls /opt/borealOS/gui-debs/*.deb >/dev/null 2>&1; then
+    dpkg -i --force-depends /opt/borealOS/gui-debs/*.deb 2>/dev/null || true
+    dpkg --configure -a 2>/dev/null || true
+    # Immediately disable it from starting on its own — we call startx ourselves
+    for dm in lightdm sddm gdm gdm3; do
+        rm -f /etc/runlevels/default/${dm} /etc/runlevels/boot/${dm} 2>/dev/null || true
+        find /etc/rc*.d -name "*${dm}*" -delete 2>/dev/null || true
+    done
+    rm -f /etc/X11/default-display-manager 2>/dev/null || true
+else
+    echo "WARN: No cached DM debs found — continuing without lightdm"
+fi
+
 cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
 export XDG_SESSION_TYPE=x11
@@ -343,14 +361,12 @@ fi
  xfdesktop --reload 2>/dev/null || true
 ) &
 
-# Launch Calamares installer after desktop has settled.
-# Loop so it restarts if the user closes and re-opens it.
+# Launch Calamares after the desktop has settled.
+# Loop restarts it if closed before install completes; stops on success (exit 0).
 (sleep 10
  while true; do
    DISPLAY=:0 calamares 2>/tmp/calamares.log
-   RET=$?
-   # Exit code 0 = finished successfully; don't restart
-   [ "$RET" -eq 0 ] && break
+   [ "$?" -eq 0 ] && break
    sleep 3
  done
 ) &
@@ -359,8 +375,14 @@ exec startxfce4
 XINITRC
 
 chmod +x /root/.xinitrc
-# -nolisten tcp: no remote X connections; good practice in a live env
 startx -- -nolisten tcp 2>/tmp/xorg.log
+
+# X has exited — purge lightdm so it can't start if the user reboots into
+# the live env again without going through boreal-start-graphical.
+echo "Cleaning up display manager..."
+apt-get remove --purge -y lightdm lightdm-gtk-greeter 2>/dev/null || \
+    dpkg -r --force-depends lightdm lightdm-gtk-greeter 2>/dev/null || true
+rm -f /etc/X11/default-display-manager 2>/dev/null || true
 GRAPHICAL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical"
 
@@ -412,25 +434,21 @@ for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
 
-# Always install XFCE as the live installer host environment.
-# Calamares requires X11 + D-Bus + a session manager — XFCE is the lightest DE
-# that provides all of this. Wayland compositors (Sway, Hyprland, Niri) and
-# bare WMs cannot host Calamares reliably in a live session.
-# The user's chosen DE ($DE_PKGS) is also installed, but the GUI installer
-# always launches inside XFCE via 'startx' from the TTY autologin session.
-#
-# NO lightdm/sddm here — we use startx from the TTY autologin.
-# Installing any DM causes it to register an OpenRC init script and/or write
-# /etc/X11/default-display-manager, which hijacks the TTY autologin flow
-# and drops the user into a greeter instead of the boreal-live.sh menu.
+# ── XFCE installer host DE ────────────────────────────────────────────────────
+# Install XFCE with --no-install-recommends to prevent apt from pulling in
+# lightdm/sddm as a recommended dep (xfce4 recommends a DM).
+# We intentionally keep the live env DM-free: the TTY autologin → boreal-live.sh
+# menu → boreal-start-graphical script calls startx directly. Any DM present
+# at boot will register an OpenRC init script and hijack the TTY autologin.
 apt-get install -y --no-install-recommends \
     xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
-    || echo "WARN: XFCE installer host DE install incomplete"
+    xfce4-session xfce4-panel xfce4-settings \
+    || echo "WARN: XFCE installer host install incomplete"
 
+# Install the user's chosen DE (also --no-install-recommends to stay safe)
 if [ -n "$DE_PKGS" ] && [ "$DE_PKGS" != "xfce4 xfce4-goodies" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 elif [ -n "$DE_PKGS" ]; then
-    # User chose XFCE — install the goodies too
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
@@ -438,26 +456,52 @@ for pkg in fastfetch kitty calamares calamares-qt6; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
 
+# ── Download lightdm debs WITHOUT installing them ─────────────────────────────
+# boreal-start-graphical will dpkg -i these right before startx, so the
+# live boot never sees a DM. They are also used by installer.sh for the
+# target system's DM install (when the user chose XFCE or KDE).
+mkdir -p /opt/borealOS/gui-debs
+apt-get install -y --no-install-recommends \
+    --download-only \
+    lightdm lightdm-gtk-greeter 2>/dev/null || true
+cp /var/cache/apt/archives/lightdm*.deb \
+   /var/cache/apt/archives/lightdm-gtk-greeter*.deb \
+   /opt/borealOS/gui-debs/ 2>/dev/null || true
+echo "$(ls /opt/borealOS/gui-debs/*.deb 2>/dev/null | wc -l) gui debs cached (not installed)"
+
+# Also cache the user's chosen DM debs (sddm for KDE etc.) if different
 mkdir -p /opt/borealOS/debs
 if [ -n "$DM_PKGS" ]; then
     apt-get install -y --download-only $DM_PKGS 2>/dev/null || true
 fi
 cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
-echo "$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l) debs cached"
 
 echo 'root:borealOS' | chpasswd
 
-echo "==> Ensuring no display manager auto-starts in live env..."
-apt-get remove --purge -y lightdm sddm gdm3 xdm wdm nodm 2>/dev/null || true
-for dm in lightdm sddm gdm3 xdm wdm; do
+# ── Nuclear DM purge ──────────────────────────────────────────────────────────
+# Belt-and-suspenders: purge every known DM even if none were installed.
+# Then delete every hook that could auto-start one on boot.
+echo "==> Purging all display managers from live env..."
+apt-get remove --purge -y \
+    lightdm lightdm-gtk-greeter lightdm-gtk-greeter-settings \
+    sddm gdm3 gdm xdm wdm nodm slim \
+    2>/dev/null || true
+apt-get autoremove --purge -y 2>/dev/null || true
+
+# Remove every OpenRC/SysV runlevel symlink for any DM
+for dm in lightdm sddm gdm gdm3 xdm wdm slim nodm; do
+    rm -f /etc/runlevels/default/${dm} \
+          /etc/runlevels/boot/${dm} \
+          /etc/runlevels/sysinit/${dm} 2>/dev/null || true
     find /etc/rc*.d -name "*${dm}*" -delete 2>/dev/null || true
-    rm -f /etc/runlevels/default/${dm} 2>/dev/null || true
-    rm -f /etc/runlevels/boot/${dm} 2>/dev/null || true
+    # Stub out any surviving init.d script so it can't start anything
     if [ -f /etc/init.d/${dm} ]; then
         printf '#!/bin/sh\nexit 0\n' > /etc/init.d/${dm}
+        chmod +x /etc/init.d/${dm}
     fi
 done
 
+# Remove the file that tells Xorg/PAM which DM to use
 rm -f /etc/X11/default-display-manager 2>/dev/null || true
 CHROOT
 
