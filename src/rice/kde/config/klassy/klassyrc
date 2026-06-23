@@ -1,0 +1,21 @@
+[ButtonColors]
+ButtonBackgroundColorsActive=AccentTrafficLights
+ButtonBackgroundColorsInactive=AccentTrafficLights
+CloseButtonIconColorActive=AsSelected
+CloseButtonIconColorInactive=AsSelected
+
+[Global]
+LookAndFeelSet=Boreal dark
+RefreshedConfig=6.5.3
+
+[Windeco]
+WindowCornerRadius=0
+
+[WindowOutlineStyle]
+WindowOutlineCustomColorActive=137,198,130
+WindowOutlineCustomColorInactive=137,198,130
+WindowOutlineCustomColorOpacityActive=100
+WindowOutlineShadowColorOpacity=100
+WindowOutlineStyleActive=WindowOutlineCustomColor
+WindowOutlineStyleInactive=WindowOutlineCustomColor
+WindowOutlineThickness=3
