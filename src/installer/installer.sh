@@ -7,7 +7,7 @@ BLD='\033[1m'
 RST='\033[0m'
 
 EXTRA_USERS=()
-EFI="" ROOT="" DISK=""
+EFI="" ROOT="" DISK="" BIOS=""
 DE_CHOICE="" SHELL_BIN=""
 NET_TYPE="" NET_IF="" NET_IP="" NET_GW="" NET_DNS=""
 HOSTNAME="" LOCALE="" TIMEZONE=""
@@ -197,7 +197,7 @@ partition_disk() {
     else
         BIOS="${DISK}1";  EFI="${DISK}2";  ROOT="${DISK}3"
     fi
-    [ -b "$BIOS" ] || die "BIOS boot partition $BIOS not found"
+    [ -b "$BIOS" ] || die "BIOS partition $BIOS not found"
     [ -b "$EFI"  ] || die "EFI partition $EFI not found"
     [ -b "$ROOT" ] || die "Root partition $ROOT not found"
     mkfs.fat -F32 -n EFI "$EFI"      || die "mkfs.fat failed"
@@ -207,8 +207,7 @@ partition_disk() {
     EFI_UUID=$(blkid -s UUID -o value "$EFI")   || die "blkid efi failed"
     [ -n "$ROOT_UUID" ] || die "Root UUID empty"
     [ -n "$EFI_UUID"  ] || die "EFI UUID empty"
-    ok "Root UUID: $ROOT_UUID"
-    ok "EFI UUID:  $EFI_UUID"
+    ok "Root UUID: $ROOT_UUID  EFI UUID: $EFI_UUID"
 }
 
 mount_target() {
@@ -241,6 +240,42 @@ rsync_system() {
     ok "System copied."
 }
 
+install_bundled_packages() {
+    step "Installing display manager and cached debs into target system..."
+    mkdir -p /mnt/tmp/debs
+
+    # gui-debs: lightdm + greeter, downloaded-not-installed during ISO build.
+    # Safe to install into the TARGET (not the live env — that's intentional).
+    local gui_count
+    gui_count=$(ls /opt/borealOS/gui-debs/*.deb 2>/dev/null | wc -l)
+    if [ "$gui_count" -gt 0 ]; then
+        cp /opt/borealOS/gui-debs/*.deb /mnt/tmp/debs/
+        ok "Queued $gui_count gui debs (lightdm)"
+    fi
+
+    # debs: user's chosen DM (sddm for KDE, etc.) and other bundled packages
+    local deb_count
+    deb_count=$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l)
+    if [ "$deb_count" -gt 0 ]; then
+        cp /opt/borealOS/debs/*.deb /mnt/tmp/debs/
+        ok "Queued $deb_count bundled debs"
+    fi
+
+    local total
+    total=$(ls /mnt/tmp/debs/*.deb 2>/dev/null | wc -l)
+    if [ "$total" -eq 0 ]; then
+        warn "No cached debs found — skipping"
+        return
+    fi
+
+    chroot /mnt /bin/bash <<DPKG
+dpkg -i --force-depends /tmp/debs/*.deb 2>/dev/null || true
+dpkg --configure -a 2>/dev/null || true
+rm -rf /tmp/debs
+DPKG
+    ok "Bundled packages installed ($total debs)."
+}
+
 bind_mounts() {
     for d in dev proc sys run; do
         mount --bind /$d /mnt/$d || die "bind mount /$d failed"
@@ -263,6 +298,8 @@ FSTAB
 }
 
 write_network() {
+    # Only loopback in interfaces - dhcpcd handles ethernet automatically
+    # (dhcpcd skips interfaces listed in /etc/network/interfaces as DHCP)
     cat > /mnt/etc/network/interfaces <<IFACES
 auto lo
 iface lo inet loopback
@@ -275,11 +312,7 @@ IFACES
     mkdir -p /mnt/etc/rc2.d /mnt/etc/runlevels/default
 
     if [ "$NET_TYPE" = "DHCP (automatic)" ]; then
-        cat >> /mnt/etc/network/interfaces <<IFACES
-
-auto ${NET_IF}
-iface ${NET_IF} inet dhcp
-IFACES
+        # dhcpcd with no interface arg = configures ALL ethernet interfaces automatically
         cat > /mnt/etc/dhcpcd.conf <<DHCP
 hostname
 clientid
@@ -289,7 +322,6 @@ option domain_name_servers, domain_name, domain_search, routers
 option ntp_servers
 option interface_mtu
 slaac private
-interface ${NET_IF}
 static domain_name_servers=1.1.1.1 8.8.8.8
 DHCP
         rm -f /mnt/etc/rc2.d/S*dhcpcd /mnt/etc/rc2.d/S*NetworkManager 2>/dev/null || true
@@ -306,10 +338,8 @@ iface ${NET_IF} inet static
     dns-nameservers ${NET_DNS}
 IFACES
     fi
-
     ok "Network config written."
 }
-
 
 configure_system() {
     step "Configuring system..."
@@ -354,17 +384,28 @@ echo "BorealOS"     > /etc/issue
 echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 CHROOT
+
     step "Removing Debian artwork..."
-    find /mnt/usr/share -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" -delete 2>/dev/null || true
+    find /mnt/usr/share \
+        \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" \) \
+        -delete 2>/dev/null || true
     rm -rf /mnt/usr/share/images/desktop-base 2>/dev/null || true
     rm -rf /mnt/usr/share/images/vendor-logos 2>/dev/null || true
-    find /mnt/usr/share/backgrounds -name "*debian*" -delete 2>/dev/null || true
-    find /mnt/usr/share/pixmaps -name "*debian*" -delete 2>/dev/null || true
+
+    step "Installing BorealOS artwork..."
+    mkdir -p /mnt/usr/share/boreal-artwork
+    cp /opt/borealOS/background_2.png   /mnt/usr/share/boreal-artwork/wallpaper-default.png
+    cp /opt/borealOS/background_one.png /mnt/usr/share/boreal-artwork/wallpaper-waves.png
+    cp /opt/borealOS/logo.png           /mnt/usr/share/boreal-artwork/logo.png
 
     step "Installing Plymouth theme..."
-    mkdir -p /mnt/usr/share/plymouth/themes/boreal
-    cp -r /usr/share/plymouth/themes/boreal/. /mnt/usr/share/plymouth/themes/boreal/ 2>/dev/null ||         warn "Plymouth theme not in live env — skipping"
-    chroot /mnt plymouth-set-default-theme boreal 2>/dev/null || true
+    if [ -d /usr/share/plymouth/themes/boreal ]; then
+        mkdir -p /mnt/usr/share/plymouth/themes/boreal
+        cp -r /usr/share/plymouth/themes/boreal/. /mnt/usr/share/plymouth/themes/boreal/
+        chroot /mnt plymouth-set-default-theme boreal 2>/dev/null || true
+    else
+        warn "Plymouth boreal theme not found in live env"
+    fi
 
     ok "System configured."
 }
@@ -379,9 +420,10 @@ set_passwords() {
         local usudo="${rest##*|}"
         local groups="audio,video,netdev"
         [ "$usudo" = "y" ] && groups="sudo,${groups}"
-        chroot /mnt useradd -m -G "$groups" -s "$SHELL_BIN" "$uname" 2>/dev/null ||         chroot /mnt useradd -m -G "audio,video" -s "$SHELL_BIN" "$uname" ||         die "useradd failed for $uname"
-        printf '%s:%s
-' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
+        chroot /mnt useradd -m -G "$groups" -s "$SHELL_BIN" "$uname" 2>/dev/null || \
+        chroot /mnt useradd -m -G "audio,video" -s "$SHELL_BIN" "$uname" || \
+        die "useradd failed for $uname"
+        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
     done
     ok "Passwords set."
 }
@@ -396,8 +438,36 @@ remove_live_boot() {
          /mnt/etc/grub.d \
          -name "*live*" -delete 2>/dev/null || true
     rm -rf /mnt/lib/live /mnt/usr/lib/live 2>/dev/null || true
+    rm -f /mnt/etc/profile.d/boreal-live.sh 2>/dev/null || true
+    rm -f /mnt/usr/local/bin/boreal-start-graphical 2>/dev/null || true
+
+    # Remove the minimal XFCE installer host environment unless the user
+    # actually chose XFCE as their DE. If they chose XFCE, the full
+    # xfce4-goodies suite was installed on top — nothing to remove.
+    if [ "$DE_CHOICE" != "XFCE" ]; then
+        step "Removing XFCE installer host (not the chosen DE)..."
+        chroot /mnt apt-get remove --purge -y \
+            xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
+            xfce4-session xfce4-panel thunar \
+            2>/dev/null || true
+        chroot /mnt apt-get autoremove --purge -y 2>/dev/null || true
+        ok "XFCE installer host removed."
+    else
+        ok "XFCE is the chosen DE — keeping full install."
+    fi
+
+    # Clean up the live-only deb caches from the target system
+    rm -rf /mnt/opt/borealOS/gui-debs 2>/dev/null || true
+    rm -rf /mnt/opt/borealOS/debs 2>/dev/null || true
+
+    step "Removing Plymouth completely..."
+    chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5         plymouth-label plymouth-theme-boreal 2>/dev/null || true
+    find /mnt/usr/share/plymouth /mnt/etc/plymouth          /mnt/usr/share/initramfs-tools/hooks/plymouth          /mnt/usr/share/initramfs-tools/scripts/plymouth          -delete 2>/dev/null || true
+    rm -f /mnt/usr/share/initramfs-tools/hooks/plymouth 2>/dev/null || true
+    rm -f /mnt/etc/initramfs-tools/conf.d/plymouth* 2>/dev/null || true
+
     step "Rebuilding initramfs..."
-    chroot /mnt update-initramfs -u -k all || die "update-initramfs failed"
+    chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
     ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd after rebuild"
     ok "live-boot removed, initramfs rebuilt."
 }
@@ -430,9 +500,7 @@ INITTAB
 setup_de() {
     step "Configuring DE: $DE_CHOICE..."
     mkdir -p /mnt/etc/runlevels/default /mnt/etc/rc2.d
-    rm -f /mnt/etc/rc2.d/S*networking /mnt/etc/runlevels/default/networking 2>/dev/null || true
-    ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager 2>/dev/null || true
-    ln -sf ../init.d/NetworkManager   /mnt/etc/rc2.d/S02NetworkManager         2>/dev/null || true
+
     case "$DE_CHOICE" in
         "KDE Plasma")
             ln -sf /etc/init.d/sddm /mnt/etc/runlevels/default/sddm 2>/dev/null || true
@@ -449,10 +517,15 @@ SDDM
             ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm 2>/dev/null || true
             ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm 2>/dev/null || true
             mkdir -p /mnt/etc/lightdm
-            cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
+            if ls /opt/borealOS/lightdm/* >/dev/null 2>&1; then
+                cp -r /opt/borealOS/lightdm/. /mnt/etc/lightdm/
+                ok "lightdm rice config applied."
+            else
+                cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
 background=/usr/share/boreal-artwork/wallpaper-default.png
 LDM
+            fi
             mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
             cat > /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<XFCE
 <?xml version="1.0" encoding="UTF-8"?>
@@ -499,10 +572,7 @@ general {
     col.active_border = rgba(4dffd2ff)
     col.inactive_border = rgba(0d1b2aff)
 }
-decoration {
-    rounding = 8
-    blur { enabled = true; size = 5; passes = 2 }
-}
+decoration { rounding = 8 }
 bind = \$mod, Return, exec, foot
 bind = \$mod, D, exec, wofi --show run
 bind = \$mod SHIFT, Q, killactive
@@ -512,28 +582,10 @@ bind = \$mod, right, movefocus, r
 bind = \$mod, up, movefocus, u
 bind = \$mod, down, movefocus, d
 HYPR
-            mkdir -p /mnt/etc/xdg/waybar
-            cat > /mnt/etc/xdg/waybar/config <<WAYBAR
-{
-    "layer": "top",
-    "modules-left": ["hyprland/workspaces"],
-    "modules-center": ["clock"],
-    "modules-right": ["network","cpu","memory"],
-    "clock": { "format": "{:%Y-%m-%d %H:%M}" },
-    "network": { "format-ethernet": "eth {ipaddr}", "format-disconnected": "no net" },
-    "cpu": { "format": "cpu {usage}%" },
-    "memory": { "format": "mem {}%" }
-}
-WAYBAR
-            cat > /mnt/etc/xdg/waybar/style.css <<CSS
-* { font-family: monospace; font-size: 13px; }
-window#waybar { background: #0d1b2a; color: #4dffd2; }
-.modules-left, .modules-right { padding: 0 10px; }
-CSS
             for u in "${EXTRA_USERS[@]}"; do
                 local uname="${u%%|*}"
                 mkdir -p /mnt/home/${uname}/.config/hypr
-                cp /mnt/etc/hypr/hyprland.conf /mnt/home/${uname}/.config/hypr/hyprland.conf
+                cp /mnt/etc/hypr/hyprland.conf /mnt/home/${uname}/.config/hypr/
                 chroot /mnt chown -R ${uname}:${uname} /home/${uname}/.config
             done
             ;;
@@ -543,10 +595,6 @@ CSS
 input {
     keyboard { xkb { layout "us" } }
     touchpad { tap }
-}
-output "Virtual-1" {
-    mode "1920x1080@60"
-    scale 1.0
 }
 layout {
     gaps 16
@@ -567,7 +615,7 @@ NIRI
             for u in "${EXTRA_USERS[@]}"; do
                 local uname="${u%%|*}"
                 mkdir -p /mnt/home/${uname}/.config/niri
-                cp /mnt/etc/niri/config.kdl /mnt/home/${uname}/.config/niri/config.kdl
+                cp /mnt/etc/niri/config.kdl /mnt/home/${uname}/.config/niri/
                 chroot /mnt chown -R ${uname}:${uname} /home/${uname}/.config
             done
             ;;
@@ -583,28 +631,36 @@ install_grub() {
     fi
 
     step "Installing GRUB..."
-
     rm -rf /mnt/boot/efi/EFI 2>/dev/null || true
 
     cat > /mnt/etc/default/grub <<GRUBDEF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR=BorealOS
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash plymouth.ignore-serial-consoles"
 GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
+GRUB_GFXMODE=auto
 GRUBDEF
 
-    chroot /mnt grub-install         --target=i386-pc         "$DISK"         2>&1 || die "BIOS grub-install failed"
+    chroot /mnt grub-install \
+        --target=i386-pc \
+        "$DISK" \
+        2>&1 || die "BIOS grub-install failed"
 
-    chroot /mnt grub-install         --target=x86_64-efi         --efi-directory=/boot/efi         --bootloader-id=BorealOS         --removable         --recheck         2>&1 || warn "EFI grub-install failed (ok if VM is BIOS-only)"
-
-    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ] || warn "BOOTX64.EFI missing (ok if VM is BIOS-only)"
+    chroot /mnt grub-install \
+        --target=x86_64-efi \
+        --efi-directory=/boot/efi \
+        --bootloader-id=BorealOS \
+        --removable \
+        --recheck \
+        2>&1 || warn "EFI grub-install failed (ok if BIOS-only)"
 
     KVER=$(ls /mnt/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|/mnt/boot/vmlinuz-||')
     [ -n "$KVER" ] || die "No kernel found in /mnt/boot"
     [ -f "/mnt/boot/initrd.img-${KVER}" ] || die "No initrd for kernel $KVER"
 
+    mkdir -p /mnt/boot/efi/EFI/BOOT
     cat > /mnt/boot/efi/EFI/BOOT/grub.cfg <<EGCFG
 search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
 set prefix=(\$root)/boot/grub
@@ -613,8 +669,15 @@ EGCFG
 
     mkdir -p /mnt/boot/grub
     cat > /mnt/boot/grub/grub.cfg <<GCFG
+insmod all_video
+insmod gfxterm
+insmod png
+set gfxmode=auto
+terminal_output gfxterm
+
 set default=0
 set timeout=5
+
 if [ -f /boot/grub/themes/boreal/theme.txt ]; then
     set theme=/boot/grub/themes/boreal/theme.txt
 else
@@ -624,7 +687,7 @@ fi
 
 menuentry "BorealOS 1.0" {
     search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
-    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet splash plymouth.ignore-serial-consoles
+    linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet
     initrd /boot/initrd.img-${KVER}
 }
 menuentry "BorealOS 1.0 (recovery)" {
@@ -637,27 +700,16 @@ GCFG
     ok "GRUB installed. Kernel: $KVER"
 }
 
-install_artwork() {
-    step "Installing artwork..."
-    mkdir -p /mnt/usr/share/boreal-artwork
-    cp /opt/borealOS/background_2.png   /mnt/usr/share/boreal-artwork/wallpaper-default.png || die "artwork copy failed"
-    cp /opt/borealOS/background_one.png /mnt/usr/share/boreal-artwork/wallpaper-waves.png
-    cp /opt/borealOS/logo.png           /mnt/usr/share/boreal-artwork/logo.png
-    ok "Wallpapers installed."
-}
-
 verify() {
     step "Verifying..."
     local fail=0
-    [ -f /mnt/boot/efi/EFI/BOOT/BOOTX64.EFI ]    || warn "BOOTX64.EFI missing (ok if BIOS-only VM)"
-    [ -f /mnt/boot/efi/EFI/BOOT/grub.cfg ]        || { warn "EFI grub.cfg missing";       fail=1; }
-    [ -f /mnt/boot/grub/grub.cfg ]                 || { warn "grub.cfg missing";           fail=1; }
-    [ -f /mnt/etc/fstab ]                          || { warn "fstab missing";              fail=1; }
-    ls /mnt/boot/vmlinuz-* >/dev/null 2>&1         || { warn "No kernel";                 fail=1; }
-    ls /mnt/boot/initrd.img-* >/dev/null 2>&1      || { warn "No initrd";                 fail=1; }
-    grep -q "${ROOT_UUID}" /mnt/boot/grub/grub.cfg || { warn "UUID not in grub.cfg";      fail=1; }
-    grep -q "${ROOT_UUID}" /mnt/etc/fstab          || { warn "UUID not in fstab";         fail=1; }
-    grep -q "boot=live" /mnt/boot/grub/grub.cfg    && { warn "boot=live in grub.cfg!";   fail=1; }
+    [ -f /mnt/boot/grub/grub.cfg ]                 || { warn "grub.cfg missing";     fail=1; }
+    [ -f /mnt/etc/fstab ]                          || { warn "fstab missing";         fail=1; }
+    ls /mnt/boot/vmlinuz-* >/dev/null 2>&1         || { warn "No kernel";             fail=1; }
+    ls /mnt/boot/initrd.img-* >/dev/null 2>&1      || { warn "No initrd";             fail=1; }
+    grep -q "${ROOT_UUID}" /mnt/boot/grub/grub.cfg || { warn "UUID not in grub.cfg";  fail=1; }
+    grep -q "${ROOT_UUID}" /mnt/etc/fstab          || { warn "UUID not in fstab";     fail=1; }
+    grep -q "boot=live" /mnt/boot/grub/grub.cfg    && { warn "boot=live in grub.cfg!"; fail=1; }
     [ "$fail" = "1" ] && die "Verification failed."
     ok "All checks passed."
 }
@@ -716,7 +768,7 @@ main() {
     partition_disk
     mount_target
     rsync_system
-    install_artwork
+    install_bundled_packages
     write_fstab
     write_network
     bind_mounts

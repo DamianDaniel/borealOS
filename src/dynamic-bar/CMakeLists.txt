@@ -10,6 +10,10 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 
+# Set Qt policies to suppress warnings
+qt_policy(SET QTP0001 NEW) # Use ':/qt/qml/' as the default resource prefix
+qt_policy(SET QTP0004 NEW) # Require qmldir files for extra directories
+
 # Create your executable with just the C++ sources
 add_executable(BorealDynamicBar
         src/Main.cpp

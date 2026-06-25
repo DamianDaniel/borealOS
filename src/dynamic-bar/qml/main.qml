@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Window
-import org.borealos.components 1.0 // todo: change package name
+import org.borealos.components 1.0
 
 Window {
     id: root
@@ -9,7 +9,6 @@ Window {
     height: 60
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-
 
     SystemStatus {
         id: sysStatus
@@ -26,20 +25,7 @@ Window {
         color: "#AA000000"
 
         // Left Side: App Indicators
-        Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 15
-            spacing: 10
 
-            Repeater {
-                model: 4
-                Rectangle {
-                    width: 24; height: 24; radius: 6; color: "white"
-                    Text { text: "🗎"; anchors.centerIn: parent }
-                }
-            }
-        }
 
         // Right Side: The Dynamic Island / Morphing Status
         Rectangle {
