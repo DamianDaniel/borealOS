@@ -127,7 +127,7 @@ convert "$BANNER" -trim -resize 520x -background none \
 # Generate GRUB 9-slice rounded-corner selection highlight pixmaps.
 # GRUB tiles these to draw the selected item box with rounded corners.
 GRUB_THEME_DIR="$WORK/squashfs-root/usr/share/grub/themes/boreal"
-python3 << 'GENPIXMAP'
+GRUB_PIXMAP_DIR="$GRUB_THEME_DIR" python3 << 'GENPIXMAP'
 import sys, struct, zlib, os
 
 def make_png_rgba(w, h, pixels):
@@ -145,7 +145,7 @@ def make_png_rgba(w, h, pixels):
     png += chunk(b"IEND", b"")
     return png
 
-outdir = "/usr/share/grub/themes/boreal"
+outdir = os.environ.get("GRUB_PIXMAP_DIR", "/usr/share/grub/themes/boreal")
 BG   = (13,  51,  77, 200)
 EDGE = (61, 255, 210, 220)
 TRAN = (0,   0,   0,   0)
