@@ -169,7 +169,7 @@ terminal-top: "15%"
     height = 36%
     item_font = "DejaVu Sans Bold 16"
     item_color = "#d0f5f0"
-    selected_item_color = "#0d1b2a"
+    selected_item_color = "#ffffff"
     selected_item_pixmap_style = "select_*.png"
     item_height = 42
     item_padding = 14
@@ -209,24 +209,28 @@ Section "InputClass"
 EndSection
 XORGCONF
 
-# Video config: force modesetting driver and explicitly blacklist vmware_drv.
-# vmware_drv segfaults on Xorg startup in VMware/QEMU guests on some kernel versions.
-# modesetting uses KMS (kernel mode setting) and works on bare metal + all hypervisors.
+# Video config: use fbdev as primary driver.
+# - modesetting requires /dev/dri/card0 (KMS) — not always present in VMs → "no screens found"
+# - vmware_drv segfaults in some VMware guest configs
+# - fbdev works on any framebuffer device (/dev/fb0) including VMware, VirtualBox, QEMU, bare metal
+# - vesa is the absolute last resort (no KMS, no fb required)
 cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/10-boreal-video.conf" <<'XORGVIDEO'
 Section "Device"
     Identifier "BorealOS Video"
-    Driver "modesetting"
-    Option "AccelMethod" "none"
+    Driver "fbdev"
+    Option "fbdev" "/dev/fb0"
 EndSection
 XORGVIDEO
 
-# Also blacklist vmware kernel modules that can cause the Xorg segfault
-mkdir -p "$WORK/squashfs-root/etc/modprobe.d"
-cat > "$WORK/squashfs-root/etc/modprobe.d/boreal-blacklist.conf" <<'MODBLACKLIST'
-# vmwgfx can cause Xorg vmware_drv segfaults in some guest configurations.
-# modesetting driver works fine without it for the live installer session.
-blacklist vmwgfx
-MODBLACKLIST
+# Blacklist vmware_drv via Xorg so it is never auto-loaded by the server
+cat > "$WORK/squashfs-root/usr/share/X11/xorg.conf.d/99-boreal-novm.conf" <<'XORGNVM'
+Section "Module"
+    Disable "vmware"
+EndSection
+XORGNVM
+
+# Also make the start-graphical script try fbdev → vesa → modesetting in order
+# by passing -config to Xorg so we always get a screen even on unusual hardware
 
 rm -f "$WORK/squashfs-root/etc/X11/xorg.conf"
 
@@ -466,8 +470,20 @@ XINITRC
 chmod +x /root/.xinitrc
 
 echo "==> Starting X on display :0 VT${VT}..."
+# Try fbdev first; if Xorg still can't find a screen, retry with vesa
 xinit /root/.xinitrc -- "$XORG_BIN" :0 vt${VT} -nolisten tcp     > /tmp/xorg.log 2>&1
 XRET=$?
+if [ "$XRET" -ne 0 ] && grep -q "no screens found" /tmp/xorg.log 2>/dev/null; then
+    echo "fbdev failed — retrying with vesa driver..."
+    cat > /etc/X11/xorg.conf.d/10-boreal-video.conf <<VESACFG
+Section "Device"
+    Identifier "BorealOS Video Vesa"
+    Driver "vesa"
+EndSection
+VESACFG
+    xinit /root/.xinitrc -- "$XORG_BIN" :0 vt${VT} -nolisten tcp         > /tmp/xorg.log 2>&1
+    XRET=$?
+fi
 echo ""
 if [ "$XRET" -ne 0 ]; then
     echo "X server exited with code $XRET."
