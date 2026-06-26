@@ -241,39 +241,31 @@ rsync_system() {
 }
 
 install_bundled_packages() {
-    step "Installing display manager and cached debs into target system..."
-    mkdir -p /mnt/tmp/debs
+    step "Installing display manager into target system..."
+    bind_mounts
+    cp /etc/resolv.conf /mnt/etc/resolv.conf 2>/dev/null || true
 
-    # gui-debs: lightdm + greeter, downloaded-not-installed during ISO build.
-    # Safe to install into the TARGET (not the live env — that's intentional).
-    local gui_count
-    gui_count=$(ls /opt/borealOS/gui-debs/*.deb 2>/dev/null | wc -l)
-    if [ "$gui_count" -gt 0 ]; then
-        cp /opt/borealOS/gui-debs/*.deb /mnt/tmp/debs/
-        ok "Queued $gui_count gui debs (lightdm)"
-    fi
+    # Install the DM directly into the target via apt — no pre-cached debs needed.
+    # lightdm is the default; sddm for KDE (set by $DM_PKGS).
+    local dm_to_install="${DM_PKGS:-lightdm lightdm-gtk-greeter}"
+    chroot /mnt apt-get install -y $dm_to_install 2>/dev/null ||         warn "DM install failed — target may boot to TTY"
 
-    # debs: user's chosen DM (sddm for KDE, etc.) and other bundled packages
+    # Install any other cached debs (bundled drivers, etc.)
     local deb_count
     deb_count=$(ls /opt/borealOS/debs/*.deb 2>/dev/null | wc -l)
     if [ "$deb_count" -gt 0 ]; then
+        mkdir -p /mnt/tmp/debs
         cp /opt/borealOS/debs/*.deb /mnt/tmp/debs/
-        ok "Queued $deb_count bundled debs"
-    fi
-
-    local total
-    total=$(ls /mnt/tmp/debs/*.deb 2>/dev/null | wc -l)
-    if [ "$total" -eq 0 ]; then
-        warn "No cached debs found — skipping"
-        return
-    fi
-
-    chroot /mnt /bin/bash <<DPKG
+        chroot /mnt /bin/bash <<DPKG
 dpkg -i --force-depends /tmp/debs/*.deb 2>/dev/null || true
 dpkg --configure -a 2>/dev/null || true
 rm -rf /tmp/debs
 DPKG
-    ok "Bundled packages installed ($total debs)."
+        ok "Bundled debs installed ($deb_count)."
+    fi
+
+    unbind_mounts
+    ok "Display manager installed."
 }
 
 bind_mounts() {
@@ -398,15 +390,6 @@ CHROOT
     cp /opt/borealOS/background_one.png /mnt/usr/share/boreal-artwork/wallpaper-waves.png
     cp /opt/borealOS/logo.png           /mnt/usr/share/boreal-artwork/logo.png
 
-    step "Installing Plymouth theme..."
-    if [ -d /usr/share/plymouth/themes/boreal ]; then
-        mkdir -p /mnt/usr/share/plymouth/themes/boreal
-        cp -r /usr/share/plymouth/themes/boreal/. /mnt/usr/share/plymouth/themes/boreal/
-        chroot /mnt plymouth-set-default-theme boreal 2>/dev/null || true
-    else
-        warn "Plymouth boreal theme not found in live env"
-    fi
-
     ok "System configured."
 }
 
@@ -459,12 +442,6 @@ remove_live_boot() {
     # Clean up the live-only deb caches from the target system
     rm -rf /mnt/opt/borealOS/gui-debs 2>/dev/null || true
     rm -rf /mnt/opt/borealOS/debs 2>/dev/null || true
-
-    step "Removing Plymouth completely..."
-    chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5         plymouth-label plymouth-theme-boreal 2>/dev/null || true
-    find /mnt/usr/share/plymouth /mnt/etc/plymouth          /mnt/usr/share/initramfs-tools/hooks/plymouth          /mnt/usr/share/initramfs-tools/scripts/plymouth          -delete 2>/dev/null || true
-    rm -f /mnt/usr/share/initramfs-tools/hooks/plymouth 2>/dev/null || true
-    rm -f /mnt/etc/initramfs-tools/conf.d/plymouth* 2>/dev/null || true
 
     step "Rebuilding initramfs..."
     chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
@@ -637,7 +614,7 @@ install_grub() {
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR=BorealOS
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash plymouth.ignore-serial-consoles"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet"
 GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 GRUB_GFXMODE=auto

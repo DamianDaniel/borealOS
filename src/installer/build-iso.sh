@@ -115,7 +115,9 @@ convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
 # Resize banner preserving aspect ratio: fit within 400px wide, height auto-scales.
 # logo.png is 3310x1254 (~2.64:1), so 400wide -> ~152px tall. Never use ! (force-stretch).
-convert "$BANNER" -trim -resize 400x -background none \
+# Resize banner to 520px wide; height auto-scales (3310x1254 → 520x197).
+# NEVER use ! (force-stretch) and NEVER set height in theme.txt — that causes the egg warp.
+convert "$BANNER" -trim -resize 520x -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 convert -size 760x44 xc:none \
@@ -129,47 +131,58 @@ convert -size 4x44 xc:"#4dffd2" \
 
 if [ -f "$RICE_DIR/grub/grub-theme.txt" ]; then
     cp "$RICE_DIR/grub/grub-theme.txt" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    # Remove any hardcoded height from the title image block so it can't warp.
-    # GRUB scales correctly when only width is specified.
-    sed -i '/^\s*height\s*=\s*[0-9]/d' \
-        "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    ok "Rice grub theme applied (height constraint removed to prevent logo warp)"
+    # Enforce width=520 (must match the resized title.png) and strip any height.
+    # If theme width != actual image width, GRUB stretches to fill → egg/oval warp.
+    python3 -c "
+import re, sys
+t = open(sys.argv[1]).read()
+t = re.sub(r'(?m)^\s*height\s*=\s*\d+[^\n]*\n', '', t)
+t = re.sub(r'(?m)(\s*width\s*=\s*)\d+', r'\g<1>520', t)
+open(sys.argv[1], 'w').write(t)
+" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
+    ok "Rice grub theme applied (width=520 enforced, height stripped)"
 else
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
 desktop-color: "#0d1b2a"
 title-text: ""
+message-font: "DejaVu Sans Regular 14"
+message-color: "#4dffd2"
+terminal-width: "80%"
+terminal-height: "70%"
+terminal-left: "10%"
+terminal-top: "15%"
 
 + image {
-    top = 18%
-    left = 50%-200
-    width = 400
-    # No height: GRUB scales to match the image's natural height at this width.
-    # Setting both width AND height to non-matching values causes the egg warp.
+    top = 5%
+    left = 50%-260
+    width = 520
     file = "title.png"
 }
 
 + boot_menu {
-    top = 53%
-    left = 20%
-    width = 60%
-    height = 36%
-    item_color = "#7fffff"
+    top = 44%
+    left = 28%
+    width = 44%
+    height = 38%
+    item_font = "DejaVu Sans Bold 16"
+    item_color = "#c8f7f0"
     selected_item_color = "#ffffff"
     selected_item_pixmap_style = "select_*.png"
-    item_height = 44
-    item_padding = 18
+    item_height = 40
+    item_padding = 14
     item_spacing = 6
     scrollbar = false
 }
 
 + label {
-    top = 92%
+    top = 90%
     left = 0
     width = 100%
     align = "center"
+    font = "DejaVu Sans Regular 12"
     color = "#4dffd2"
-    text = "↑ ↓ navigate    Enter boot    e edit    c console"
+    text = "up/down: navigate    enter: boot    e: edit    c: console"
 }
 THEME
 fi
@@ -212,6 +225,37 @@ copy_rice "kitty/dark.conf"        ".config/kitty/dark.conf"
 copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
 copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
 copy_rice "sway/config"            ".config/sway/config"
+
+echo "==> Copying XFCE rice configs to skel..."
+XFCE_RICE="$RICE_DIR/xfce4"
+copy_rice_dir() {
+    local src="$1" dst="$2"
+    if [ -d "$src" ]; then
+        mkdir -p "$dst"
+        cp -r "$src/." "$dst/"
+        echo "  copied dir: $dst"
+    elif [ -f "$src" ]; then
+        mkdir -p "$(dirname "$dst")"
+        cp "$src" "$dst"
+        echo "  copied: $dst"
+    else
+        warn "  missing xfce rice: $src"
+    fi
+}
+# Map each rice subfolder to its skel destination.
+# Covers all standard XFCE config locations — unmapped folders are ignored safely.
+for subdir in xfce4-panel xfwm4 xfce4-desktop xfce4-terminal xfce4-session; do
+    copy_rice_dir "$XFCE_RICE/$subdir" "$SKEL/.config/xfce4/$subdir"
+done
+copy_rice_dir "$XFCE_RICE/Thunar"   "$SKEL/.config/Thunar"
+copy_rice_dir "$XFCE_RICE/gtk-3.0"  "$SKEL/.config/gtk-3.0"
+copy_rice_dir "$XFCE_RICE/gtk-4.0"  "$SKEL/.config/gtk-4.0"
+# xfconf channel XMLs — the main XFCE settings store
+copy_rice_dir "$XFCE_RICE/xfconf/xfce-perchannel-xml"               "$SKEL/.config/xfce4/xfconf/xfce-perchannel-xml"
+# Top-level xfce4 files (helpers.rc etc.)
+for f in "$XFCE_RICE"/*.rc "$XFCE_RICE"/*.xml; do
+    [ -f "$f" ] && copy_rice_dir "$f" "$SKEL/.config/xfce4/$(basename "$f")" || true
+done
 
 echo "==> Applying branding..."
 cat > "$WORK/squashfs-root/etc/os-release" <<OS
@@ -323,23 +367,7 @@ echo "Starting BorealOS graphical installer (XFCE host session)..."
 echo "Your chosen DE ($DE) will be installed to the target disk."
 sleep 1
 
-# Install lightdm NOW — right before we need X — not at ISO build time.
-# The debs were downloaded (not installed) during build and cached here.
-# This is the only safe way to have a DM available without it auto-starting
-# at boot and hijacking the TTY autologin → boreal-live.sh flow.
-echo "Installing display manager for this session..."
-if ls /opt/borealOS/gui-debs/*.deb >/dev/null 2>&1; then
-    dpkg -i --force-depends /opt/borealOS/gui-debs/*.deb 2>/dev/null || true
-    dpkg --configure -a 2>/dev/null || true
-    # Immediately disable it from starting on its own — we call startx ourselves
-    for dm in lightdm sddm gdm gdm3; do
-        rm -f /etc/runlevels/default/${dm} /etc/runlevels/boot/${dm} 2>/dev/null || true
-        find /etc/rc*.d -name "*${dm}*" -delete 2>/dev/null || true
-    done
-    rm -f /etc/X11/default-display-manager 2>/dev/null || true
-else
-    echo "WARN: No cached DM debs found — continuing without lightdm"
-fi
+# startx → xinit → .xinitrc → startxfce4. No DM needed in a live session.
 
 cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
@@ -382,12 +410,7 @@ XINITRC
 chmod +x /root/.xinitrc
 startx -- -nolisten tcp 2>/tmp/xorg.log
 
-# X has exited — purge lightdm so it can't start if the user reboots into
-# the live env again without going through boreal-start-graphical.
-echo "Cleaning up display manager..."
-apt-get remove --purge -y lightdm lightdm-gtk-greeter 2>/dev/null || \
-    dpkg -r --force-depends lightdm lightdm-gtk-greeter 2>/dev/null || true
-rm -f /etc/X11/default-display-manager 2>/dev/null || true
+# startx exited — return to the live menu.
 GRAPHICAL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical"
 
@@ -473,18 +496,7 @@ for pkg in fastfetch kitty calamares calamares-qt6; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
 
-# ── Download lightdm debs WITHOUT installing them ─────────────────────────────
-# boreal-start-graphical will dpkg -i these right before startx, so the
-# live boot never sees a DM. They are also used by installer.sh for the
-# target system's DM install (when the user chose XFCE or KDE).
-mkdir -p /opt/borealOS/gui-debs
-apt-get install -y --no-install-recommends \
-    --download-only \
-    lightdm lightdm-gtk-greeter 2>/dev/null || true
-cp /var/cache/apt/archives/lightdm*.deb \
-   /var/cache/apt/archives/lightdm-gtk-greeter*.deb \
-   /opt/borealOS/gui-debs/ 2>/dev/null || true
-echo "$(ls /opt/borealOS/gui-debs/*.deb 2>/dev/null | wc -l) gui debs cached (not installed)"
+# lightdm is installed by installer.sh directly into the target, not the live env
 
 # Also cache the user's chosen DM debs (sddm for KDE etc.) if different
 mkdir -p /opt/borealOS/debs
@@ -732,6 +744,11 @@ find "$WORK/squashfs-root/usr/share/backgrounds" -maxdepth 2 -name "*debian*" -d
 find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/usr/share/icons" -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/boot/grub" -name "*debian*" -delete 2>/dev/null || true
+
+# Remove plymouth entirely from the live env — not used, and its initramfs hook
+# adds boot delay and can conflict with simple console boot.
+find "$WORK/squashfs-root/usr/share/plymouth"      "$WORK/squashfs-root/etc/plymouth"      -delete 2>/dev/null || true
+rm -f "$WORK/squashfs-root/usr/share/initramfs-tools/hooks/plymouth"       "$WORK/squashfs-root/etc/initramfs-tools/conf.d/plymouth" 2>/dev/null || true
 
 if [ "$DE_NAME" = "Niri" ]; then
     echo "==> Building niri from source (10-20 minutes)..."

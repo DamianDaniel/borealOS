@@ -8,25 +8,28 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
+# Banner: 3310x1254 natural ratio = 2.638:1
+# At width=520 → height=197. Only set width — GRUB scales height automatically.
+# Setting both width AND height independently causes the oval/egg warp.
 + image {
-    top = 6%
-    left = 30%-205
-    width = 596
-    height = 200
+    top = 5%
+    left = 50%-260
+    width = 520
     file = "title.png"
 }
 
 + boot_menu {
-    top = 52%
-    left = 25%
-    width = 50%
-    height = 35%
-    item_font = "DejaVu Sans Regular 16"
-    item_color = "#4a9d9d"
+    top = 44%
+    left = 28%
+    width = 44%
+    height = 38%
+    item_font = "DejaVu Sans Bold 16"
+    item_color = "#c8f7f0"
     selected_item_color = "#ffffff"
-    item_height = 36
-    item_padding = 12
-    item_spacing = 4
+    selected_item_pixmap_style = "select_*.png"
+    item_height = 40
+    item_padding = 14
+    item_spacing = 6
     scrollbar = false
 }
 
