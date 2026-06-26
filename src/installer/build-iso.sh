@@ -136,11 +136,11 @@ import re, sys
 t = open(sys.argv[1]).read()
 # Strip height= only from inside + image { } blocks (not boot_menu height which is valid)
 t = re.sub(r'(\+\s*image\s*\{[^}]*)height\s*=\s*[^\n]+\n', r'\1', t, flags=re.DOTALL)
-# Set width=520 only inside + image { } blocks to match the resized banner
+# Enforce width=520 inside + image { } blocks to match the resized banner PNG
 t = re.sub(r'(\+\s*image\s*\{[^}]*)width\s*=\s*\d+', r'\g<1>width = 520', t, flags=re.DOTALL)
 open(sys.argv[1], 'w').write(t)
 " "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    ok "Rice grub theme applied (image block: width=160, height stripped)"
+    ok "Rice grub theme applied (image block: width=520, height stripped)"
 else
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
@@ -223,6 +223,7 @@ EndSection
 XORGVIDEO
 
 # Blacklist vmware_drv via Xorg so it is never auto-loaded by the server
+mkdir -p "$WORK/squashfs-root/usr/share/X11/xorg.conf.d"
 cat > "$WORK/squashfs-root/usr/share/X11/xorg.conf.d/99-boreal-novm.conf" <<'XORGNVM'
 Section "Module"
     Disable "vmware"
