@@ -10,8 +10,9 @@ WORK="$SCRIPT_DIR/iso-work"
 OUTPUT="$SCRIPT_DIR/borealOS.iso"
 ROOTFS_TAR="$SCRIPT_DIR/borealOS-rootfs.tar.gz"
 INSTALLER_SH="$SCRIPT_DIR/installer.sh"
-WALLPAPER_DEFAULT="$SCRIPT_DIR/background_2.png"
+WALLPAPER_DEFAULT="$SCRIPT_DIR/background_main.png"
 WALLPAPER_ALT="$SCRIPT_DIR/background_one.png"
+WALLPAPER_MAIN="$SCRIPT_DIR/background_main.png"
 LOGO="$SCRIPT_DIR/logo.png"
 BANNER="$SCRIPT_DIR/borealOS-text-and-logo-transparent.png"
 BRANDING_ZIP="$SCRIPT_DIR/borealOS-branding.zip"
@@ -22,7 +23,7 @@ die()  { echo -e "${RED}ERROR: $1${RST}" >&2; exit 1; }
 ok()   { echo -e "${GRN}$1${RST}"; }
 warn() { echo -e "${RED}WARN: $1${RST}"; }
 
-for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$WALLPAPER_ALT" "$LOGO" "$BANNER"; do
+for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$LOGO" "$BANNER"; do
     [ -f "$f" ] || die "Missing: $f"
 done
 [ "$EUID" -eq 0 ] || die "Run as root."
@@ -85,6 +86,7 @@ tar -xzf "$ROOTFS_TAR" -C "$WORK/squashfs-root" || die "Failed to extract rootfs
 echo "==> Injecting installer and assets..."
 mkdir -p "$WORK/squashfs-root/opt/borealOS"
 cp "$ROOTFS_TAR"        "$WORK/squashfs-root/opt/borealOS/rootfs.tar.gz" || die "Failed to copy rootfs"
+cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_main.png"
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_2.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/opt/borealOS/background_one.png"
 cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
@@ -103,8 +105,11 @@ echo "$SHELL_BIN" > "$WORK/squashfs-root/opt/borealOS/shell"
 
 echo "==> Setting up BorealOS artwork..."
 mkdir -p "$WORK/squashfs-root/usr/share/boreal-artwork"
-cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
-cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
+# background_main.png is the primary wallpaper for installed system + live XFCE session
+WP_MAIN="${WALLPAPER_MAIN:-$WALLPAPER_DEFAULT}"
+cp "$WP_MAIN"         "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
+cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
+cp "$WALLPAPER_ALT"   "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-alt.png"
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
 cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
 
@@ -301,6 +306,139 @@ mkdir -p "$LIVE_ROOT"
 xfce_copy_to "$LIVE_ROOT"
 ok "XFCE rice applied to live ISO root home."
 
+echo "==> Applying BorealOS XFCE branding..."
+# Copy logo to a standard icon path so the panel can reference it
+mkdir -p "$WORK/squashfs-root/usr/share/pixmaps"
+cp "$LOGO" "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo.png"
+convert "$LOGO" -resize 24x24 -background none     "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-24.png" 2>/dev/null || true
+
+# Write a xfconf xsettings channel to set GTK theme and icon theme
+mkdir -p "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml"
+cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml" <<'XSETTINGS'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="hicolor"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+  </property>
+</channel>
+XSETTINGS
+
+# xfce4-desktop channel: set background_main.png as wallpaper for all monitors
+cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" <<'XFDESKTOP'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitorVGA-1"  type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style"  type="int"     value="5"/>
+        <property name="color-style"  type="int"     value="0"/>
+      </property></property>
+      <property name="monitorHDMI-1" type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style"  type="int"     value="5"/>
+        <property name="color-style"  type="int"     value="0"/>
+      </property></property>
+      <property name="monitorVirtual-1" type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style"  type="int"     value="5"/>
+        <property name="color-style"  type="int"     value="0"/>
+      </property></property>
+      <property name="monitoreDP-1"  type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style"  type="int"     value="5"/>
+        <property name="color-style"  type="int"     value="0"/>
+      </property></property>
+    </property>
+  </property>
+</channel>
+XFDESKTOP
+
+# xfce4-panel channel: minimal panel with logo button, tasklist, clock.
+# Explicitly excludes power-manager-plugin (not installed in live/minimal env).
+cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml" <<'XFPANEL'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="configver" type="int" value="2"/>
+  <property name="panels" type="array">
+    <value type="int" value="1"/>
+  </property>
+  <property name="panel-1" type="empty">
+    <property name="position"        type="string"  value="p=6;x=0;y=0"/>
+    <property name="position-locked" type="bool"    value="true"/>
+    <property name="size"            type="uint"    value="28"/>
+    <property name="length"          type="uint"    value="100"/>
+    <property name="length-adjust"   type="bool"    value="true"/>
+    <property name="background-style" type="int"   value="1"/>
+    <property name="background-rgba" type="array">
+      <value type="double" value="0.05"/>
+      <value type="double" value="0.12"/>
+      <value type="double" value="0.17"/>
+      <value type="double" value="0.92"/>
+    </property>
+    <property name="plugin-ids" type="array">
+      <value type="int" value="1"/>
+      <value type="int" value="2"/>
+      <value type="int" value="3"/>
+      <value type="int" value="4"/>
+      <value type="int" value="5"/>
+    </property>
+  </property>
+  <!-- Plugin definitions -->
+  <property name="plugins" type="empty">
+    <!-- 1: BorealOS logo launcher button -->
+    <property name="plugin-1" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="boreal-installer.desktop"/>
+      </property>
+    </property>
+    <!-- 2: App menu (whisker or applicationsmenu fallback) -->
+    <property name="plugin-2" type="string" value="applicationsmenu">
+      <property name="show-button-title" type="bool" value="false"/>
+      <property name="button-icon"       type="string" value="/usr/share/pixmaps/boreal-logo-24.png"/>
+    </property>
+    <!-- 3: Window buttons (tasklist) -->
+    <property name="plugin-3" type="string" value="tasklist">
+      <property name="show-labels"  type="bool" value="true"/>
+      <property name="grouping"     type="uint" value="1"/>
+    </property>
+    <!-- 4: Separator + spacer -->
+    <property name="plugin-4" type="string" value="separator">
+      <property name="expand" type="bool" value="true"/>
+      <property name="style"  type="uint" value="0"/>
+    </property>
+    <!-- 5: Clock -->
+    <property name="plugin-5" type="string" value="clock">
+      <property name="digital-format" type="string" value="%H:%M  %a %d %b"/>
+    </property>
+  </property>
+</channel>
+XFPANEL
+
+# Create a .desktop for the installer launcher on the panel
+mkdir -p "$WORK/squashfs-root/usr/share/applications"
+cat > "$WORK/squashfs-root/usr/share/applications/boreal-installer.desktop" <<'DESKTOP'
+[Desktop Entry]
+Name=BorealOS Installer
+Comment=Install BorealOS
+Exec=calamares
+Icon=/usr/share/pixmaps/boreal-logo.png
+Type=Application
+Categories=System;
+DESKTOP
+
+# Copy the same xfconf XMLs to /etc/skel so installed users get them too
+SKEL_XFCONF="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
+mkdir -p "$SKEL_XFCONF"
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"    "$SKEL_XFCONF/" 2>/dev/null || true
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"    "$SKEL_XFCONF/" 2>/dev/null || true
+# Don't copy panel.xml to skel — installed users can have their own panel layout
+ok "BorealOS XFCE branding applied."
+
 echo "==> Applying branding..."
 cat > "$WORK/squashfs-root/etc/os-release" <<OS
 NAME="BorealOS"
@@ -457,18 +595,35 @@ eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
  xfdesktop --reload 2>/dev/null || true
 ) &
 
-# Launch Calamares after desktop is ready; restart if it crashes; stop on success
-(sleep 12
+# Launch Calamares after desktop is fully ready.
+# Must use dbus-run-session or inherit the session bus; DISPLAY must be set.
+# Restart on crash (non-zero exit); stop cleanly on success (exit 0).
+(sleep 14
  while true; do
-   calamares 2>/tmp/calamares.log
+   DISPLAY=:0 dbus-run-session -- calamares 2>/tmp/calamares.log      || DISPLAY=:0 calamares 2>/tmp/calamares.log
    [ "$?" -eq 0 ] && break
-   sleep 3
+   sleep 4
  done
 ) &
 
 exec startxfce4
 XINITRC
 chmod +x /root/.xinitrc
+
+# Ensure udev is running so libinput can enumerate input devices.
+# Without udev, /dev/input/* devices exist but have no symlinks and
+# libinput can't identify them → mouse/keyboard dead in XFCE.
+if ! pgrep -x udevd >/dev/null 2>&1 && ! pgrep -x systemd-udevd >/dev/null 2>&1; then
+    echo "==> Starting udev..."
+    /sbin/udevd --daemon 2>/dev/null || udevd --daemon 2>/dev/null || true
+    udevadm trigger --action=add 2>/dev/null || true
+    udevadm settle 2>/dev/null || true
+    sleep 1
+fi
+
+# Set permissions on input devices explicitly as belt-and-suspenders
+chmod a+rw /dev/input/event* 2>/dev/null || true
+chmod a+rw /dev/input/mice  2>/dev/null || true
 
 echo "==> Starting X on display :0 VT${VT}..."
 # Try fbdev first; if Xorg still can't find a screen, retry with vesa
@@ -784,10 +939,11 @@ convert "$LOGO" -resize 320x320 -background none -gravity center \
     "$BRAND_DEST/welcome.png" 2>/dev/null || \
     cp "$LOGO" "$BRAND_DEST/welcome.png"
 
-# wallpaper.png : tiled/scaled background for entire Calamares window 900x600
-convert "$WALLPAPER_DEFAULT" -resize 900x600! \
+# wallpaper.png : Calamares window background 900x600
+WP_MAIN="${WALLPAPER_MAIN:-$WALLPAPER_DEFAULT}"
+convert "$WP_MAIN" -resize 900x600 -background black -gravity center -extent 900x600 \
     "$BRAND_DEST/wallpaper.png" 2>/dev/null || \
-    cp "$WALLPAPER_DEFAULT" "$BRAND_DEST/wallpaper.png"
+    cp "$WP_MAIN" "$BRAND_DEST/wallpaper.png"
 
 ok "Calamares branding installed (BorealOS assets + theme)."
 
