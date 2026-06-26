@@ -113,12 +113,11 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-# Use logo.png (4096x4096 — perfectly square) as the GRUB icon.
-# Square source = square output = no oval warp ever.
-# "BorealOS" text is a label in theme.txt so it renders as crisp vector-like text.
-convert "$LOGO" -resize 160x160 -background none \
+# Banner PNG (logo+text combined, 3310x1254 = 2.638:1).
+# Resize to 520px wide — height auto-scales to ~197px. NO height in theme.txt.
+convert "$BANNER" -trim -resize 520x -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
-    cp "$LOGO" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
+    cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 convert -size 760x44 xc:none \
     -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
     -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
@@ -137,8 +136,8 @@ import re, sys
 t = open(sys.argv[1]).read()
 # Strip height= only from inside + image { } blocks (not boot_menu height which is valid)
 t = re.sub(r'(\+\s*image\s*\{[^}]*)height\s*=\s*[^\n]+\n', r'\1', t, flags=re.DOTALL)
-# Set width=160 only inside + image { } blocks
-t = re.sub(r'(\+\s*image\s*\{[^}]*)width\s*=\s*\d+', r'\g<1>width = 160', t, flags=re.DOTALL)
+# Set width=520 only inside + image { } blocks to match the resized banner
+t = re.sub(r'(\+\s*image\s*\{[^}]*)width\s*=\s*\d+', r'\g<1>width = 520', t, flags=re.DOTALL)
 open(sys.argv[1], 'w').write(t)
 " "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
     ok "Rice grub theme applied (image block: width=160, height stripped)"
@@ -154,23 +153,13 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
-# title.png is logo.png resized to 160x160 (perfectly square source → no oval warp)
+# Banner PNG (logo+text, 3310x1254 = 2.638:1 ratio).
+# width=520 → natural height ~197px. NO height field — GRUB auto-scales correctly.
 + image {
     top = 6%
-    left = 50%-220
-    width = 160
+    left = 50%-260
+    width = 520
     file = "title.png"
-}
-
-# "BorealOS" as a crisp GRUB label — renders much better than embedding text in a PNG
-+ label {
-    top = 8%
-    left = 50%-50
-    width = 300
-    align = "left"
-    font = "DejaVu Sans Bold 36"
-    color = "#ffffff"
-    text = "BorealOS"
 }
 
 + boot_menu {
@@ -461,18 +450,21 @@ XINITRC
 chmod +x /root/.xinitrc
 
 echo "==> Starting X on display :0 VT${VT}..."
-# Use xinit directly rather than startx — avoids the startx wrapper's
-# VT detection logic which can fail without PAM/logind in a live env.
-xinit /root/.xinitrc -- "$XORG_BIN" :0 vt${VT} -nolisten tcp -novtswitch     > /tmp/xorg.log 2>&1
+xinit /root/.xinitrc -- "$XORG_BIN" :0 vt${VT} -nolisten tcp     > /tmp/xorg.log 2>&1
 XRET=$?
+echo ""
 if [ "$XRET" -ne 0 ]; then
-    echo ""
-    echo "X server exited with code $XRET. Last lines of log:"
-    tail -20 /tmp/xorg.log
-    echo ""
-    echo "Press Enter to return to the menu."
-    read -r
+    echo "X server exited with code $XRET."
 fi
+echo "--- Xorg log (last 30 lines) ---"
+tail -30 /tmp/xorg.log
+echo "--- XFCE session log ---"
+cat /tmp/xfce4-session.log 2>/dev/null | tail -20 || true
+echo "--- Calamares log ---"
+cat /tmp/calamares.log 2>/dev/null | tail -10 || true
+echo ""
+echo "Press Enter to return to the menu."
+read -r
 GRAPHICAL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical"
 

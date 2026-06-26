@@ -8,23 +8,13 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
-# title.png is logo.png at 160x160 (square source = no oval warp)
+# Banner PNG (logo+text, 3310x1254). width=520 only — NO height field.
+# GRUB auto-calculates height from the image ratio. Setting height causes oval warp.
 + image {
     top = 6%
-    left = 50%-220
-    width = 160
+    left = 50%-260
+    width = 520
     file = "title.png"
-}
-
-# "BorealOS" as a GRUB label — crisp at any resolution
-+ label {
-    top = 8%
-    left = 50%-50
-    width = 300
-    align = "left"
-    font = "DejaVu Sans Bold 36"
-    color = "#ffffff"
-    text = "BorealOS"
 }
 
 + boot_menu {
