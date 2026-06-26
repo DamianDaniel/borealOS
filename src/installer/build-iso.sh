@@ -113,13 +113,12 @@ mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
 convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
     cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-# Resize banner preserving aspect ratio: fit within 400px wide, height auto-scales.
-# logo.png is 3310x1254 (~2.64:1), so 400wide -> ~152px tall. Never use ! (force-stretch).
-# Resize banner to 520px wide; height auto-scales (3310x1254 → 520x197).
-# NEVER use ! (force-stretch) and NEVER set height in theme.txt — that causes the egg warp.
-convert "$BANNER" -trim -resize 520x -background none \
+# Use logo.png (4096x4096 — perfectly square) as the GRUB icon.
+# Square source = square output = no oval warp ever.
+# "BorealOS" text is a label in theme.txt so it renders as crisp vector-like text.
+convert "$LOGO" -resize 160x160 -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
-    cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
+    cp "$LOGO" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 convert -size 760x44 xc:none \
     -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
     -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
@@ -136,11 +135,13 @@ if [ -f "$RICE_DIR/grub/grub-theme.txt" ]; then
     python3 -c "
 import re, sys
 t = open(sys.argv[1]).read()
-t = re.sub(r'(?m)^\s*height\s*=\s*\d+[^\n]*\n', '', t)
-t = re.sub(r'(?m)(\s*width\s*=\s*)\d+', r'\g<1>520', t)
+# Strip height= only from inside + image { } blocks (not boot_menu height which is valid)
+t = re.sub(r'(\+\s*image\s*\{[^}]*)height\s*=\s*[^\n]+\n', r'\1', t, flags=re.DOTALL)
+# Set width=160 only inside + image { } blocks
+t = re.sub(r'(\+\s*image\s*\{[^}]*)width\s*=\s*\d+', r'\g<1>width = 160', t, flags=re.DOTALL)
 open(sys.argv[1], 'w').write(t)
 " "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    ok "Rice grub theme applied (width=520 enforced, height stripped)"
+    ok "Rice grub theme applied (image block: width=160, height stripped)"
 else
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
@@ -153,34 +154,46 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
+# title.png is logo.png resized to 160x160 (perfectly square source → no oval warp)
 + image {
-    top = 5%
-    left = 50%-260
-    width = 520
+    top = 6%
+    left = 50%-220
+    width = 160
     file = "title.png"
 }
 
+# "BorealOS" as a crisp GRUB label — renders much better than embedding text in a PNG
++ label {
+    top = 8%
+    left = 50%-50
+    width = 300
+    align = "left"
+    font = "DejaVu Sans Bold 36"
+    color = "#ffffff"
+    text = "BorealOS"
+}
+
 + boot_menu {
-    top = 44%
-    left = 28%
-    width = 44%
-    height = 38%
+    top = 46%
+    left = 50%-200
+    width = 400
+    height = 36%
     item_font = "DejaVu Sans Bold 16"
-    item_color = "#c8f7f0"
-    selected_item_color = "#ffffff"
+    item_color = "#d0f5f0"
+    selected_item_color = "#0d1b2a"
     selected_item_pixmap_style = "select_*.png"
-    item_height = 40
+    item_height = 42
     item_padding = 14
-    item_spacing = 6
+    item_spacing = 4
     scrollbar = false
 }
 
 + label {
-    top = 90%
+    top = 91%
     left = 0
     width = 100%
     align = "center"
-    font = "DejaVu Sans Regular 12"
+    font = "DejaVu Sans Regular 13"
     color = "#4dffd2"
     text = "up/down: navigate    enter: boot    e: edit    c: console"
 }
@@ -386,40 +399,58 @@ fi
 
 echo "Starting BorealOS graphical installer (XFCE host session)..."
 echo "Your chosen DE ($DE) will be installed to the target disk."
-sleep 1
 
-# startx → xinit → .xinitrc → startxfce4. No DM needed in a live session.
+# Diagnose common X startup failures before attempting
+echo "==> Pre-flight checks..."
+XORG_BIN=""
+for p in /usr/lib/xorg/Xorg /usr/bin/Xorg /usr/bin/X; do
+    [ -x "$p" ] && XORG_BIN="$p" && break
+done
+if [ -z "$XORG_BIN" ]; then
+    echo "ERROR: Xorg binary not found. Check that xserver-xorg-core is installed."
+    echo "Press Enter to return."; read -r; exit 1
+fi
+echo "  Xorg: $XORG_BIN"
+command -v xinit    >/dev/null || { echo "ERROR: xinit not found"; read -r; exit 1; }
+command -v startxfce4 >/dev/null || { echo "ERROR: startxfce4 not found"; read -r; exit 1; }
+echo "  xinit, startxfce4: OK"
+
+# Find a free VT. Live systems boot on tty1; we want to open X on the next free one.
+VT=7
+for v in 7 8 2 3 4 5 6; do
+    fgconsole 2>/dev/null | grep -q "^${v}$" || { VT=$v; break; }
+done
+echo "  Using VT: $VT"
+
+mkdir -p /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
 
 cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
 export XDG_SESSION_TYPE=x11
 export XDG_CURRENT_DESKTOP=XFCE
+export DISPLAY=:0
 
-# Start a D-Bus session if one isn't running
-if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
-    eval "$(dbus-launch --sh-syntax --exit-with-session)"
-fi
+# D-Bus session
+eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
 
-# Set wallpaper once XFCE desktop is up
-(sleep 6
+# Wallpaper after desktop settles
+(sleep 8
  WP=/usr/share/boreal-artwork/wallpaper-default.png
+ [ -f "$WP" ] || WP=/usr/share/pixmaps/xfce4-logo.png
  for screen in screen0; do
-   for mon in VGA-1 VGA1 HDMI-1 HDMI1 Virtual-1 Virtual1 DP-1 DP1 \
-               eDP-1 eDP1 DVI-1 DVI1 monitor0; do
-     xfconf-query -c xfce4-desktop \
-       -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
-     xfconf-query -c xfce4-desktop \
-       -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
+   for mon in VGA-1 VGA1 HDMI-1 HDMI1 Virtual-1 Virtual1 DP-1 DP1                eDP-1 eDP1 DVI-1 DVI1 monitor0; do
+     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
+     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
    done
  done
  xfdesktop --reload 2>/dev/null || true
 ) &
 
-# Launch Calamares after the desktop has settled.
-# Loop restarts it if closed before install completes; stops on success (exit 0).
-(sleep 10
+# Launch Calamares after desktop is ready; restart if it crashes; stop on success
+(sleep 12
  while true; do
-   DISPLAY=:0 calamares 2>/tmp/calamares.log
+   calamares 2>/tmp/calamares.log
    [ "$?" -eq 0 ] && break
    sleep 3
  done
@@ -427,11 +458,21 @@ fi
 
 exec startxfce4
 XINITRC
-
 chmod +x /root/.xinitrc
-startx -- -nolisten tcp 2>/tmp/xorg.log
 
-# startx exited — return to the live menu.
+echo "==> Starting X on display :0 VT${VT}..."
+# Use xinit directly rather than startx — avoids the startx wrapper's
+# VT detection logic which can fail without PAM/logind in a live env.
+xinit /root/.xinitrc -- "$XORG_BIN" :0 vt${VT} -nolisten tcp -novtswitch     > /tmp/xorg.log 2>&1
+XRET=$?
+if [ "$XRET" -ne 0 ]; then
+    echo ""
+    echo "X server exited with code $XRET. Last lines of log:"
+    tail -20 /tmp/xorg.log
+    echo ""
+    echo "Press Enter to return to the menu."
+    read -r
+fi
 GRAPHICAL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical"
 

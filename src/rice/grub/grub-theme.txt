@@ -8,37 +8,46 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
-# Banner: 3310x1254 natural ratio = 2.638:1
-# At width=520 → height=197. Only set width — GRUB scales height automatically.
-# Setting both width AND height independently causes the oval/egg warp.
+# title.png is logo.png at 160x160 (square source = no oval warp)
 + image {
-    top = 5%
-    left = 50%-260
-    width = 520
+    top = 6%
+    left = 50%-220
+    width = 160
     file = "title.png"
 }
 
+# "BorealOS" as a GRUB label — crisp at any resolution
++ label {
+    top = 8%
+    left = 50%-50
+    width = 300
+    align = "left"
+    font = "DejaVu Sans Bold 36"
+    color = "#ffffff"
+    text = "BorealOS"
+}
+
 + boot_menu {
-    top = 44%
-    left = 28%
-    width = 44%
-    height = 38%
+    top = 46%
+    left = 50%-200
+    width = 400
+    height = 36%
     item_font = "DejaVu Sans Bold 16"
-    item_color = "#c8f7f0"
-    selected_item_color = "#ffffff"
+    item_color = "#d0f5f0"
+    selected_item_color = "#0d1b2a"
     selected_item_pixmap_style = "select_*.png"
-    item_height = 40
+    item_height = 42
     item_padding = 14
-    item_spacing = 6
+    item_spacing = 4
     scrollbar = false
 }
 
 + label {
-    top = 90%
+    top = 91%
     left = 0
     width = 100%
     align = "center"
-    font = "DejaVu Sans Regular 12"
+    font = "DejaVu Sans Regular 13"
     color = "#4dffd2"
     text = "up/down: navigate    enter: boot    e: edit    c: console"
 }
