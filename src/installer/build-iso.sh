@@ -144,7 +144,7 @@ open(sys.argv[1], 'w').write(t)
 else
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
-desktop-color: "#0d1b2a"
+desktop-color: "#51b2bb"
 title-text: ""
 message-font: "DejaVu Sans Regular 14"
 message-color: "#4dffd2"
@@ -192,26 +192,42 @@ fi
 echo "==> Writing xorg config..."
 mkdir -p "$WORK/squashfs-root/etc/X11/xorg.conf.d"
 
-# Let Xorg + libinput handle device enumeration via udev (the modern way).
-# DO NOT set AutoAddDevices=false here — that was blocking keyboard/mouse in live env.
-# We only force libinput as the catch-all input driver and set a sane keyboard layout.
+# Input config: let libinput handle all devices via udev (modern approach).
 cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/00-boreal-input.conf" <<'XORGCONF'
 Section "InputClass"
-    Identifier "libinput catch-all"
+    Identifier "libinput pointer"
     MatchIsPointer "on"
     Driver "libinput"
     Option "NaturalScrolling" "false"
 EndSection
 
 Section "InputClass"
-    Identifier "libinput keyboard catch-all"
+    Identifier "libinput keyboard"
     MatchIsKeyboard "on"
     Driver "libinput"
     Option "XkbLayout" "us"
 EndSection
 XORGCONF
 
-# Remove any leftover static xorg.conf that might have AutoAddDevices=false
+# Video config: force modesetting driver and explicitly blacklist vmware_drv.
+# vmware_drv segfaults on Xorg startup in VMware/QEMU guests on some kernel versions.
+# modesetting uses KMS (kernel mode setting) and works on bare metal + all hypervisors.
+cat > "$WORK/squashfs-root/etc/X11/xorg.conf.d/10-boreal-video.conf" <<'XORGVIDEO'
+Section "Device"
+    Identifier "BorealOS Video"
+    Driver "modesetting"
+    Option "AccelMethod" "none"
+EndSection
+XORGVIDEO
+
+# Also blacklist vmware kernel modules that can cause the Xorg segfault
+mkdir -p "$WORK/squashfs-root/etc/modprobe.d"
+cat > "$WORK/squashfs-root/etc/modprobe.d/boreal-blacklist.conf" <<'MODBLACKLIST'
+# vmwgfx can cause Xorg vmware_drv segfaults in some guest configurations.
+# modesetting driver works fine without it for the live installer session.
+blacklist vmwgfx
+MODBLACKLIST
+
 rm -f "$WORK/squashfs-root/etc/X11/xorg.conf"
 
 echo "==> Copying rice configs to skel..."

@@ -1,5 +1,5 @@
 desktop-image: "background.png"
-desktop-color: "#0d1b2a"
+desktop-color: "#51b2bb"
 title-text: ""
 message-font: "DejaVu Sans Regular 14"
 message-color: "#4dffd2"
