@@ -12,7 +12,7 @@ terminal-top: "15%"
 # GRUB auto-calculates height from the image ratio. Setting height causes oval warp.
 + image {
     top = 6%
-    left = 50%-260
+    left = 50%-280
     width = 520
     file = "title.png"
 }

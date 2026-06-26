@@ -123,6 +123,63 @@ convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
 convert "$BANNER" -trim -resize 520x -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
+
+# Generate GRUB 9-slice rounded-corner selection highlight pixmaps.
+# GRUB tiles these to draw the selected item box with rounded corners.
+GRUB_THEME_DIR="$WORK/squashfs-root/usr/share/grub/themes/boreal"
+python3 << 'GENPIXMAP'
+import sys, struct, zlib, os
+
+def make_png_rgba(w, h, pixels):
+    def chunk(name, data):
+        c = name + data
+        return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
+    raw = b""
+    for y in range(h):
+        raw += b"\x00"
+        for x in range(w):
+            raw += bytes(pixels[y*w+x])
+    png  = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">II", w, h) + bytes([8, 6, 0, 0, 0]))
+    png += chunk(b"IDAT", zlib.compress(raw, 9))
+    png += chunk(b"IEND", b"")
+    return png
+
+outdir = "/usr/share/grub/themes/boreal"
+BG   = (13,  51,  77, 200)
+EDGE = (61, 255, 210, 220)
+TRAN = (0,   0,   0,   0)
+R = 8
+
+def tile(w, h, tl=False, tr=False, bl=False, br=False):
+    pix = []
+    for y in range(h):
+        for x in range(w):
+            cut = (
+                (tl and x<R   and y<R   and (x-R+1)**2+(y-R+1)**2 > R**2) or
+                (tr and x>=w-R and y<R   and (x-w+R)**2+(y-R+1)**2 > R**2) or
+                (bl and x<R   and y>=h-R and (x-R+1)**2+(y-h+R)**2 > R**2) or
+                (br and x>=w-R and y>=h-R and (x-w+R)**2+(y-h+R)**2 > R**2)
+            )
+            if cut:
+                pix.append(TRAN)
+            elif x==0 or x==w-1 or y==0 or y==h-1:
+                pix.append(EDGE)
+            else:
+                pix.append(BG)
+    return pix
+
+C=R; E=4
+for name,w,h,args in [
+    ("select_nw",C,C,dict(tl=True)),  ("select_n",E,C,{}),  ("select_ne",C,C,dict(tr=True)),
+    ("select_w", C,E,{}),             ("select_c",E,E,{}),  ("select_e", C,E,{}),
+    ("select_sw",C,C,dict(bl=True)),  ("select_s",E,C,{}),  ("select_se",C,C,dict(br=True)),
+]:
+    with open(f"{outdir}/{name}.png","wb") as f:
+        f.write(make_png_rgba(w,h,tile(w,h,**args)))
+    print(f"  {name}.png")
+GENPIXMAP
+
 convert -size 760x44 xc:none \
     -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
     -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
@@ -162,7 +219,7 @@ terminal-top: "15%"
 # width=520 → natural height ~197px. NO height field — GRUB auto-scales correctly.
 + image {
     top = 6%
-    left = 50%-260
+    left = 50%-280
     width = 520
     file = "title.png"
 }
@@ -239,6 +296,18 @@ XORGNVM
 # by passing -config to Xorg so we always get a screen even on unusual hardware
 
 rm -f "$WORK/squashfs-root/etc/X11/xorg.conf"
+
+# udev rule: make all input devices readable by everyone in the live env.
+# Normally input group handles this but in a minimal live env the group
+# membership doesn't take effect until next login — chmod is instant.
+mkdir -p "$WORK/squashfs-root/etc/udev/rules.d"
+cat > "$WORK/squashfs-root/etc/udev/rules.d/99-boreal-input.rules" <<'UDVRULES'
+# BorealOS live: make input devices world-accessible so X11 libinput works
+# without needing proper group membership in the live session.
+KERNEL=="event*", SUBSYSTEM=="input", MODE="0666"
+KERNEL=="mice",   SUBSYSTEM=="input", MODE="0666"
+KERNEL=="mouse*", SUBSYSTEM=="input", MODE="0666"
+UDVRULES
 
 echo "==> Copying rice configs to skel..."
 SKEL="$WORK/squashfs-root/etc/skel"
@@ -334,22 +403,22 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-d
   <property name="backdrop" type="empty">
     <property name="screen0" type="empty">
       <property name="monitorVGA-1"  type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
         <property name="image-style"  type="int"     value="5"/>
         <property name="color-style"  type="int"     value="0"/>
       </property></property>
       <property name="monitorHDMI-1" type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
         <property name="image-style"  type="int"     value="5"/>
         <property name="color-style"  type="int"     value="0"/>
       </property></property>
       <property name="monitorVirtual-1" type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
         <property name="image-style"  type="int"     value="5"/>
         <property name="color-style"  type="int"     value="0"/>
       </property></property>
       <property name="monitoreDP-1"  type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
         <property name="image-style"  type="int"     value="5"/>
         <property name="color-style"  type="int"     value="0"/>
       </property></property>
@@ -358,66 +427,32 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-d
 </channel>
 XFDESKTOP
 
-# xfce4-panel channel: minimal panel with logo button, tasklist, clock.
-# Explicitly excludes power-manager-plugin (not installed in live/minimal env).
-cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml" <<'XFPANEL'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-panel" version="1.0">
-  <property name="configver" type="int" value="2"/>
-  <property name="panels" type="array">
-    <value type="int" value="1"/>
-  </property>
-  <property name="panel-1" type="empty">
-    <property name="position"        type="string"  value="p=6;x=0;y=0"/>
-    <property name="position-locked" type="bool"    value="true"/>
-    <property name="size"            type="uint"    value="28"/>
-    <property name="length"          type="uint"    value="100"/>
-    <property name="length-adjust"   type="bool"    value="true"/>
-    <property name="background-style" type="int"   value="1"/>
-    <property name="background-rgba" type="array">
-      <value type="double" value="0.05"/>
-      <value type="double" value="0.12"/>
-      <value type="double" value="0.17"/>
-      <value type="double" value="0.92"/>
-    </property>
-    <property name="plugin-ids" type="array">
-      <value type="int" value="1"/>
-      <value type="int" value="2"/>
-      <value type="int" value="3"/>
-      <value type="int" value="4"/>
-      <value type="int" value="5"/>
-    </property>
-  </property>
-  <!-- Plugin definitions -->
-  <property name="plugins" type="empty">
-    <!-- 1: BorealOS logo launcher button -->
-    <property name="plugin-1" type="string" value="launcher">
-      <property name="items" type="array">
-        <value type="string" value="boreal-installer.desktop"/>
-      </property>
-    </property>
-    <!-- 2: App menu (whisker or applicationsmenu fallback) -->
-    <property name="plugin-2" type="string" value="applicationsmenu">
-      <property name="show-button-title" type="bool" value="false"/>
-      <property name="button-icon"       type="string" value="/usr/share/pixmaps/boreal-logo-24.png"/>
-    </property>
-    <!-- 3: Window buttons (tasklist) -->
-    <property name="plugin-3" type="string" value="tasklist">
-      <property name="show-labels"  type="bool" value="true"/>
-      <property name="grouping"     type="uint" value="1"/>
-    </property>
-    <!-- 4: Separator + spacer -->
-    <property name="plugin-4" type="string" value="separator">
-      <property name="expand" type="bool" value="true"/>
-      <property name="style"  type="uint" value="0"/>
-    </property>
-    <!-- 5: Clock -->
-    <property name="plugin-5" type="string" value="clock">
-      <property name="digital-format" type="string" value="%H:%M  %a %d %b"/>
-    </property>
-  </property>
-</channel>
-XFPANEL
+# Patch the rice panel config to set the logo icon on applicationsmenu.
+# We do NOT rewrite the whole panel XML — the rice config worked, we just need to:
+#   1. Set the app menu button icon to the BorealOS logo
+#   2. Remove power-manager-plugin if the rice included it (it's not installed)
+PANEL_XML="$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+if [ -f "$PANEL_XML" ]; then
+    # Remove any power-manager-plugin entry from plugin-ids array and plugin definitions
+    python3 -c "
+import re, sys
+t = open(sys.argv[1]).read()
+# Remove the plugin entry for power-manager-plugin
+t = re.sub(r'<property name="plugin-\d+" type="string" value="power-manager-plugin"[^/]*/>', '', t)
+t = re.sub(r'<property name="plugin-\d+" type="string" value="power-manager-plugin">.*?</property>', '', t, flags=re.DOTALL)
+# Set the button-icon for applicationsmenu to the boreal logo
+t = re.sub(
+    r'(<property name="plugin-\d+" type="string" value="applicationsmenu">)(.*?)(</property>)',
+    lambda m: m.group(1) + re.sub(r'(<property name="button-icon"[^/]*/>|<property name="button-icon"[^>]*>.*?</property>)', '', m.group(2), flags=re.DOTALL) + '  <property name="button-icon" type="string" value="/usr/share/pixmaps/boreal-logo-24.png"/>
+  ' + m.group(3),
+    t, flags=re.DOTALL
+)
+open(sys.argv[1], 'w').write(t)
+" "$PANEL_XML" 2>/dev/null || true
+    ok "Panel XML patched (power-manager removed, logo set)"
+else
+    warn "No rice panel XML found — XFCE will use defaults (that's fine)"
+fi
 
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"
@@ -610,20 +645,36 @@ exec startxfce4
 XINITRC
 chmod +x /root/.xinitrc
 
-# Ensure udev is running so libinput can enumerate input devices.
-# Without udev, /dev/input/* devices exist but have no symlinks and
-# libinput can't identify them → mouse/keyboard dead in XFCE.
+# ── Input device setup ────────────────────────────────────────────────────────
+# In the live env, udev may be running but the `input` group owns /dev/input/*.
+# Root should always have access, but we chmod anyway as belt-and-suspenders.
+# The real issue on many live systems: udevd is running but hasn't processed
+# all add events yet, so libinput can't see the devices.
+
+# 1. Start udevd if not already running
 if ! pgrep -x udevd >/dev/null 2>&1 && ! pgrep -x systemd-udevd >/dev/null 2>&1; then
     echo "==> Starting udev..."
-    /sbin/udevd --daemon 2>/dev/null || udevd --daemon 2>/dev/null || true
-    udevadm trigger --action=add 2>/dev/null || true
-    udevadm settle 2>/dev/null || true
+    if [ -x /sbin/udevd ]; then
+        /sbin/udevd --daemon
+    elif [ -x /usr/sbin/udevd ]; then
+        /usr/sbin/udevd --daemon
+    elif [ -x /lib/systemd/systemd-udevd ]; then
+        /lib/systemd/systemd-udevd --daemon
+    fi
     sleep 1
 fi
 
-# Set permissions on input devices explicitly as belt-and-suspenders
-chmod a+rw /dev/input/event* 2>/dev/null || true
-chmod a+rw /dev/input/mice  2>/dev/null || true
+# 2. Re-trigger all input device add events so libinput gets notified
+udevadm trigger --action=add --subsystem-match=input 2>/dev/null || true
+udevadm settle --timeout=3 2>/dev/null || true
+
+# 3. Direct chmod on all input nodes — works even if udev rules are wrong
+chmod a+rw /dev/input/event* /dev/input/mice /dev/input/mouse* 2>/dev/null || true
+
+# 4. Add root to input and plugdev groups (needed on some Debian live configs)
+usermod -aG input,plugdev root 2>/dev/null || true
+
+echo "  Input devices: $(ls /dev/input/event* 2>/dev/null | wc -l) event nodes found"
 
 echo "==> Starting X on display :0 VT${VT}..."
 # Try fbdev first; if Xorg still can't find a screen, retry with vesa
