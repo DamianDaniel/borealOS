@@ -226,36 +226,57 @@ copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
 copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
 copy_rice "sway/config"            ".config/sway/config"
 
-echo "==> Copying XFCE rice configs to skel..."
+echo "==> Copying XFCE rice configs..."
 XFCE_RICE="$RICE_DIR/xfce4"
-copy_rice_dir() {
-    local src="$1" dst="$2"
-    if [ -d "$src" ]; then
-        mkdir -p "$dst"
-        cp -r "$src/." "$dst/"
-        echo "  copied dir: $dst"
-    elif [ -f "$src" ]; then
-        mkdir -p "$(dirname "$dst")"
-        cp "$src" "$dst"
-        echo "  copied: $dst"
-    else
-        warn "  missing xfce rice: $src"
+
+xfce_copy_to() {
+    # xfce_copy_to <destination_skel_root>
+    # Copies the rice into any given skel/home root.
+    local DEST="$1"
+
+    # Exact folder names from src/rice/xfce4/:
+    #   desktop/  panel/  xfce4-screenshooter/  xfconf/
+
+    # desktop/ → .config/xfce4/desktop/
+    if [ -d "$XFCE_RICE/desktop" ]; then
+        mkdir -p "$DEST/.config/xfce4/desktop"
+        cp -r "$XFCE_RICE/desktop/." "$DEST/.config/xfce4/desktop/"
+        echo "  xfce rice: desktop → .config/xfce4/desktop"
+    fi
+
+    # panel/ → .config/xfce4/panel/
+    if [ -d "$XFCE_RICE/panel" ]; then
+        mkdir -p "$DEST/.config/xfce4/panel"
+        cp -r "$XFCE_RICE/panel/." "$DEST/.config/xfce4/panel/"
+        echo "  xfce rice: panel → .config/xfce4/panel"
+    fi
+
+    # xfce4-screenshooter/ → .config/xfce4-screenshooter/
+    if [ -d "$XFCE_RICE/xfce4-screenshooter" ]; then
+        mkdir -p "$DEST/.config/xfce4-screenshooter"
+        cp -r "$XFCE_RICE/xfce4-screenshooter/." "$DEST/.config/xfce4-screenshooter/"
+        echo "  xfce rice: xfce4-screenshooter → .config/xfce4-screenshooter"
+    fi
+
+    # xfconf/ → .config/xfce4/xfconf/
+    # This is the XFCE settings store — most important for theming/panel layout
+    if [ -d "$XFCE_RICE/xfconf" ]; then
+        mkdir -p "$DEST/.config/xfce4/xfconf"
+        cp -r "$XFCE_RICE/xfconf/." "$DEST/.config/xfce4/xfconf/"
+        echo "  xfce rice: xfconf → .config/xfce4/xfconf"
     fi
 }
-# Map each rice subfolder to its skel destination.
-# Covers all standard XFCE config locations — unmapped folders are ignored safely.
-for subdir in xfce4-panel xfwm4 xfce4-desktop xfce4-terminal xfce4-session; do
-    copy_rice_dir "$XFCE_RICE/$subdir" "$SKEL/.config/xfce4/$subdir"
-done
-copy_rice_dir "$XFCE_RICE/Thunar"   "$SKEL/.config/Thunar"
-copy_rice_dir "$XFCE_RICE/gtk-3.0"  "$SKEL/.config/gtk-3.0"
-copy_rice_dir "$XFCE_RICE/gtk-4.0"  "$SKEL/.config/gtk-4.0"
-# xfconf channel XMLs — the main XFCE settings store
-copy_rice_dir "$XFCE_RICE/xfconf/xfce-perchannel-xml"               "$SKEL/.config/xfce4/xfconf/xfce-perchannel-xml"
-# Top-level xfce4 files (helpers.rc etc.)
-for f in "$XFCE_RICE"/*.rc "$XFCE_RICE"/*.xml; do
-    [ -f "$f" ] && copy_rice_dir "$f" "$SKEL/.config/xfce4/$(basename "$f")" || true
-done
+
+# 1. Apply to /etc/skel so every new user on the installed system gets the rice
+xfce_copy_to "$SKEL"
+ok "XFCE rice applied to skel."
+
+# 2. Apply to live ISO root's home so the installer session itself looks riced.
+# The live session runs as root, so target /root directly.
+LIVE_ROOT="$WORK/squashfs-root/root"
+mkdir -p "$LIVE_ROOT"
+xfce_copy_to "$LIVE_ROOT"
+ok "XFCE rice applied to live ISO root home."
 
 echo "==> Applying branding..."
 cat > "$WORK/squashfs-root/etc/os-release" <<OS
