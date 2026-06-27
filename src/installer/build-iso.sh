@@ -460,54 +460,42 @@ chmod +x "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop"
 PANEL_XML="$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
 SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
 
-patch_panel_xml() {
-    local f="$1"
-    [ -f "$f" ] || return
-    # Use awk to strip every line that mentions power-manager-plugin.
-    # awk works line-by-line and handles any XML formatting the rice uses.
-    # We also skip the closing </property> that belongs to a power-manager block.
-    python3 - "$f" <<'PATCHPY'
+# Write the panel patcher as a real temp file — avoids heredoc quoting/newline issues
+cat > /tmp/boreal-patch-panel.py << 'PATCHEOF'
 import sys, re
 path = sys.argv[1]
+if not __import__("os").path.exists(path):
+    sys.exit(0)
 t = open(path).read()
 
-# Remove self-closing power-manager-plugin tags
-t = re.sub(r'[ 	]*<property[^>]*value="power-manager-plugin"[^>]*/>\s*
-', '', t)
+# Remove power-manager-plugin — self-closing form
+t = re.sub(r"[ 	]*<property[^>]*value=['"]power-manager-plugin['"][^>]*/>
+", "", t)
+# Remove power-manager-plugin — block form
+t = re.sub(r"[ 	]*<property[^>]*value=['"]power-manager-plugin['"][^>]*>.*?</property>
+", "", t, flags=re.DOTALL)
 
-# Remove multi-line power-manager-plugin blocks
-t = re.sub(
-    r'[ 	]*<property[^>]*value="power-manager-plugin"[^>]*>.*?</property>\s*
-',
-    '', t, flags=re.DOTALL
-)
-
-# Set button-icon on applicationsmenu plugin (handles any nesting)
-if 'applicationsmenu' in t:
-    # Add/replace button-icon property inside the applicationsmenu block
-    def set_icon(m):
-        block = m.group(0)
-        icon_prop = '      <property name="button-icon" type="string" value="/usr/share/pixmaps/boreal-logo-24.png"/>\n'
-        # Remove existing button-icon if present
-        block = re.sub(r'[ 	]*<property name="button-icon"[^>]*/>\s*
-', '', block)
-        # Insert before closing tag
-        block = block.rstrip()
-        if block.endswith('</property>'):
-            block = block[:-len('</property>')] + icon_prop + '    </property>'
-        return block
-    t = re.sub(
-        r'<property[^>]*value="applicationsmenu"[^>]*>.*?</property>',
-        set_icon, t, flags=re.DOTALL
-    )
+# Set button-icon on applicationsmenu to BorealOS logo
+ICON = '/usr/share/pixmaps/boreal-logo-24.png'
+ICON_PROP = '      <property name="button-icon" type="string" value="' + ICON + '"/>
+'
+def set_icon(m):
+    block = m.group(0)
+    block = re.sub(r'[ 	]*<property name="button-icon"[^/]*/>
+', "", block)
+    block = block.rstrip()
+    if block.endswith("</property>"):
+        block = block[:-len("</property>")] + ICON_PROP + "    </property>"
+    return block
+t = re.sub(r'<property[^>]*value="applicationsmenu"[^>]*>.*?</property>', set_icon, t, flags=re.DOTALL)
 
 open(path, "w").write(t)
-print(f"  patched: {path}")
-PATCHPY
-}
+print("  patched:", path)
+PATCHEOF
 
-patch_panel_xml "$PANEL_XML"
-patch_panel_xml "$SKEL_PANEL_XML"
+python3 /tmp/boreal-patch-panel.py "$PANEL_XML"
+python3 /tmp/boreal-patch-panel.py "$SKEL_PANEL_XML"
+rm -f /tmp/boreal-patch-panel.py
 ok "Panel XML patched (power-manager removed, logo set)"
 
 # Create a .desktop for the installer launcher on the panel
