@@ -1,2 +1,0 @@
-[General]
-commands="@ByteArray({\"8a95e40b_3b13_4297_afaa_4a1afdabce3d\":{\"command\":\"systemctl poweroff\",\"name\":\"poweroff\"},\"f946649d_8aff_4e3c_bb63_d3e3e3e11690\":{\"command\":\"systemctl sleep\",\"name\":\"sleep\"}})"
