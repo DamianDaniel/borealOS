@@ -124,21 +124,7 @@ convert "$BANNER" -trim -resize 520x -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 
-# Generate a single selection highlight PNG for GRUB.
-# Using selected_item_color alone (no pixmap) gives a flat box.
-# We use ImageMagick to make one rounded-rect highlight image at the exact
-# item width (400px) and height (42px) — no tiling artifacts, no stray lines.
 GRUB_THEME_DIR="$WORK/squashfs-root/usr/share/grub/themes/boreal"
-convert -size 400x42 xc:none     -fill "#0d334dcc"     -draw "roundrectangle 1,1 398,40 10,10"     -fill none -stroke "#3dffd2" -strokewidth 2     -draw "roundrectangle 1,1 398,40 10,10"     "$GRUB_THEME_DIR/select.png" 2>/dev/null &&     echo "  select.png (400x42 rounded rect)" ||     echo "  WARN: convert failed, selection will use flat color"
-
-convert -size 760x44 xc:none \
-    -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
-    -fill none -stroke "#4dffd2" -strokewidth 2 -draw "roundrectangle 2,2 757,41 6,6" \
-    "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_c.png" 2>/dev/null || true
-convert -size 4x44 xc:"#4dffd2" \
-    "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_w.png" 2>/dev/null || true
-convert -size 4x44 xc:"#4dffd2" \
-    "$WORK/squashfs-root/usr/share/grub/themes/boreal/select_e.png" 2>/dev/null || true
 
 if [ -f "$RICE_DIR/grub/grub-theme.txt" ]; then
     cp "$RICE_DIR/grub/grub-theme.txt" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
@@ -153,7 +139,11 @@ t = re.sub(r'(\+\s*image\s*\{[^}]*)height\s*=\s*[^\n]+\n', r'\1', t, flags=re.DO
 t = re.sub(r'(\+\s*image\s*\{[^}]*)width\s*=\s*\d+', r'\g<1>width = 520', t, flags=re.DOTALL)
 open(sys.argv[1], 'w').write(t)
 " "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    ok "Rice grub theme applied (image block: width=520, height stripped)"
+    # Remove selected_item_pixmap_style — GRUB requires glob pattern with *
+    # which doesn't work with a single file. Use color only.
+    sed -i '/selected_item_pixmap_style/d' \
+        "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
+    ok "Rice grub theme applied (width=520, height stripped, pixmap_style removed)"
 else
     cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
 desktop-image: "background.png"
@@ -183,7 +173,6 @@ terminal-top: "15%"
     item_font = "DejaVu Sans Bold 16"
     item_color = "#d0f5f0"
     selected_item_color = "#ffffff"
-    selected_item_pixmap_style = "select.png"
     item_height = 42
     item_padding = 14
     item_spacing = 4
@@ -404,6 +393,32 @@ Terminal=false
 Categories=System;
 INSTDESK
 chmod +x "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop"
+# Mark desktop files as trusted so XFCE shows them as launchers, not text files
+mkdir -p "$WORK/squashfs-root/root/.local/share/xfce4/helpers"
+# Set the gio trusted attribute — XFCE4 desktop checks this
+for df in "$WORK/squashfs-root/root/Desktop/"*.desktop; do
+    # Write a .xdg-trusted marker (used by thunar/xfdesktop)
+    chmod +x "$df"
+done
+# Also set the xfdesktop trust metadata via a startup script
+cat >> "$WORK/squashfs-root/root/.xinitrc.d/00-trust-desktop.sh" <<'TRUSTSH' 2>/dev/null || true
+#!/bin/bash
+# Trust all desktop files on the Desktop so XFCE shows them as launchers
+for df in ~/Desktop/*.desktop; do
+    [ -f "$df" ] && gio set "$df" metadata::trusted true 2>/dev/null || true
+done
+TRUSTSH
+# Simpler: run gio trust at XFCE session start via autostart
+mkdir -p "$WORK/squashfs-root/root/.config/autostart"
+cat > "$WORK/squashfs-root/root/.config/autostart/trust-desktop.desktop" <<'AUTOSTART'
+[Desktop Entry]
+Type=Application
+Name=Trust Desktop Files
+Exec=bash -c "sleep 3; for f in ~/Desktop/*.desktop; do gio set "$f" metadata::trusted true 2>/dev/null; done"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+AUTOSTART
 
 # 2. TTY installer shortcut — opens kitty running the terminal installer
 cat > "$WORK/squashfs-root/root/Desktop/TTY Install.desktop" <<'TTYDESK'
@@ -465,7 +480,7 @@ patch_panel_xml_simple() {
     # Remove orphaned plugin-id array entries for the removed plugins
     # so XFCE doesn't try to load a "(null)" plugin
     for pid in $bad_ids; do
-        grep -v "value="int" value="${pid}"" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+        grep -v "type="int" value="${pid}"" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
 
     echo "  patched: $f (removed IDs: ${bad_ids:-none})"
@@ -804,6 +819,7 @@ done
 apt-get install -y --no-install-recommends \
     xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
     xfce4-session xfce4-panel xfce4-settings \
+    xfce4-power-manager \
     || echo "WARN: XFCE installer host install incomplete"
 
 # Install the user's chosen DE (also --no-install-recommends to stay safe)
@@ -1062,13 +1078,19 @@ sequence:
     - keyboard
     - users
     - bootloader
-    - unmount
   - show:
     - finished
 branding: boreal
 prompt-install: true
 dont-chroot: false
 CALSETTINGS
+
+# Disable the unmount module — not available in this build
+mkdir -p "$WORK/squashfs-root/etc/calamares/modules"
+cat > "$WORK/squashfs-root/etc/calamares/modules/unmount.conf" <<'UNMOUNTCONF'
+---
+# Module disabled
+UNMOUNTCONF
 
 echo "==> Finalizing system..."
 find "$WORK/squashfs-root/usr/share" \
