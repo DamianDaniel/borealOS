@@ -460,43 +460,24 @@ chmod +x "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop"
 PANEL_XML="$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
 SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
 
-# Write the panel patcher as a real temp file — avoids heredoc quoting/newline issues
-cat > /tmp/boreal-patch-panel.py << 'PATCHEOF'
-import sys, re
-path = sys.argv[1]
-if not __import__("os").path.exists(path):
-    sys.exit(0)
-t = open(path).read()
+# Remove power-manager-plugin from panel XML using grep/awk — no Python quoting issues.
+# Strategy: skip any line containing power-manager-plugin AND the next closing </property>
+# if it immediately follows (for multi-line blocks).
+patch_panel_xml_simple() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    # awk: track when we're inside a power-manager-plugin block and skip those lines
+    awk '
+        /power-manager-plugin/ { skip=1; next }
+        skip && /<\/property>/ { skip=0; next }
+        { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    echo "  patched: $f"
+}
 
-# Remove power-manager-plugin — self-closing form
-t = re.sub(r"[ 	]*<property[^>]*value=['"]power-manager-plugin['"][^>]*/>
-", "", t)
-# Remove power-manager-plugin — block form
-t = re.sub(r"[ 	]*<property[^>]*value=['"]power-manager-plugin['"][^>]*>.*?</property>
-", "", t, flags=re.DOTALL)
-
-# Set button-icon on applicationsmenu to BorealOS logo
-ICON = '/usr/share/pixmaps/boreal-logo-24.png'
-ICON_PROP = '      <property name="button-icon" type="string" value="' + ICON + '"/>
-'
-def set_icon(m):
-    block = m.group(0)
-    block = re.sub(r'[ 	]*<property name="button-icon"[^/]*/>
-', "", block)
-    block = block.rstrip()
-    if block.endswith("</property>"):
-        block = block[:-len("</property>")] + ICON_PROP + "    </property>"
-    return block
-t = re.sub(r'<property[^>]*value="applicationsmenu"[^>]*>.*?</property>', set_icon, t, flags=re.DOTALL)
-
-open(path, "w").write(t)
-print("  patched:", path)
-PATCHEOF
-
-python3 /tmp/boreal-patch-panel.py "$PANEL_XML"
-python3 /tmp/boreal-patch-panel.py "$SKEL_PANEL_XML"
-rm -f /tmp/boreal-patch-panel.py
-ok "Panel XML patched (power-manager removed, logo set)"
+patch_panel_xml_simple "$PANEL_XML"
+patch_panel_xml_simple "$SKEL_PANEL_XML"
+ok "Panel XML patched (power-manager removed)"
 
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"
