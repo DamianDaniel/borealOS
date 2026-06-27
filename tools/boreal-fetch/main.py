@@ -314,10 +314,10 @@ def build_sys_lines(t):
     lines = []
     lines.append(kv("RAM",   f"{ru}/{rt} MB  "+mkbar(ram_p), val_col(ram_p)))
     lines.append(kv("CPU",   _CPU_MODEL))
-    lines.append(kv("CPU %", f"{cpu_p:5.1f}%  "+mkbar(cpu_p), val_col(cpu_p)))
+    lines.append(kv("CPU %", f"{cpu_p:.1f}%  "+mkbar(cpu_p), val_col(cpu_p)))
     lines.append(kv("GPU",   _GPU_MODEL))
     if gpu_p is not None:
-        lines.append(kv("GPU %", f"{gpu_p:5.1f}%  "+mkbar(gpu_p), val_col(gpu_p)))
+        lines.append(kv("GPU %", f"{gpu_p:.1f}%  "+mkbar(gpu_p), val_col(gpu_p)))
     else:
         lines.append(kv("GPU %", "N/A", (80,80,80)))
     lines.append(kv("Kernel", _KERNEL, (100,180,200)))
