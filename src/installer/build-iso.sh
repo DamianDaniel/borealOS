@@ -388,8 +388,10 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-d
 </channel>
 XFDESKTOP
 
-# Place the Calamares installer .desktop file directly on the desktop
+# Desktop shortcuts
 mkdir -p "$WORK/squashfs-root/root/Desktop"
+
+# 1. Graphical installer shortcut
 cat > "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" <<'INSTDESK'
 [Desktop Entry]
 Version=1.0
@@ -400,9 +402,44 @@ Exec=calamares
 Icon=/usr/share/pixmaps/boreal-logo.png
 Terminal=false
 Categories=System;
-X-XFCE-Source=file:///usr/share/applications/boreal-installer.desktop
 INSTDESK
 chmod +x "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop"
+
+# 2. TTY installer shortcut — opens kitty running the terminal installer
+cat > "$WORK/squashfs-root/root/Desktop/TTY Install.desktop" <<'TTYDESK'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TTY Install
+Comment=Launch the BorealOS terminal installer
+Exec=kitty --config /root/.config/kitty/kitty.conf bash -c "/usr/local/bin/boreal-tty-install; bash"
+Icon=/usr/share/pixmaps/boreal-logo.png
+Terminal=false
+Categories=System;
+TTYDESK
+chmod +x "$WORK/squashfs-root/root/Desktop/TTY Install.desktop"
+
+# TTY install wrapper script — runs installer.sh in terminal mode
+cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
+#!/bin/bash
+# Launched from the desktop TTY Install shortcut via kitty
+# Runs the borealOS terminal installer
+if [ -f /opt/borealOS/installer.sh ]; then
+    bash /opt/borealOS/installer.sh
+else
+    echo "ERROR: installer.sh not found at /opt/borealOS/installer.sh"
+    echo "Press Enter to exit."
+    read -r
+fi
+TTYINSTALL
+chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-tty-install"
+
+# Copy kitty rice configs to live root so the TTY install terminal looks riced
+if [ -d "$RICE_DIR/kitty" ]; then
+    mkdir -p "$WORK/squashfs-root/root/.config/kitty"
+    cp -r "$RICE_DIR/kitty/." "$WORK/squashfs-root/root/.config/kitty/"
+    echo "  kitty rice copied to live root"
+fi
 
 # Patch the rice panel config to set the logo icon on applicationsmenu.
 # We do NOT rewrite the whole panel XML — the rice config worked, we just need to:
@@ -417,18 +454,39 @@ SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchanne
 patch_panel_xml_simple() {
     local f="$1"
     [ -f "$f" ] || return 0
-    # awk: track when we're inside a power-manager-plugin block and skip those lines
-    awk '
-        /power-manager-plugin/ { skip=1; next }
-        skip && /<\/property>/ { skip=0; next }
-        { print }
-    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-    echo "  patched: $f"
+
+    # Step 1: find which plugin-N IDs use power-manager-plugin, collect their IDs
+    # Step 2: remove the plugin-N property block entirely
+    # Step 3: remove the corresponding <value type="int" value="N"/> from plugin-ids array
+    # This prevents the "(null)" plugin error — orphaned IDs in the array cause it.
+    python3 - "$f" << 'PATCHPY'
+import sys, re
+f = sys.argv[1]
+t = open(f).read()
+
+# Find all plugin IDs that are power-manager-plugin
+bad_ids = re.findall(r'<property name="plugin-(\d+)" type="string" value="power-manager-plugin"', t)
+print(f"  removing power-manager plugin IDs: {bad_ids}")
+
+# Remove the plugin-N blocks (self-closing and multi-line)
+t = re.sub(r'[ 	]*<property name="plugin-\d+" type="string" value="power-manager-plugin"[^>]*/>
+', '', t)
+t = re.sub(r'[ 	]*<property name="plugin-\d+" type="string" value="power-manager-plugin"[^>]*>.*?</property>
+', '', t, flags=re.DOTALL)
+
+# Remove the corresponding value entries from the plugin-ids array
+for pid in bad_ids:
+    t = re.sub(r'[ 	]*<value type="int" value="' + pid + r'"/>
+', '', t)
+
+open(f, "w").write(t)
+print(f"  patched: {f}")
+PATCHPY
 }
 
 patch_panel_xml_simple "$PANEL_XML"
 patch_panel_xml_simple "$SKEL_PANEL_XML"
-ok "Panel XML patched (power-manager removed)"
+ok "Panel XML patched (power-manager removed, orphaned IDs cleaned)"
 
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"
@@ -606,15 +664,22 @@ eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
  xfdesktop --reload 2>/dev/null || true
 ) &
 
-# Launch Calamares after desktop is fully ready.
-# Must use dbus-run-session or inherit the session bus; DISPLAY must be set.
-# Restart on crash (non-zero exit); stop cleanly on success (exit 0).
+# Launch Calamares after desktop is ready.
 (sleep 14
- while true; do
-   DISPLAY=:0 dbus-run-session -- calamares 2>/tmp/calamares.log      || DISPLAY=:0 calamares 2>/tmp/calamares.log
-   [ "$?" -eq 0 ] && break
-   sleep 4
+ CAL_BIN=""
+ for b in calamares /usr/bin/calamares /usr/sbin/calamares /usr/local/bin/calamares; do
+   command -v "$b" >/dev/null 2>&1 && CAL_BIN="$b" && break
+   [ -x "$b" ] && CAL_BIN="$b" && break
  done
+ if [ -z "$CAL_BIN" ]; then
+   DISPLAY=:0 xterm -e "echo calamares not found; read" &
+ else
+   while true; do
+     DISPLAY=:0 "$CAL_BIN" 2>/tmp/calamares.log
+     [ "$?" -eq 0 ] && break
+     sleep 4
+   done
+ fi
 ) &
 
 exec startxfce4
@@ -761,9 +826,24 @@ elif [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
-for pkg in fastfetch kitty calamares calamares-qt6; do
+for pkg in fastfetch kitty; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
+
+# Calamares: try qt6 first, fall back to qt5, then plain calamares
+apt-get install -y calamares-qt6 2>/dev/null || apt-get install -y calamares 2>/dev/null || echo "WARN: calamares not found in repos"
+
+# Verify the binary exists and create a wrapper if it is named differently
+if ! command -v calamares >/dev/null 2>&1; then
+    for bin in /usr/bin/calamares /usr/sbin/calamares                /usr/lib/calamares/calamares; do
+        if [ -x "$bin" ]; then
+            ln -sf "$bin" /usr/local/bin/calamares
+            echo "  calamares symlinked from $bin"
+            break
+        fi
+    done
+fi
+command -v calamares >/dev/null 2>&1 && echo "  calamares: OK" || echo "  WARN: calamares binary not found after install"
 
 # lightdm is installed by installer.sh directly into the target, not the live env
 
@@ -1003,7 +1083,7 @@ prompt-install: true
 dont-chroot: false
 CALSETTINGS
 
-echo "==> Removing Debian artwork (after package install)..."
+echo "==> Finalizing system..."
 find "$WORK/squashfs-root/usr/share" \
     \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" \
        -not -path "*/plymouth/themes/debian-logo*" \) \

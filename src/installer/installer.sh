@@ -377,14 +377,14 @@ echo "BorealOS 1.0" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 CHROOT
 
-    step "Removing Debian artwork..."
+    step "Finalizing system branding..."
     find /mnt/usr/share \
         \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" \) \
         -delete 2>/dev/null || true
     rm -rf /mnt/usr/share/images/desktop-base 2>/dev/null || true
     rm -rf /mnt/usr/share/images/vendor-logos 2>/dev/null || true
 
-    step "Installing BorealOS artwork..."
+    step "Installing artwork..."
     mkdir -p /mnt/usr/share/boreal-artwork
     cp /opt/borealOS/background_2.png   /mnt/usr/share/boreal-artwork/wallpaper-default.png
     cp /opt/borealOS/background_one.png /mnt/usr/share/boreal-artwork/wallpaper-waves.png
