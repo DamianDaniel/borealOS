@@ -17,7 +17,6 @@ ANSI_RE = re.compile(r'\033\[[^m]*m')
 def vis(s):       return len(ANSI_RE.sub('', s))
 def pad_to(s, w): return s + ' ' * max(0, w - vis(s))
 
-# ── Terminal size (re-read every frame) ───────────────────────────────────────
 
 def term_size():
     try:
@@ -33,14 +32,13 @@ signal.signal(signal.SIGINT, bye)
 signal.signal(signal.SIGTERM, bye)
 
 TITLE_BIG = [
-    r"  ____                       _  ___  ____  ",
-    r" | __ )  ___  _ __ ___  __ _| |/ _ \/ ___| ",
-    r" |  _ \ / _ \| '__/ _ \/ _` | | | | \___ \ ",
-    r" | |_) | (_) | | |  __/ (_| | | |_| |___) |",
-    r" |____/ \___/|_|  \___|\__,_|_|\___/|____/ ",
+    r"  ____                        _  ___  ____  ",
+    r" | __ )  ___  _ __ ___  __ _ | |/ _ \/ ___| ",
+    r" |  _ \ / _ \| '__/ _ \/ _` || | | | \___ \ ",
+    r" | |_) | (_) | | |  __/ (_| || | |_| |___) |",
+    r" |____/ \___/|_|  \___|\__,_||_|\___/|____/ ",
 ]
 
-# ── System detection ──────────────────────────────────────────────────────────
 
 def read_file(path):
     try:
@@ -48,13 +46,10 @@ def read_file(path):
     except Exception: return ""
 
 def detect_shell():
-    # 1. $SHELL env var (login shell)
     s = os.environ.get("SHELL", "")
     if s: return os.path.basename(s)
-    # 2. $0 (current shell in some setups)
     s = os.environ.get("0", "")
     if s: return os.path.basename(s.lstrip('-'))
-    # 3. Walk up process tree via /proc to find parent shell
     try:
         pid = os.getppid()
         for _ in range(5):
@@ -63,7 +58,7 @@ def detect_shell():
                 return comm
             stat = read_file(f"/proc/{pid}/stat")
             if not stat: break
-            pid = int(stat.split()[3])   # ppid field
+            pid = int(stat.split()[3])  
     except Exception: pass
     return "Unknown"
 
@@ -108,8 +103,6 @@ def get_gpu_model():
     except Exception: pass
     return "Unknown"
 
-# ── CPU usage (background thread) ─────────────────────────────────────────────
-
 _cpu_prev = None; _cpu_pct = 0.0; _cpu_lock = threading.Lock()
 
 def _parse_cpu_stat():
@@ -135,8 +128,6 @@ def _cpu_thread():
 threading.Thread(target=_cpu_thread, daemon=True).start()
 def get_cpu_pct():
     with _cpu_lock: return _cpu_pct
-
-# ── GPU usage (background thread) ─────────────────────────────────────────────
 
 _gpu_pct = None; _gpu_lock = threading.Lock()
 
@@ -176,8 +167,6 @@ threading.Thread(target=_gpu_thread, daemon=True).start()
 def get_gpu_pct():
     with _gpu_lock: return _gpu_pct
 
-# ── RAM ───────────────────────────────────────────────────────────────────────
-
 def get_ram():
     data = {}
     for line in read_file("/proc/meminfo").splitlines():
@@ -187,9 +176,6 @@ def get_ram():
     used  = total - avail
     return used//1024, total//1024
 
-# ── Static data — gathered in parallel at startup ────────────────────────────
-# Each slow call runs in its own thread so total wait = slowest single call,
-# not sum of all calls. Results stored in dict, read after join().
 
 _static = {}
 
@@ -205,8 +191,8 @@ def _gather():
                                    daemon=True)
                for k, f in tasks.items()}
     for th in threads.values(): th.start()
-    for th in threads.values(): th.join(timeout=2.0)   # max 2s total wait
-    # Fill any that timed out
+    for th in threads.values(): th.join(timeout=2.0)   
+
     for k in tasks:
         _static.setdefault(k, "Unknown")
 
@@ -227,7 +213,6 @@ DISTRO_ROWS = [
     ("Repo",    "github.com/DamianDaniel/borealOS"),
 ]
 
-# ── Scene ─────────────────────────────────────────────────────────────────────
 
 SCENE_H = 11; GROUND_ROW = 9
 TREES = [
@@ -287,8 +272,6 @@ def render_scene(rows):
         out.append(s+R())
     return out
 
-# ── Right column: live sys stats ──────────────────────────────────────────────
-
 def mkbar(pct, width=12):
     filled = round(pct/100*width)
     return '█'*filled+'░'*(width-filled)
@@ -323,9 +306,7 @@ def build_sys_lines(t):
     lines.append(kv("Kernel", _KERNEL, (100,180,200)))
     return lines
 
-# ── Two-column info panel ─────────────────────────────────────────────────────
-
-LEFT_W = 52  # visible chars reserved for left column
+LEFT_W = 52  
 
 def build_distro_line(i, label, value, t):
     wave = math.sin(t*.35+i*1.0)*.5+.5
@@ -342,12 +323,10 @@ def render_info_panel(distro_shown, t):
     def hdr(text):
         return fg(20,hdr_g,100)+B()+text+R()
 
-    # Header row: "[ Software ]" left, "[ Hardware ]" right
     left_hdr  = "  " + hdr("[ Software ]")
     right_hdr = hdr("[ Hardware ]")
     lines = [ pad_to(left_hdr, 2+LEFT_W) + "  " + right_hdr ]
 
-    # Blank line under each header
     lines.append("")
 
     n = max(len(left_lines), len(right_lines))
@@ -357,8 +336,6 @@ def render_info_panel(distro_shown, t):
         lines.append("  " + pad_to(left, LEFT_W) + "  " + right)
 
     return lines
-
-# ── Title & tagline ───────────────────────────────────────────────────────────
 
 def render_title(shown, t):
     lines = []
@@ -378,8 +355,6 @@ def render_tagline(t):
         out+=fg(int(20+wave*30),int(130+wave*100),int(120+wave*100))+DIM()+w+R()+'   '
     return out
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
-
 def main():
     hide_cur(); clr()
 
@@ -389,7 +364,6 @@ def main():
     while running:
         t0=time.time(); t=t0-start
 
-        # Re-read terminal size every frame; clear on resize
         TW, TH = term_size()
         if (TW, TH) != prev_size:
             clr()
@@ -404,18 +378,14 @@ def main():
         out_lines.append('')
         out_lines += render_info_panel(DISTRO_ROWS, t)
 
-        # Build entire frame as one write — overwrite in place, no erase flicker
-        buf = f"{ESC}?25l"   # keep cursor hidden
+        buf = f"{ESC}?25l"  
         buf += pos(1,1)
         for i, line in enumerate(out_lines):
             if i >= TH-1: break
-            # Strip trailing reset if present, then re-add, then pad to full width
-            # so old characters are overwritten and color doesn't bleed into padding
             stripped = line.rstrip()
             visible_w = vis(stripped)
             padding = max(0, TW - visible_w)
             buf += stripped + R() + ' '*padding + "\r\n"
-        # Overwrite remaining rows with spaces
         blank = ' '*TW + "\r\n"
         for i in range(len(out_lines), TH-1):
             buf += blank
