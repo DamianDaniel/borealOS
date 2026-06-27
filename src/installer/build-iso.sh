@@ -455,33 +455,20 @@ patch_panel_xml_simple() {
     local f="$1"
     [ -f "$f" ] || return 0
 
-    # Step 1: find which plugin-N IDs use power-manager-plugin, collect their IDs
-    # Step 2: remove the plugin-N property block entirely
-    # Step 3: remove the corresponding <value type="int" value="N"/> from plugin-ids array
-    # This prevents the "(null)" plugin error — orphaned IDs in the array cause it.
-    python3 - "$f" << 'PATCHPY'
-import sys, re
-f = sys.argv[1]
-t = open(f).read()
+    # Collect plugin-N IDs used by power-manager-plugin before removing them
+    local bad_ids
+    bad_ids=$(grep -oP '(?<=name="plugin-)\d+(?=" type="string" value="power-manager-plugin")' "$f" 2>/dev/null || true)
 
-# Find all plugin IDs that are power-manager-plugin
-bad_ids = re.findall(r'<property name="plugin-(\d+)" type="string" value="power-manager-plugin"', t)
-print(f"  removing power-manager plugin IDs: {bad_ids}")
+    # Remove power-manager-plugin property lines (both self-closing and opening tag lines)
+    grep -v 'value="power-manager-plugin"' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 
-# Remove the plugin-N blocks (self-closing and multi-line)
-t = re.sub(r'[ 	]*<property name="plugin-\d+" type="string" value="power-manager-plugin"[^>]*/>
-', '', t)
-t = re.sub(r'[ 	]*<property name="plugin-\d+" type="string" value="power-manager-plugin"[^>]*>.*?</property>
-', '', t, flags=re.DOTALL)
+    # Remove orphaned plugin-id array entries for the removed plugins
+    # so XFCE doesn't try to load a "(null)" plugin
+    for pid in $bad_ids; do
+        grep -v "value="int" value="${pid}"" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    done
 
-# Remove the corresponding value entries from the plugin-ids array
-for pid in bad_ids:
-    t = re.sub(r'[ 	]*<value type="int" value="' + pid + r'"/>
-', '', t)
-
-open(f, "w").write(t)
-print(f"  patched: {f}")
-PATCHPY
+    echo "  patched: $f (removed IDs: ${bad_ids:-none})"
 }
 
 patch_panel_xml_simple "$PANEL_XML"
