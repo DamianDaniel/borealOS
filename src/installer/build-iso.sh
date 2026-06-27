@@ -396,63 +396,119 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettin
 </channel>
 XSETTINGS
 
-# xfce4-desktop channel: set background_main.png as wallpaper for all monitors
+# xfce4-desktop channel: wallpaper + no desktop icons except calamares launcher
 cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" <<'XFDESKTOP'
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-desktop" version="1.0">
   <property name="backdrop" type="empty">
     <property name="screen0" type="empty">
-      <property name="monitorVGA-1"  type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
-        <property name="image-style"  type="int"     value="5"/>
-        <property name="color-style"  type="int"     value="0"/>
+      <property name="monitorVGA-1"      type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style" type="int"    value="5"/>
+        <property name="color-style" type="int"    value="0"/>
       </property></property>
-      <property name="monitorHDMI-1" type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
-        <property name="image-style"  type="int"     value="5"/>
-        <property name="color-style"  type="int"     value="0"/>
+      <property name="monitorHDMI-1"     type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style" type="int"    value="5"/>
+        <property name="color-style" type="int"    value="0"/>
       </property></property>
-      <property name="monitorVirtual-1" type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
-        <property name="image-style"  type="int"     value="5"/>
-        <property name="color-style"  type="int"     value="0"/>
+      <property name="monitorVirtual-1"  type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style" type="int"    value="5"/>
+        <property name="color-style" type="int"    value="0"/>
       </property></property>
-      <property name="monitoreDP-1"  type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"   type="string"  value="/usr/share/boreal-artwork/wallpaper-waves.png"/>
-        <property name="image-style"  type="int"     value="5"/>
-        <property name="color-style"  type="int"     value="0"/>
+      <property name="monitoreDP-1"      type="empty"><property name="workspace0" type="empty">
+        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
+        <property name="image-style" type="int"    value="5"/>
+        <property name="color-style" type="int"    value="0"/>
       </property></property>
+    </property>
+  </property>
+  <property name="desktop-icons" type="empty">
+    <!-- Disable all default desktop icons -->
+    <property name="style"              type="int"  value="0"/>
+    <property name="file-icons" type="empty">
+      <property name="show-home"        type="bool" value="false"/>
+      <property name="show-filesystem"  type="bool" value="false"/>
+      <property name="show-removable"   type="bool" value="false"/>
+      <property name="show-trash"       type="bool" value="false"/>
     </property>
   </property>
 </channel>
 XFDESKTOP
+
+# Place the Calamares installer .desktop file directly on the desktop
+mkdir -p "$WORK/squashfs-root/root/Desktop"
+cat > "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" <<'INSTDESK'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Install BorealOS
+Comment=Launch the BorealOS graphical installer
+Exec=calamares
+Icon=/usr/share/pixmaps/boreal-logo.png
+Terminal=false
+Categories=System;
+X-XFCE-Source=file:///usr/share/applications/boreal-installer.desktop
+INSTDESK
+chmod +x "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop"
 
 # Patch the rice panel config to set the logo icon on applicationsmenu.
 # We do NOT rewrite the whole panel XML — the rice config worked, we just need to:
 #   1. Set the app menu button icon to the BorealOS logo
 #   2. Remove power-manager-plugin if the rice included it (it's not installed)
 PANEL_XML="$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
-if [ -f "$PANEL_XML" ]; then
-    # Remove any power-manager-plugin entry from plugin-ids array and plugin definitions
-    python3 -c "
-import re, sys
-t = open(sys.argv[1]).read()
-# Remove the plugin entry for power-manager-plugin
-t = re.sub(r'<property name="plugin-\d+" type="string" value="power-manager-plugin"[^/]*/>', '', t)
-t = re.sub(r'<property name="plugin-\d+" type="string" value="power-manager-plugin">.*?</property>', '', t, flags=re.DOTALL)
-# Set the button-icon for applicationsmenu to the boreal logo
+SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+
+patch_panel_xml() {
+    local f="$1"
+    [ -f "$f" ] || return
+    # Use awk to strip every line that mentions power-manager-plugin.
+    # awk works line-by-line and handles any XML formatting the rice uses.
+    # We also skip the closing </property> that belongs to a power-manager block.
+    python3 - "$f" <<'PATCHPY'
+import sys, re
+path = sys.argv[1]
+t = open(path).read()
+
+# Remove self-closing power-manager-plugin tags
+t = re.sub(r'[ 	]*<property[^>]*value="power-manager-plugin"[^>]*/>\s*
+', '', t)
+
+# Remove multi-line power-manager-plugin blocks
 t = re.sub(
-    r'(<property name="plugin-\d+" type="string" value="applicationsmenu">)(.*?)(</property>)',
-    lambda m: m.group(1) + re.sub(r'(<property name="button-icon"[^/]*/>|<property name="button-icon"[^>]*>.*?</property>)', '', m.group(2), flags=re.DOTALL) + '  <property name="button-icon" type="string" value="/usr/share/pixmaps/boreal-logo-24.png"/>
-  ' + m.group(3),
-    t, flags=re.DOTALL
+    r'[ 	]*<property[^>]*value="power-manager-plugin"[^>]*>.*?</property>\s*
+',
+    '', t, flags=re.DOTALL
 )
-open(sys.argv[1], 'w').write(t)
-" "$PANEL_XML" 2>/dev/null || true
-    ok "Panel XML patched (power-manager removed, logo set)"
-else
-    warn "No rice panel XML found — XFCE will use defaults (that's fine)"
-fi
+
+# Set button-icon on applicationsmenu plugin (handles any nesting)
+if 'applicationsmenu' in t:
+    # Add/replace button-icon property inside the applicationsmenu block
+    def set_icon(m):
+        block = m.group(0)
+        icon_prop = '      <property name="button-icon" type="string" value="/usr/share/pixmaps/boreal-logo-24.png"/>\n'
+        # Remove existing button-icon if present
+        block = re.sub(r'[ 	]*<property name="button-icon"[^>]*/>\s*
+', '', block)
+        # Insert before closing tag
+        block = block.rstrip()
+        if block.endswith('</property>'):
+            block = block[:-len('</property>')] + icon_prop + '    </property>'
+        return block
+    t = re.sub(
+        r'<property[^>]*value="applicationsmenu"[^>]*>.*?</property>',
+        set_icon, t, flags=re.DOTALL
+    )
+
+open(path, "w").write(t)
+print(f"  patched: {path}")
+PATCHPY
+}
+
+patch_panel_xml "$PANEL_XML"
+patch_panel_xml "$SKEL_PANEL_XML"
+ok "Panel XML patched (power-manager removed, logo set)"
 
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"

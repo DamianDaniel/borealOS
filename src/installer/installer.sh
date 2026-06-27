@@ -443,6 +443,16 @@ remove_live_boot() {
     rm -rf /mnt/opt/borealOS/gui-debs 2>/dev/null || true
     rm -rf /mnt/opt/borealOS/debs 2>/dev/null || true
 
+    step "Purging plymouth from target (broken hook causes initramfs failure)..."
+    # Plymouth's initramfs hook references /usr/share/plymouth/debian-logo.png
+    # which doesn't exist in the target, causing update-initramfs to fail.
+    # Purge it completely before rebuilding — we don't use plymouth anyway.
+    chroot /mnt dpkg -r --force-depends         plymouth plymouth-themes libplymouth5         plymouth-label plymouth-theme-debian-logo         plymouth-theme-debian-spinner         2>/dev/null || true
+    # Belt-and-suspenders: delete the hook files directly
+    rm -f /mnt/usr/share/initramfs-tools/hooks/plymouth           /mnt/usr/share/initramfs-tools/scripts/init-top/plymouth           /mnt/usr/share/initramfs-tools/scripts/init-bottom/plymouth           /mnt/etc/initramfs-tools/conf.d/plymouth           /mnt/usr/share/plymouth/debian-logo.png 2>/dev/null || true
+    find /mnt/etc/initramfs-tools -name "*plymouth*" -delete 2>/dev/null || true
+    ok "Plymouth purged."
+
     step "Rebuilding initramfs..."
     chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
     ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd after rebuild"
