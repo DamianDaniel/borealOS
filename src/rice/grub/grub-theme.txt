@@ -25,7 +25,7 @@ terminal-top: "15%"
     item_font = "DejaVu Sans Bold 16"
     item_color = "#d0f5f0"
     selected_item_color = "#ffffff"
-    selected_item_pixmap_style = "select_*.png"
+    selected_item_pixmap_style = "select.png"
     item_height = 42
     item_padding = 14
     item_spacing = 4

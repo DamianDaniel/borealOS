@@ -124,61 +124,12 @@ convert "$BANNER" -trim -resize 520x -background none \
     "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
     cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
 
-# Generate GRUB 9-slice rounded-corner selection highlight pixmaps.
-# GRUB tiles these to draw the selected item box with rounded corners.
+# Generate a single selection highlight PNG for GRUB.
+# Using selected_item_color alone (no pixmap) gives a flat box.
+# We use ImageMagick to make one rounded-rect highlight image at the exact
+# item width (400px) and height (42px) — no tiling artifacts, no stray lines.
 GRUB_THEME_DIR="$WORK/squashfs-root/usr/share/grub/themes/boreal"
-GRUB_PIXMAP_DIR="$GRUB_THEME_DIR" python3 << 'GENPIXMAP'
-import sys, struct, zlib, os
-
-def make_png_rgba(w, h, pixels):
-    def chunk(name, data):
-        c = name + data
-        return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
-    raw = b""
-    for y in range(h):
-        raw += b"\x00"
-        for x in range(w):
-            raw += bytes(pixels[y*w+x])
-    png  = b"\x89PNG\r\n\x1a\n"
-    png += chunk(b"IHDR", struct.pack(">II", w, h) + bytes([8, 6, 0, 0, 0]))
-    png += chunk(b"IDAT", zlib.compress(raw, 9))
-    png += chunk(b"IEND", b"")
-    return png
-
-outdir = os.environ.get("GRUB_PIXMAP_DIR", "/usr/share/grub/themes/boreal")
-BG   = (13,  51,  77, 200)
-EDGE = (61, 255, 210, 220)
-TRAN = (0,   0,   0,   0)
-R = 8
-
-def tile(w, h, tl=False, tr=False, bl=False, br=False):
-    pix = []
-    for y in range(h):
-        for x in range(w):
-            cut = (
-                (tl and x<R   and y<R   and (x-R+1)**2+(y-R+1)**2 > R**2) or
-                (tr and x>=w-R and y<R   and (x-w+R)**2+(y-R+1)**2 > R**2) or
-                (bl and x<R   and y>=h-R and (x-R+1)**2+(y-h+R)**2 > R**2) or
-                (br and x>=w-R and y>=h-R and (x-w+R)**2+(y-h+R)**2 > R**2)
-            )
-            if cut:
-                pix.append(TRAN)
-            elif x==0 or x==w-1 or y==0 or y==h-1:
-                pix.append(EDGE)
-            else:
-                pix.append(BG)
-    return pix
-
-C=R; E=4
-for name,w,h,args in [
-    ("select_nw",C,C,dict(tl=True)),  ("select_n",E,C,{}),  ("select_ne",C,C,dict(tr=True)),
-    ("select_w", C,E,{}),             ("select_c",E,E,{}),  ("select_e", C,E,{}),
-    ("select_sw",C,C,dict(bl=True)),  ("select_s",E,C,{}),  ("select_se",C,C,dict(br=True)),
-]:
-    with open(f"{outdir}/{name}.png","wb") as f:
-        f.write(make_png_rgba(w,h,tile(w,h,**args)))
-    print(f"  {name}.png")
-GENPIXMAP
+convert -size 400x42 xc:none     -fill "#0d334dcc"     -draw "roundrectangle 1,1 398,40 10,10"     -fill none -stroke "#3dffd2" -strokewidth 2     -draw "roundrectangle 1,1 398,40 10,10"     "$GRUB_THEME_DIR/select.png" 2>/dev/null &&     echo "  select.png (400x42 rounded rect)" ||     echo "  WARN: convert failed, selection will use flat color"
 
 convert -size 760x44 xc:none \
     -fill "#0d3333cc" -draw "roundrectangle 2,2 757,41 6,6" \
@@ -232,7 +183,7 @@ terminal-top: "15%"
     item_font = "DejaVu Sans Bold 16"
     item_color = "#d0f5f0"
     selected_item_color = "#ffffff"
-    selected_item_pixmap_style = "select_*.png"
+    selected_item_pixmap_style = "select.png"
     item_height = 42
     item_padding = 14
     item_spacing = 4
