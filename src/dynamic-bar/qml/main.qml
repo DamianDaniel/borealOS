@@ -35,6 +35,45 @@ ShellRoot {
             radius: 12
             color: "#AA000000"
 
+            // Task Bar (Left/Center Side)
+            Row {
+                id: taskBar
+                anchors.left: parent.left
+                anchors.leftMargin: 15
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
+
+                Repeater {
+                    model: ToplevelManager.toplevels
+                    delegate: Rectangle {
+                        width: 120
+                        height: 30
+                        radius: 6
+                        color: modelData.activated ? "#66FFFFFF" : "#33FFFFFF"
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.margins: 5
+                            spacing: 5
+                            
+                            Text {
+                                text: modelData.title
+                                color: "white"
+                                width: parent.width - 10
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: modelData.activate()
+                        }
+                    }
+                }
+            }
+
             // Right Side
             Rectangle {
                 id: dynamicIsland
