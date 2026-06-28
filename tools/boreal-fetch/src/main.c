@@ -64,7 +64,7 @@ static char _cpu    [64] = "Unknown";
 static char _gpu    [64] = "Unknown";
 static char _kernel [64] = "Unknown";
 static char _uptime [32] = "";
-static char _pkgs   [64] = "";
+static char _pkgs  [512] = "";
 
 static void detect_shell(void) {
     const char *s = getenv("SHELL");
@@ -200,28 +200,34 @@ static void detect_kernel(void) {
     char *d = strchr(_kernel, '-'); if (d) *d='\0';
 }
 
-static void detect_uptime(void) {
-    char buf[64];
-    if (!read_file("/proc/uptime", buf, sizeof(buf))) return;
-    long secs = (long)atof(buf);
-    long d = secs/86400, h = (secs%86400)/3600, m = (secs%3600)/60;
-    if (d > 0)      snprintf(_uptime, sizeof(_uptime), "%ldd %ldh %ldm", d, h, m);
-    else if (h > 0) snprintf(_uptime, sizeof(_uptime), "%ldh %ldm", h, m);
-    else            snprintf(_uptime, sizeof(_uptime), "%ldm", m);
-}
-
 static void detect_packages(void) {
     char buf[32];
-    if (run_cmd("dpkg --list 2>/dev/null | grep -c '^ii'", buf, sizeof(buf)) && atoi(buf)>0) {
-        snprintf(_pkgs, sizeof(_pkgs), "%s (dpkg)", buf); return;
+    char parts[256] = "";
+    int np = 0;
+
+    struct { const char *cmd; const char *label; } mgrs[] = {
+        {"dpkg --list 2>/dev/null | grep -c '^ii'",    "dpkg"},
+        {"pacman -Qq 2>/dev/null | wc -l",             "pacman"},
+        {"rpm -qa 2>/dev/null | wc -l",                "rpm"},
+        {"snap list 2>/dev/null | tail -n +2 | wc -l", "snap"},
+        {"flatpak list 2>/dev/null | wc -l",           "flatpak"},
+        {"nix-env -q 2>/dev/null | wc -l",             "nix"},
+        {NULL, NULL}
+    };
+
+    for (int i = 0; mgrs[i].cmd; i++) {
+        if (!run_cmd(mgrs[i].cmd, buf, sizeof(buf))) continue;
+        int n = atoi(buf);
+        if (n <= 0) continue;
+        char tmp[48];
+        snprintf(tmp, sizeof(tmp), np==0 ? "%d (%s)" : " + %d (%s)", n, mgrs[i].label);
+        strncat(parts, tmp, sizeof(parts)-strlen(parts)-1);
+        np++;
     }
-    if (run_cmd("rpm -qa 2>/dev/null | wc -l", buf, sizeof(buf)) && atoi(buf)>0) {
-        snprintf(_pkgs, sizeof(_pkgs), "%s (rpm)", buf); return;
-    }
-    if (run_cmd("pacman -Qq 2>/dev/null | wc -l", buf, sizeof(buf)) && atoi(buf)>0) {
-        snprintf(_pkgs, sizeof(_pkgs), "%s (pacman)", buf); return;
-    }
-    strcpy(_pkgs, "Unknown");
+
+    if (np == 0) { strcpy(_pkgs, "Unknown"); return; }
+    strncpy(_pkgs, parts, sizeof(_pkgs)-1);
+    _pkgs[sizeof(_pkgs)-1] = '\0';
 }
 
 static void *thr_shell  (void*a){(void)a;detect_shell();   return NULL;}
@@ -230,21 +236,19 @@ static void *thr_init   (void*a){(void)a;detect_init();    return NULL;}
 static void *thr_cpu    (void*a){(void)a;detect_cpu();     return NULL;}
 static void *thr_gpu    (void*a){(void)a;detect_gpu();     return NULL;}
 static void *thr_kernel (void*a){(void)a;detect_kernel();  return NULL;}
-static void *thr_uptime (void*a){(void)a;detect_uptime();  return NULL;}
 static void *thr_pkgs   (void*a){(void)a;detect_packages();return NULL;}
 
 static void gather_static(void) {
-    pthread_t t[8];
+    pthread_t t[7];
     pthread_create(&t[0],NULL,thr_shell,  NULL);
     pthread_create(&t[1],NULL,thr_desktop,NULL);
     pthread_create(&t[2],NULL,thr_init,   NULL);
     pthread_create(&t[3],NULL,thr_cpu,    NULL);
     pthread_create(&t[4],NULL,thr_gpu,    NULL);
     pthread_create(&t[5],NULL,thr_kernel, NULL);
-    pthread_create(&t[6],NULL,thr_uptime, NULL);
-    pthread_create(&t[7],NULL,thr_pkgs,   NULL);
-    struct timespec dl; clock_gettime(CLOCK_REALTIME,&dl); dl.tv_sec+=2;
-    for (int i=0;i<8;i++) pthread_timedjoin_np(t[i],NULL,&dl);
+    pthread_create(&t[6],NULL,thr_pkgs,   NULL);
+    struct timespec dl; clock_gettime(CLOCK_REALTIME,&dl); dl.tv_sec+=4;
+    for (int i=0;i<7;i++) pthread_timedjoin_np(t[i],NULL,&dl);
 }
 
 static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -338,10 +342,22 @@ static void update_gpu(void) {
     if(v>=0){ pthread_mutex_lock(&stats_lock); gpu_pct=v>100?100:v; pthread_mutex_unlock(&stats_lock); }
 }
 
+static void update_uptime(void) {
+    char buf[64];
+    if (!read_file("/proc/uptime", buf, sizeof(buf))) return;
+    long secs = (long)atof(buf);
+    long d = secs/86400, h = (secs%86400)/3600, m = (secs%3600)/60;
+    pthread_mutex_lock(&stats_lock);
+    if (d > 0)      snprintf(_uptime, sizeof(_uptime), "%ldd %ldh %ldm", d, h, m);
+    else if (h > 0) snprintf(_uptime, sizeof(_uptime), "%ldh %ldm", h, m);
+    else            snprintf(_uptime, sizeof(_uptime), "%ldm", m);
+    pthread_mutex_unlock(&stats_lock);
+}
+
 static void *stats_thread(void *a){
     (void)a; init_gpu_source();
     while(running){
-        update_cpu(); update_ram(); update_gpu(); update_cpu_temp();
+        update_cpu(); update_ram(); update_gpu(); update_cpu_temp(); update_uptime();
         struct timespec ts={0,800000000L}; nanosleep(&ts,NULL);
     }
     return NULL;
@@ -568,6 +584,7 @@ static void render_info_panel(double t){
     double cpu_p=cpu_pct, gpu_p=gpu_pct;
     long   ru=ram_used, rt=ram_total;
     int    ctemp=cpu_temp;
+    char   uptmp[32]; strncpy(uptmp, _uptime, sizeof(uptmp)-1);
     pthread_mutex_unlock(&stats_lock);
     double ram_p=rt>0?(double)ru/rt*100.0:0;
 
@@ -587,7 +604,6 @@ static void render_info_panel(double t){
         {"Arch",    "x86_64"},
         {"Shell",   _shell},
         {"Desktop", _desktop},
-        {"Uptime",  _uptime},
         {"Packages",_pkgs},
         {"Repo",    "github.com/DamianDaniel/borealOS"},
         {NULL,NULL}
@@ -611,19 +627,7 @@ static void render_info_panel(double t){
 
     if(ctemp > 0){
         CAPTURE({
-            fb_hw_label("CPU °C");
-            char tmp[16]; snprintf(tmp,sizeof(tmp),"%d°C",ctemp);
-            char vbuf[64]; int n=0;
-            if(ctemp>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
-            else if(ctemp>60) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
-            else              n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
-            snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
-            fb_hw_row("CPU °C", vbuf, 0, 0);
-            (void)fb_tempcol;
-        });
-        nhw--;
-        CAPTURE({
-            char tmp[16]; snprintf(tmp,sizeof(tmp),"%d°C",ctemp);
+            char tmp[16]; snprintf(tmp,sizeof(tmp),"%d\xc2\xb0""C",ctemp);
             char vbuf[64]; int n=0;
             if(ctemp>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
             else if(ctemp>60) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
@@ -641,6 +645,10 @@ static void render_info_panel(double t){
             fb_fg(80,80,80); fb_str("N/A"); fb_R();
         });
     }
+    CAPTURE({
+        fb_hw_label("Uptime");
+        fb_fg(100,180,200); fb_str(uptmp); fb_R();
+    });
     CAPTURE({
         fb_hw_label("Kernel");
         fb_fg(100,180,200); fb_str(_kernel); fb_R();
