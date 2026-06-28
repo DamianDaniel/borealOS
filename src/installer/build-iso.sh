@@ -336,46 +336,45 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettin
 </channel>
 XSETTINGS
 
-# xfce4-desktop channel: wallpaper + no desktop icons except calamares launcher
-cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" <<'XFDESKTOP'
+# xfce4-desktop channel: wallpaper for all common monitor connectors + no system icons
+# xfdesktop4 stores wallpaper under the raw connector name (e.g. "Virtual-1"),
+# NOT prefixed with "monitor". Cover every common name so it works everywhere.
+WP=/usr/share/boreal-artwork/wallpaper-default.png
+{
+cat << XFDESKTOP_HEAD
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-desktop" version="1.0">
   <property name="backdrop" type="empty">
     <property name="screen0" type="empty">
-      <property name="monitorVGA-1"      type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-        <property name="image-style" type="int"    value="5"/>
-        <property name="color-style" type="int"    value="0"/>
-      </property></property>
-      <property name="monitorHDMI-1"     type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-        <property name="image-style" type="int"    value="5"/>
-        <property name="color-style" type="int"    value="0"/>
-      </property></property>
-      <property name="monitorVirtual-1"  type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-        <property name="image-style" type="int"    value="5"/>
-        <property name="color-style" type="int"    value="0"/>
-      </property></property>
-      <property name="monitoreDP-1"      type="empty"><property name="workspace0" type="empty">
-        <property name="last-image"  type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-        <property name="image-style" type="int"    value="5"/>
-        <property name="color-style" type="int"    value="0"/>
-      </property></property>
+XFDESKTOP_HEAD
+for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0            DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
+cat << MONBLOCK
+      <property name="${mon}" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="last-image"  type="string" value="${WP}"/>
+          <property name="image-style" type="int"    value="5"/>
+          <property name="color-style" type="int"    value="0"/>
+        </property>
+      </property>
+MONBLOCK
+done
+cat << XFDESKTOP_FOOT
     </property>
   </property>
   <property name="desktop-icons" type="empty">
-    <!-- Disable all default desktop icons -->
-    <property name="style"              type="int"  value="0"/>
+    <property name="style"             type="int"  value="2"/>
     <property name="file-icons" type="empty">
-      <property name="show-home"        type="bool" value="false"/>
-      <property name="show-filesystem"  type="bool" value="false"/>
-      <property name="show-removable"   type="bool" value="false"/>
-      <property name="show-trash"       type="bool" value="false"/>
+      <property name="show-home"       type="bool" value="false"/>
+      <property name="show-filesystem" type="bool" value="false"/>
+      <property name="show-removable"  type="bool" value="false"/>
+      <property name="show-trash"      type="bool" value="false"/>
     </property>
   </property>
 </channel>
-XFDESKTOP
+XFDESKTOP_FOOT
+} > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+# Copy to skel too
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"    "$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" 2>/dev/null || true
 
 # Desktop shortcuts
 mkdir -p "$WORK/squashfs-root/root/Desktop"
@@ -420,7 +419,7 @@ cat > "$WORK/squashfs-root/root/.config/autostart/boreal-trust-desktop.desktop" 
 [Desktop Entry]
 Type=Application
 Name=BorealOS Trust Desktop
-Exec=bash -c "for f in $HOME/Desktop/*.desktop; do gio set "$f" metadata::trusted true; done; xfdesktop --reload"
+Exec=bash -c 'for f in "$HOME/Desktop/"*.desktop; do gio set "$f" metadata::trusted true 2>/dev/null; done; xfdesktop --reload 2>/dev/null'
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
@@ -464,28 +463,23 @@ SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchanne
 patch_panel_xml_simple() {
     local f="$1"
     [ -f "$f" ] || return 0
-    awk '
-        # When we see power-manager-plugin, record its plugin number and skip the line
-        /value="power-manager-plugin"/ {
-            match($0, /name="plugin-([0-9]+)"/, arr)
-            bad[arr[1]] = 1
-            skip = 1
-            next
-        }
-        # Skip the closing tag of the power-manager block
-        skip && /<\/property>/ { skip = 0; next }
-        # Skip the plugin-id array entry for any removed plugin
-        {
-            found = 0
-            for (id in bad) {
-                if ($0 ~ "value=\"" id "\"" && $0 ~ "type=\"int\"") {
-                    found = 1; break
-                }
-            }
-            if (!found) print
-        }
-    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-    echo "  patched: $f"
+
+    # Step 1: collect plugin IDs that are power-manager-plugin using grep + sed
+    # (POSIX-compatible, no gawk needed)
+    local bad_ids
+    bad_ids=$(grep 'value="power-manager-plugin"' "$f" | \
+              sed 's/.*name="plugin-\([0-9]*\)".*/\1/' | \
+              grep '^[0-9]*$' || true)
+
+    # Step 2: remove the power-manager-plugin property block (self-closing form)
+    sed -i '/value="power-manager-plugin"/d' "$f"
+
+    # Step 3: remove orphaned <value type="int" value="N"/> for each bad ID
+    for pid in $bad_ids; do
+        sed -i "/type=\"int\" value=\"${pid}\"/d" "$f"
+    done
+
+    echo "  patched: $f (removed plugin IDs: ${bad_ids:-none})"
 }
 
 patch_panel_xml_simple "$PANEL_XML"
@@ -655,28 +649,24 @@ export DISPLAY=:0
 # D-Bus session
 eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
 
-# Set wallpaper and trust desktop icons after XFCE is fully up
-(sleep 6
+# Set wallpaper using xrandr to detect actual monitor name, trust desktop icons
+(sleep 5
  WP=/usr/share/boreal-artwork/wallpaper-default.png
  [ -f "$WP" ] || WP=/usr/share/pixmaps/xfce4-logo.png
- # Iterate all known monitor connector names
- for screen in screen0; do
-   for mon in Virtual-1 Virtual1 VGA-1 VGA-0 VGA1 HDMI-1 HDMI1               DP-1 DP1 eDP-1 eDP1 DVI-I-1 DVI-D-1 monitor0; do
-     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
-     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
-     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/color-style" -t int -s 0 2>/dev/null || true
-   done
+ # Detect connected monitors via xrandr — much more reliable than guessing names
+ MONITORS=$(DISPLAY=:0 xrandr --query 2>/dev/null | awk '/ connected/ {print $1}')
+ [ -z "$MONITORS" ] && MONITORS="Virtual-1 VGA-1 HDMI-1 eDP-1"
+ for mon in $MONITORS; do
+   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -s "$WP" 2>/dev/null || true
+   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -t int -s 5 2>/dev/null || true
+   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -t int -s 0 2>/dev/null || true
  done
  xfdesktop --reload 2>/dev/null || true
-
- # Trust desktop shortcuts so they show as launchers not text files
+ # Trust desktop shortcuts
  for f in "$HOME/Desktop/"*.desktop; do
-   gio set "$f" metadata::trusted true 2>/dev/null || true
+   [ -f "$f" ] && gio set "$f" metadata::trusted true 2>/dev/null || true
  done
  xfdesktop --reload 2>/dev/null || true
-
- # Set panel app-menu button icon to BorealOS logo
- xfconf-query -c xfce4-panel    -p "/plugins/plugin-2/button-icon"    -s "/usr/share/pixmaps/boreal-logo-24.png" 2>/dev/null || true
 ) &
 
 # Launch Calamares after desktop is ready.
@@ -785,8 +775,10 @@ chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation fai
 set -e
 apt-get update -qq
 
+# Install Linux 7.1 if available, fall back to linux-image-amd64 (meta-package)
+apt-get install -y --no-install-recommends linux-image-7.1.0-1-amd64 2>/dev/null || apt-get install -y --no-install-recommends linux-image-amd64 || apt-get install -y --no-install-recommends linux-image-generic
+
 apt-get install -y --no-install-recommends \
-    linux-image-amd64 \
     grub-efi-amd64 grub-efi-amd64-bin grub-pc-bin grub-common \
     efibootmgr \
     live-boot live-boot-initramfs-tools \
@@ -832,6 +824,7 @@ done
 apt-get install -y --no-install-recommends \
     xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
     xfce4-session xfce4-panel xfce4-settings \
+    xfce4-power-manager \
     || echo "WARN: XFCE installer host install incomplete"
 
 # Install the user's chosen DE (also --no-install-recommends to stay safe)
@@ -1070,7 +1063,213 @@ convert "$WP_MAIN" -resize 900x600 -background black -gravity center -extent 900
 ok "Calamares branding installed (BorealOS assets + theme)."
 
 mkdir -p "$WORK/squashfs-root/etc/calamares"
-cat > "$WORK/squashfs-root/etc/calamares/settings.conf" <<'CALSETTINGS'
+# ── Calamares: wrapper script + module configs ────────────────────────────────
+# The wrapper runs at install time (inside the live env) and:
+#   1. Detects which calamares modules are actually compiled in
+#   2. Finds the squashfs source path dynamically
+#   3. Writes settings.conf and unpackfs.conf accordingly
+#   4. Launches the real calamares binary
+
+# Find the real calamares binary and move it
+CHROOT_CAL="$WORK/squashfs-root"
+for cal_bin in "$CHROOT_CAL/usr/bin/calamares" "$CHROOT_CAL/usr/sbin/calamares"; do
+    if [ -f "$cal_bin" ] && [ ! -L "$cal_bin" ]; then
+        mv "$cal_bin" "${cal_bin}-real"
+        echo "  moved real calamares to ${cal_bin}-real"
+        break
+    fi
+done
+
+cat > "$WORK/squashfs-root/usr/local/bin/calamares" << 'CALWRAPPER'
+#!/bin/bash
+# BorealOS Calamares wrapper — auto-detects modules and squashfs path
+
+MODULES_DIR=/usr/lib/calamares/modules
+CONF_DIR=/etc/calamares
+mkdir -p "$CONF_DIR/modules"
+
+# Find the real calamares binary
+CAL_REAL=""
+for b in /usr/bin/calamares-real /usr/sbin/calamares-real; do
+    [ -x "$b" ] && CAL_REAL="$b" && break
+done
+[ -z "$CAL_REAL" ] && { echo "ERROR: calamares-real not found"; exit 1; }
+
+# Detect squashfs source path
+SQUASHFS=""
+for p in \
+    /run/live/medium/live/filesystem.squashfs \
+    /lib/live/mount/medium/live/filesystem.squashfs \
+    /run/live/rootfs/filesystem.squashfs \
+    /mnt/live/filesystem.squashfs; do
+    [ -f "$p" ] && SQUASHFS="$p" && break
+done
+if [ -z "$SQUASHFS" ]; then
+    SQUASHFS=$(find /run /lib /mnt -name "filesystem.squashfs" 2>/dev/null | head -1)
+fi
+echo "calamares-wrapper: squashfs at $SQUASHFS"
+
+# Write unpackfs.conf with detected path
+cat > "$CONF_DIR/modules/unpackfs.conf" << UNPACKFSCONF
+---
+unpack:
+  - source: ${SQUASHFS}
+    sourcefs: squashfs
+    destination: ""
+UNPACKFSCONF
+
+# Write welcome.conf — relax requirements so installer isn't blocked
+cat > "$CONF_DIR/modules/welcome.conf" << WELCOMECONF
+---
+showSupportUrl: true
+showKnownIssuesUrl: true
+showReleaseNotesUrl: false
+requirements:
+  requiredStorage: 8
+  requiredRam: 0.5
+  internetCheckUrl: ""
+  check:
+    - storage
+    - ram
+  nocheck:
+    - internet
+    - power
+    - root
+WELCOMECONF
+
+# Write finished.conf
+cat > "$CONF_DIR/modules/finished.conf" << FINISHEDCONF
+---
+restartNowEnabled: true
+restartNowChecked: true
+restartNowCommand: "shutdown -r now"
+FINISHEDCONF
+
+# Detect which exec modules are available
+has_module() {
+    [ -d "$MODULES_DIR/$1" ] || \
+    [ -f "$MODULES_DIR/$1.so" ] || \
+    [ -f "$MODULES_DIR/${1}/${1}.so" ]
+}
+
+build_exec_sequence() {
+    for mod in partition mount unpackfs fstab locale keyboard users bootloader; do
+        has_module "$mod" && echo "    - $mod"
+    done
+}
+
+EXEC_SEQ=$(build_exec_sequence)
+echo "calamares-wrapper: exec modules: $(echo $EXEC_SEQ | tr '\n' ' ')"
+
+# Write settings.conf
+cat > /tmp/boreal-calamares-settings.conf << CALCONF
+---
+modules-search: [ local, $MODULES_DIR ]
+sequence:
+  - show:
+    - welcome
+    - locale
+    - keyboard
+    - partition
+    - users
+    - summary
+  - exec:
+$EXEC_SEQ
+  - show:
+    - finished
+branding: boreal
+prompt-install: true
+dont-chroot: false
+CALCONF
+
+exec "$CAL_REAL" -D 6 --config /tmp/boreal-calamares-settings.conf "$@"
+CALWRAPPER
+chmod +x "$WORK/squashfs-root/usr/local/bin/calamares"
+# Also symlink from /usr/bin if it was moved
+ln -sf /usr/local/bin/calamares "$WORK/squashfs-root/usr/bin/calamares" 2>/dev/null || true
+
+mkdir -p "$WORK/squashfs-root/etc/calamares/modules"
+
+# ── Module configs (static ones that don't need runtime detection) ────────────
+
+# locale
+cat > "$WORK/squashfs-root/etc/calamares/modules/locale.conf" << 'LOCALECONF'
+---
+region: "America"
+zone: "New_York"
+localeGenPath: "/etc/locale.gen"
+geoipStyle: "json"
+LOCALECONF
+
+# users
+cat > "$WORK/squashfs-root/etc/calamares/modules/users.conf" << 'USERSCONF'
+---
+userShell: /bin/bash
+autologinGroup: autologin
+sudoersGroup: sudo
+setRootPassword: false
+doAutologin: false
+doAdminAutologin: false
+passwordRequirements:
+  minLength: 6
+  maxLength: -1
+allowWeakPasswords: false
+allowWeakPasswordsDefault: false
+USERSCONF
+
+# bootloader
+cat > "$WORK/squashfs-root/etc/calamares/modules/bootloader.conf" << 'BOOTCONF'
+---
+efiBootloaderId: "BorealOS"
+installEFIFallback: true
+grubInstall: "grub-install"
+grubMkconfig: "grub-mkconfig"
+grubCfg: "/boot/grub/grub.cfg"
+grubProbe: "grub-probe"
+efiBootLoader: "grub"
+kernel: "/vmlinuz"
+img: "/initrd.img"
+kernelLine: ", with Linux"
+fallbackKernelLine: ", with Linux (fallback)"
+timeout: 5
+grubTheme: "/boot/grub/themes/boreal/theme.txt"
+BOOTCONF
+
+# fstab
+cat > "$WORK/squashfs-root/etc/calamares/modules/fstab.conf" << 'FSTABCONF'
+---
+mountOptions:
+  default: "defaults"
+  btrfs: "defaults,compress=zstd:1"
+  efi: "umask=0077"
+  swap: "sw"
+FSTABCONF
+
+# partition
+cat > "$WORK/squashfs-root/etc/calamares/modules/partition.conf" << 'PARTCONF'
+---
+efi:
+  mountPoint: "/boot/efi"
+  recommendedSize: 300MiB
+  minimumSize: 100MiB
+userSwapChoices:
+  - none
+  - small
+  - suspend
+  - file
+initialSwapChoice: none
+PARTCONF
+
+# Remove leftover shellprocess.conf (module not available on Debian calamares)
+rm -f "$WORK/squashfs-root/etc/calamares/modules/shellprocess.conf"
+# Stub unmount so calamares doesn't error if it finds a reference to it
+cat > "$WORK/squashfs-root/etc/calamares/modules/unmount.conf" << 'UNMOUNTCONF'
+---
+UNMOUNTCONF
+
+# settings.conf: minimal static version — wrapper will override with /tmp version at runtime
+# This serves as a fallback if the wrapper fails for any reason
+cat > "$WORK/squashfs-root/etc/calamares/settings.conf" << 'CALSETTINGS'
 ---
 modules-search: [ local, /usr/lib/calamares/modules ]
 sequence:
@@ -1090,109 +1289,12 @@ sequence:
     - keyboard
     - users
     - bootloader
-    - shellprocess
   - show:
     - finished
 branding: boreal
 prompt-install: true
 dont-chroot: false
 CALSETTINGS
-
-mkdir -p "$WORK/squashfs-root/etc/calamares/modules"
-
-# ── Calamares module configs ───────────────────────────────────────────────────
-
-# unpackfs: copy the live squashfs to the target
-cat > "$WORK/squashfs-root/etc/calamares/modules/unpackfs.conf" <<'UNPACKFS'
----
-unpack:
-  - source: /run/live/medium/live/filesystem.squashfs
-    sourcefs: squashfs
-    destination: ""
-UNPACKFS
-
-# locale
-cat > "$WORK/squashfs-root/etc/calamares/modules/locale.conf" <<'LOCALECONF'
----
-region: "America"
-zone: "New_York"
-localeGenPath: "/etc/locale.gen"
-geoipStyle: "json"
-LOCALECONF
-
-# users
-cat > "$WORK/squashfs-root/etc/calamares/modules/users.conf" <<'USERSCONF'
----
-userShell: /bin/bash
-autologinGroup: autologin
-sudoersGroup: sudo
-setRootPassword: false
-doAutologin: false
-doAdminAutologin: false
-passwordRequirements:
-  minLength: 6
-  maxLength: -1
-allowWeakPasswords: false
-allowWeakPasswordsDefault: false
-USERSCONF
-
-# bootloader
-cat > "$WORK/squashfs-root/etc/calamares/modules/bootloader.conf" <<'BOOTCONF'
----
-efiBootloaderId: "BorealOS"
-installEFIFallback: true
-grubInstall: "grub-install"
-grubMkconfig: "grub-mkconfig"
-grubCfg: "/boot/grub/grub.cfg"
-grubProbe: "grub-probe"
-efiBootLoader: "grub"
-kernel: "/vmlinuz"
-img: "/initrd.img"
-kernelLine: ", with Linux"
-fallbackKernelLine: ", with Linux (fallback)"
-timeout: 5
-grubTheme: "/boot/grub/themes/boreal/theme.txt"
-BOOTCONF
-
-# fstab
-cat > "$WORK/squashfs-root/etc/calamares/modules/fstab.conf" <<'FSTABCONF'
----
-mountOptions:
-  default: "defaults"
-  btrfs: "defaults,compress=zstd:1"
-  efi: "umask=0077"
-  swap: "sw"
-FSTABCONF
-
-# partition
-cat > "$WORK/squashfs-root/etc/calamares/modules/partition.conf" <<'PARTCONF'
----
-efi:
-  mountPoint: "/boot/efi"
-  recommendedSize: 300MiB
-  minimumSize: 100MiB
-userSwapChoices:
-  - none
-  - small
-  - suspend
-  - file
-initialSwapChoice: none
-PARTCONF
-
-# shellprocess: post-install cleanup
-cat > "$WORK/squashfs-root/etc/calamares/modules/shellprocess.conf" <<'SHELLCONF'
----
-dontChroot: false
-timeout: 30
-script:
-  - command: "bash -c "rm -rf /opt/borealOS/gui-debs /opt/borealOS/debs 2>/dev/null; exit 0""
-    timeout: 10
-SHELLCONF
-
-# Stub out unmount — module not available in this build
-cat > "$WORK/squashfs-root/etc/calamares/modules/unmount.conf" <<'UNMOUNTCONF'
----
-UNMOUNTCONF
 
 echo "==> Finalizing system..."
 find "$WORK/squashfs-root/usr/share" \
@@ -1206,8 +1308,6 @@ find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/nul
 find "$WORK/squashfs-root/usr/share/icons" -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/boot/grub" -name "*debian*" -delete 2>/dev/null || true
 
-# Remove plymouth entirely from the live env — not used, and its initramfs hook
-# adds boot delay and can conflict with simple console boot.
 find "$WORK/squashfs-root/usr/share/plymouth"      "$WORK/squashfs-root/etc/plymouth"      -delete 2>/dev/null || true
 rm -f "$WORK/squashfs-root/usr/share/initramfs-tools/hooks/plymouth"       "$WORK/squashfs-root/etc/initramfs-tools/conf.d/plymouth" 2>/dev/null || true
 
@@ -1279,7 +1379,7 @@ fi
 
 echo "==> Building SquashFS..."
 mksquashfs "$WORK/squashfs-root" "$WORK/iso/live/filesystem.squashfs" \
-    -comp zstd -Xcompression-level 19 -noappend -quiet || die "mksquashfs failed"
+    -comp zstd -Xcompression-level 19 -noappend -xattrs -quiet || die "mksquashfs failed"
 
 echo "==> Copying kernel and initrd..."
 VMLINUZ=$(ls "$WORK/squashfs-root/boot/vmlinuz-"* 2>/dev/null | sort -V | tail -1)
