@@ -24,6 +24,7 @@ output * background /usr/share/boreal-artwork/background-ultrawide-logo-neue.png
 # Uncomment to enable tearing for all apps.
 # for_window [all] allow_tearing on
 for_window [all] border none
+for_window [title="BorealDynamicBar"] floating enable, move position 0 0, sticky enable, border none
 # -------- Window Rules -------- #
 
 # --------- Input configuration -------- #

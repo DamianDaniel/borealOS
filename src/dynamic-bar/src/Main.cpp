@@ -5,6 +5,7 @@
 
 int main(int argc, char *argv[]) {
     qputenv("QT_QPA_PLATFORM", "wayland");
+    QGuiApplication::setDesktopSettingsAware(false);
 
     QGuiApplication app(argc, argv);
     QQmlApplicationEngine engine;

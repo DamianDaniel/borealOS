@@ -56,6 +56,11 @@ layer-rule {
 }
 
 window-rule {
+    match title="BorealDynamicBar"
+    open-floating true
+}
+
+window-rule {
     geometry-corner-radius 22
     clip-to-geometry true
     draw-border-with-background false

@@ -10,7 +10,13 @@ Window {
     width: Screen.width
     height: 60
     color: "transparent"
-    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    title: "BorealDynamicBar"
+    flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+
+    Component.onCompleted: {
+        root.x = 0
+        root.y = 0
+    }
 
     SystemStatus {
         id: sysStatus
