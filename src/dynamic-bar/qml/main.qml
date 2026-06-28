@@ -5,7 +5,9 @@ import org.borealos.components 1.0
 Window {
     id: root
     visible: true
-    width: 1920
+    x: 0
+    y: 0
+    width: Screen.width
     height: 60
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
@@ -14,20 +16,20 @@ Window {
         id: sysStatus
     }
 
-    // Main Top Bar Background
+    // Main Top Bar
     Rectangle {
         id: topBar
         anchors.top: parent.top
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: parent.width * 0.95
+        anchors.left: parent.left
+        anchors.right: parent.right
         height: 40
         radius: 12
         color: "#AA000000"
 
-        // Left Side: App Indicators
 
 
-        // Right Side: The Dynamic Island / Morphing Status
+
+        // Right Side
         Rectangle {
             id: dynamicIsland
             anchors.right: parent.right
