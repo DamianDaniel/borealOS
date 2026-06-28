@@ -188,6 +188,13 @@ static void detect_gpu(void) {
             }
             char *t=tmp; while(*t==' ')t++;
             char *e=t+strlen(t)-1; while(e>t&&*e==' ')*e--='\0';
+            /* strip " (rev XX)" suffix */
+            char *rev = strstr(t, " (rev ");
+            if (rev) *rev = '\0';
+            /* strip trailing brackets like "[UHD Graphics]" */
+            char *br = strstr(t, " [");
+            if (br) *br = '\0';
+            e=t+strlen(t)-1; while(e>t&&*e==' ')*e--='\0';
             strncpy(_gpu, t, sizeof(_gpu)-1);
             return;
         }
@@ -344,9 +351,12 @@ static void update_gpu(void) {
 }
 
 static void update_uptime(void) {
-    char buf[64];
-    if (!read_file("/proc/uptime", buf, sizeof(buf))) return;
-    long secs = strtol(buf, NULL, 10);
+    FILE *f = fopen("/proc/uptime", "r");
+    if (!f) return;
+    double secs_f = 0;
+    fscanf(f, "%lf", &secs_f);
+    fclose(f);
+    long secs = (long)secs_f;
     long d = secs/86400, h = (secs%86400)/3600, m = (secs%3600)/60;
     pthread_mutex_lock(&stats_lock);
     if (d > 0)      snprintf(_uptime, sizeof(_uptime), "%ldd %ldh %ldm", d, h, m);
@@ -550,7 +560,9 @@ static void render_info_panel(double t){
     double cpu_p=cpu_pct, gpu_p=gpu_pct;
     long   ru=ram_used, rt=ram_total;
     int    ctemp=cpu_temp;
-    char   uptmp[32]; strncpy(uptmp, _uptime, sizeof(uptmp)-1);
+    char   uptmp[32];
+    strncpy(uptmp, _uptime, sizeof(uptmp)-1);
+    uptmp[sizeof(uptmp)-1] = '\0';
     pthread_mutex_unlock(&stats_lock);
     double ram_p=rt>0?(double)ru/rt*100.0:0;
 
@@ -667,7 +679,7 @@ static void render_info_panel(double t){
                 fb_R();
             }
         } else {
-            fb_pad(LEFT_W);
+            fb_pad(LEFT_W - 2);
         }
         fb_str("  ");
         if(hw_i<nhw) fb_str(hw[hw_i++]);
