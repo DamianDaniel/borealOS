@@ -1,7 +1,3 @@
-/*  boreal-fetch  –  BorealOS system info fetcher
-    Build:  cmake -B build && cmake --build build
-    Run:    ./build/boreal-fetch
-*/
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,8 +30,8 @@ static void update_term_size(void) {
 }
 
 static volatile int running = 1;
-static void handle_sig(int s)    { (void)s; running = 0; }
-static void handle_winch(int s)  { (void)s; update_term_size(); }
+static void handle_sig(int s)   { (void)s; running = 0; }
+static void handle_winch(int s) { (void)s; update_term_size(); }
 
 static int read_file(const char *path, char *buf, int sz) {
     FILE *f = fopen(path, "r");
@@ -67,6 +63,8 @@ static char _init   [64] = "Unknown";
 static char _cpu    [64] = "Unknown";
 static char _gpu    [64] = "Unknown";
 static char _kernel [64] = "Unknown";
+static char _uptime [32] = "";
+static char _pkgs   [64] = "";
 
 static void detect_shell(void) {
     const char *s = getenv("SHELL");
@@ -125,7 +123,6 @@ static void detect_desktop(void) {
 }
 
 static void detect_init(void) {
-    
     char comm[64];
     if (read_file("/proc/1/comm", comm, sizeof(comm))) {
         if (strstr(comm,"systemd")) { strcpy(_init,"systemd"); return; }
@@ -133,19 +130,12 @@ static void detect_init(void) {
         if (strstr(comm,"runit"))   { strcpy(_init,"runit");   return; }
         if (strstr(comm,"s6"))      { strcpy(_init,"s6");      return; }
         if (strstr(comm,"dinit"))   { strcpy(_init,"dinit");   return; }
-        if (strstr(comm,"sysvinit")){ strcpy(_init,"SysVinit");return; }
-        if (strstr(comm,"init"))    {
-            
-        }
     }
-    
-    if (file_exists("/run/systemd/private"))       { strcpy(_init,"systemd");  return; }
-    if (file_exists("/run/openrc"))                { strcpy(_init,"OpenRC");   return; }
-    if (file_exists("/run/runit"))                 { strcpy(_init,"runit");    return; }
-    if (file_exists("/run/s6"))                    { strcpy(_init,"s6");       return; }
-    if (file_exists("/etc/dinit.d"))               { strcpy(_init,"dinit");    return; }
-    if (file_exists("/sbin/openrc"))               { strcpy(_init,"OpenRC");   return; }
-    
+    if (file_exists("/run/systemd/private"))  { strcpy(_init,"systemd"); return; }
+    if (file_exists("/run/openrc"))           { strcpy(_init,"OpenRC");  return; }
+    if (file_exists("/run/runit"))            { strcpy(_init,"runit");   return; }
+    if (file_exists("/run/s6"))               { strcpy(_init,"s6");      return; }
+    if (file_exists("/etc/dinit.d"))          { strcpy(_init,"dinit");   return; }
     if (system("systemctl is-system-running >/dev/null 2>&1")==0)
         { strcpy(_init,"systemd"); return; }
     if (system("rc-status >/dev/null 2>&1")==0)
@@ -210,28 +200,57 @@ static void detect_kernel(void) {
     char *d = strchr(_kernel, '-'); if (d) *d='\0';
 }
 
-static void *thr_shell  (void*a){(void)a;detect_shell();  return NULL;}
-static void *thr_desktop(void*a){(void)a;detect_desktop();return NULL;}
-static void *thr_init   (void*a){(void)a;detect_init();   return NULL;}
-static void *thr_cpu    (void*a){(void)a;detect_cpu();    return NULL;}
-static void *thr_gpu    (void*a){(void)a;detect_gpu();    return NULL;}
-static void *thr_kernel (void*a){(void)a;detect_kernel(); return NULL;}
+static void detect_uptime(void) {
+    char buf[64];
+    if (!read_file("/proc/uptime", buf, sizeof(buf))) return;
+    long secs = (long)atof(buf);
+    long d = secs/86400, h = (secs%86400)/3600, m = (secs%3600)/60;
+    if (d > 0)      snprintf(_uptime, sizeof(_uptime), "%ldd %ldh %ldm", d, h, m);
+    else if (h > 0) snprintf(_uptime, sizeof(_uptime), "%ldh %ldm", h, m);
+    else            snprintf(_uptime, sizeof(_uptime), "%ldm", m);
+}
+
+static void detect_packages(void) {
+    char buf[32];
+    if (run_cmd("dpkg --list 2>/dev/null | grep -c '^ii'", buf, sizeof(buf)) && atoi(buf)>0) {
+        snprintf(_pkgs, sizeof(_pkgs), "%s (dpkg)", buf); return;
+    }
+    if (run_cmd("rpm -qa 2>/dev/null | wc -l", buf, sizeof(buf)) && atoi(buf)>0) {
+        snprintf(_pkgs, sizeof(_pkgs), "%s (rpm)", buf); return;
+    }
+    if (run_cmd("pacman -Qq 2>/dev/null | wc -l", buf, sizeof(buf)) && atoi(buf)>0) {
+        snprintf(_pkgs, sizeof(_pkgs), "%s (pacman)", buf); return;
+    }
+    strcpy(_pkgs, "Unknown");
+}
+
+static void *thr_shell  (void*a){(void)a;detect_shell();   return NULL;}
+static void *thr_desktop(void*a){(void)a;detect_desktop(); return NULL;}
+static void *thr_init   (void*a){(void)a;detect_init();    return NULL;}
+static void *thr_cpu    (void*a){(void)a;detect_cpu();     return NULL;}
+static void *thr_gpu    (void*a){(void)a;detect_gpu();     return NULL;}
+static void *thr_kernel (void*a){(void)a;detect_kernel();  return NULL;}
+static void *thr_uptime (void*a){(void)a;detect_uptime();  return NULL;}
+static void *thr_pkgs   (void*a){(void)a;detect_packages();return NULL;}
 
 static void gather_static(void) {
-    pthread_t t[6];
+    pthread_t t[8];
     pthread_create(&t[0],NULL,thr_shell,  NULL);
     pthread_create(&t[1],NULL,thr_desktop,NULL);
     pthread_create(&t[2],NULL,thr_init,   NULL);
     pthread_create(&t[3],NULL,thr_cpu,    NULL);
     pthread_create(&t[4],NULL,thr_gpu,    NULL);
     pthread_create(&t[5],NULL,thr_kernel, NULL);
+    pthread_create(&t[6],NULL,thr_uptime, NULL);
+    pthread_create(&t[7],NULL,thr_pkgs,   NULL);
     struct timespec dl; clock_gettime(CLOCK_REALTIME,&dl); dl.tv_sec+=2;
-    for (int i=0;i<6;i++) pthread_timedjoin_np(t[i],NULL,&dl);
+    for (int i=0;i<8;i++) pthread_timedjoin_np(t[i],NULL,&dl);
 }
 
 static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
 static double cpu_pct=0, gpu_pct=-1;
 static long   ram_used=0, ram_total=0;
+static int    cpu_temp=-1;
 
 static long long _cpu_ptotal=0, _cpu_pidle=0;
 
@@ -267,6 +286,28 @@ static void update_ram(void) {
     pthread_mutex_unlock(&stats_lock);
 }
 
+static void update_cpu_temp(void) {
+    const char *paths[] = {
+        "/sys/class/thermal/thermal_zone0/temp",
+        "/sys/class/hwmon/hwmon0/temp1_input",
+        "/sys/class/hwmon/hwmon1/temp1_input",
+        NULL
+    };
+    char buf[32];
+    for (int i=0; paths[i]; i++) {
+        if (read_file(paths[i], buf, sizeof(buf))) {
+            int raw = atoi(buf);
+            if (raw > 1000) raw /= 1000;
+            if (raw > 0 && raw < 200) {
+                pthread_mutex_lock(&stats_lock);
+                cpu_temp = raw;
+                pthread_mutex_unlock(&stats_lock);
+                return;
+            }
+        }
+    }
+}
+
 static char _gpu_path[256]="";
 static void init_gpu_source(void) {
     if(system("nvidia-smi --query-gpu=utilization.gpu "
@@ -300,7 +341,7 @@ static void update_gpu(void) {
 static void *stats_thread(void *a){
     (void)a; init_gpu_source();
     while(running){
-        update_cpu(); update_ram(); update_gpu();
+        update_cpu(); update_ram(); update_gpu(); update_cpu_temp();
         struct timespec ts={0,800000000L}; nanosleep(&ts,NULL);
     }
     return NULL;
@@ -324,7 +365,6 @@ static int visw(const char *s){
     for(;*s;s++){
         if(*s=='\033'){esc=1;continue;}
         if(esc){if(*s=='m')esc=0;continue;}
-        
         if((*s&0xC0)==0x80) continue;
         n++;
     }
@@ -362,16 +402,16 @@ static void build_scene(double t){
         for(int c=0;c<W;c++){
             double w1=sin(c*.06+t*.35)*.5+sin(c*.025+t*.18+1.8)*.5;
             double w2=sin(c*.04+t*.22+3.)*.5+sin(c*.08+t*.28+.5)*.5;
-            double i=(w1*.55+w2*.45)*.5+.5; i*=1.-(double)row/GROUND_ROW*.5;
-            scene[row][c]=(Cell){' ',(unsigned char)(4+i*16),
-                                     (unsigned char)(60+i*150),
-                                     (unsigned char)(80+i*140)};
+            double ii=(w1*.55+w2*.45)*.5+.5; ii*=1.-(double)row/GROUND_ROW*.5;
+            scene[row][c]=(Cell){' ',(unsigned char)(4+ii*16),
+                                     (unsigned char)(60+ii*150),
+                                     (unsigned char)(80+ii*140)};
         }
         double wr1=2+sin(t*.25+.5)*.8, wr2=5+sin(t*.2+2.)*.8;
         for(int c=0;c<W;c++){
             double woff=sin(c*.08+t*.4)*1.2;
-            if(fabs(row-wr1-woff)<.9)       scene[row][c]=(Cell){'~',20,210,170};
-            else if(fabs(row-wr2-woff*.8)<.7)scene[row][c]=(Cell){'~',10,160,180};
+            if(fabs(row-wr1-woff)<.9)        scene[row][c]=(Cell){'~',20,210,170};
+            else if(fabs(row-wr2-woff*.8)<.7) scene[row][c]=(Cell){'~',10,160,180};
         }
         for(int c=0;c<W;c++){
             int sid=(c*7+13)%17, sr=sid%(GROUND_ROW-1);
@@ -407,7 +447,7 @@ static void render_scene(void){
             if(cl->r!=pr||cl->g!=pg||cl->b!=pb){
                 fb_fg(cl->r,cl->g,cl->b); pr=cl->r;pg=cl->g;pb=cl->b;
             }
-            if(row==GROUND_ROW) fb_str("\xe2\x96\x84"); 
+            if(row==GROUND_ROW) fb_str("\xe2\x96\x84");
             else                fb_char(cl->ch);
         }
         fb_R(); fb_str("\r\n");
@@ -448,15 +488,10 @@ static void render_tagline(double t){
     fb_str("\r\n");
 }
 
-#define LEFT_W   52   
-#define BAR_W    12   
-#define LABEL_W   8   
-
-static void fb_bar(double pct){
-    int filled=(int)round(pct/100.0*BAR_W);
-    for(int i=0;i<BAR_W;i++)
-        fb_str(i<filled?"\xe2\x96\x88":"\xe2\x96\x91");
-}
+#define LEFT_W  52
+#define BAR_W   12
+#define LABEL_W  8
+#define VALUE_W 20
 
 static void fb_valcol(double pct){
     if(pct>80)      fb_fg(220,80,60);
@@ -464,49 +499,38 @@ static void fb_valcol(double pct){
     else            fb_fg(50,200,130);
 }
 
-/*
- * Right column row layout (all values start at same column):
- *   LABEL___  |  VALUE   BAR
- *   ←LABEL_W→ | ← value starts here
- *
- * For percentage rows the value is "XX.X%  ███░░░░░░░░░"
- * For model rows  the value is just the model string
- * For kernel/ram  the value is formatted string
- *
- * To align the bars, we measure the widest percentage string
- * at render time and pad shorter ones. Since we use "%.1f%%"
- * the max is "100.0%" (6 chars) — we always pad to 6.
- */
+static void fb_bar(double pct){
+    int filled=(int)round(pct/100.0*BAR_W);
+    for(int i=0;i<BAR_W;i++)
+        fb_str(i<filled?"\xe2\x96\x88":"\xe2\x96\x91");
+}
+
+static void fb_tempcol(int temp){
+    if(temp>80)      fb_fg(220,80,60);
+    else if(temp>60) fb_fg(220,180,50);
+    else             fb_fg(50,200,130);
+}
+
 static void fb_hw_label(const char *label){
     fb_fg(15,80,60);
     fb_printf("%-*s", LABEL_W, label);
     fb_fg(30,60,45); fb_str(" | "); fb_R();
 }
 
-/* All right-column rows:
- *   LABEL_W(8) + " | "(3) + VALUE_W(20) + "  " + BAR_W(12)
- *   Value field is always 20 visible chars wide — truncated or padded.
- *   This guarantees every bar starts at the exact same column.
- */
-#define VALUE_W 20
-
 static void fb_hw_row(const char *label, const char *value,
                       int has_bar, double pct)
 {
     fb_hw_label(label);
-    
     int vw = visw(value);
     if(vw > VALUE_W){
-        
         int vis=0; const char *p=value; int esc=0;
         while(*p && vis<VALUE_W){
             if(*p=='\033'){esc=1;fb_char(*p++);continue;}
             if(esc){fb_char(*p); if(*p=='m')esc=0; p++;continue;}
-            if((*p&0xC0)==0x80){fb_char(*p++);continue;} 
+            if((*p&0xC0)==0x80){fb_char(*p++);continue;}
             fb_char(*p++); vis++;
         }
-        fb_R();
-        fb_pad(0);
+        fb_R(); fb_pad(0);
     } else {
         fb_str(value); fb_R();
         fb_pad(VALUE_W - vw);
@@ -521,7 +545,6 @@ static void fb_hw_model(const char *label, const char *value){
 
 static void fb_hw_pct(const char *label, double pct){
     char tmp[16]; snprintf(tmp,sizeof(tmp),"%.1f%%",pct);
-    
     char vbuf[64]; int n=0;
     if(pct>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
     else if(pct>50) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
@@ -543,38 +566,37 @@ static void fb_hw_ram(const char *label, long used, long total, double pct){
 static void render_info_panel(double t){
     pthread_mutex_lock(&stats_lock);
     double cpu_p=cpu_pct, gpu_p=gpu_pct;
-    long   ru=ram_used,   rt=ram_total;
+    long   ru=ram_used, rt=ram_total;
+    int    ctemp=cpu_temp;
     pthread_mutex_unlock(&stats_lock);
     double ram_p=rt>0?(double)ru/rt*100.0:0;
 
     double wave=sin(t*.4)*.5+.5;
     int hg=(int)(120+wave*80);
 
-    
     char lhdr[128], rhdr[64];
     snprintf(lhdr,sizeof(lhdr),"  \033[38;2;20;%d;100m\033[1m[ Software ]\033[0m",hg);
     snprintf(rhdr,sizeof(rhdr),   "\033[38;2;20;%d;100m\033[1m[ Hardware ]\033[0m",hg);
     int lhv=visw(lhdr);
     fb_str(lhdr); fb_pad(LEFT_W+2-lhv); fb_str("  "); fb_str(rhdr); fb_str("\r\n");
-    fb_str("\r\n"); 
+    fb_str("\r\n");
 
-    
     struct { const char *label, *value; } drows[]={
         {"Base",    "Debian stable"},
         {"Init",    _init},
         {"Arch",    "x86_64"},
         {"Shell",   _shell},
         {"Desktop", _desktop},
+        {"Uptime",  _uptime},
+        {"Packages",_pkgs},
         {"Repo",    "github.com/DamianDaniel/borealOS"},
         {NULL,NULL}
     };
     int nd=0; for(;drows[nd].label;nd++);
 
-    
-#define MAX_HW 8
+#define MAX_HW 10
     char hw[MAX_HW][512]; int nhw=0;
 
-    
 #define CAPTURE(code) do{ \
     int _s=fbpos; code; \
     int _len=fbpos-_s; \
@@ -586,6 +608,31 @@ static void render_info_panel(double t){
     CAPTURE(fb_hw_ram("RAM",ru,rt,ram_p));
     CAPTURE(fb_hw_model("CPU",_cpu));
     CAPTURE(fb_hw_pct("CPU %",cpu_p));
+
+    if(ctemp > 0){
+        CAPTURE({
+            fb_hw_label("CPU °C");
+            char tmp[16]; snprintf(tmp,sizeof(tmp),"%d°C",ctemp);
+            char vbuf[64]; int n=0;
+            if(ctemp>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
+            else if(ctemp>60) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
+            else              n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
+            snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
+            fb_hw_row("CPU °C", vbuf, 0, 0);
+            (void)fb_tempcol;
+        });
+        nhw--;
+        CAPTURE({
+            char tmp[16]; snprintf(tmp,sizeof(tmp),"%d°C",ctemp);
+            char vbuf[64]; int n=0;
+            if(ctemp>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
+            else if(ctemp>60) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
+            else              n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
+            snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
+            fb_hw_row("CPU \xc2\xb0""C", vbuf, 0, 0);
+        });
+    }
+
     CAPTURE(fb_hw_model("GPU",_gpu));
     if(gpu_p>=0){ CAPTURE(fb_hw_pct("GPU %",gpu_p)); }
     else {
@@ -599,19 +646,16 @@ static void render_info_panel(double t){
         fb_fg(100,180,200); fb_str(_kernel); fb_R();
     });
 
-    
     int nrows=nd>nhw?nd:nhw;
     for(int i=0;i<nrows;i++){
-        
         fb_str("  ");
         if(i<nd){
             double wv=sin(t*.35+i*1.0)*.5+.5;
             int lg=(int)(70+wv*70), vg=(int)(160+wv*70);
             char lbuf[256];
-            int llen=snprintf(lbuf,sizeof(lbuf),
+            snprintf(lbuf,sizeof(lbuf),
                 "\033[38;2;15;%d;80m%-10s\033[38;2;30;60;45m | \033[38;2;40;%d;140m%s\033[0m",
                 lg, drows[i].label, vg, drows[i].value);
-            (void)llen;
             int lv=visw(lbuf);
             fb_str(lbuf);
             fb_pad(LEFT_W-lv);
@@ -619,7 +663,6 @@ static void render_info_panel(double t){
             fb_pad(LEFT_W);
         }
         fb_str("  ");
-        
         if(i<nhw) fb_str(hw[i]);
         fb_str("\r\n");
     }
@@ -629,6 +672,7 @@ static double now_sec(void){
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
     return ts.tv_sec+ts.tv_nsec*1e-9;
 }
+
 static void sleep_until(double target){
     double rem=target-now_sec(); if(rem<=0) return;
     struct timespec ts;
@@ -665,9 +709,8 @@ int main(void){
         build_scene(t);
         render_scene();
 
-        
         fb_fg(10,40,30);
-        for(int i=0;i<TW;i++) fb_str("\xe2\x94\x80"); 
+        for(int i=0;i<TW;i++) fb_str("\xe2\x94\x80");
         fb_R(); fb_str("\r\n\r\n");
 
         render_title(t);
@@ -675,11 +718,8 @@ int main(void){
         fb_str("\r\n");
         render_info_panel(t);
 
-        
-        
-        int used = SCENE_H + 1  + 1  + NTITLE + 1 + 1
-                 + 2 + 8;
-        for(int i=used; i<TH-1; i++){
+        int used=SCENE_H+2+NTITLE+1+1+2+10;
+        for(int i=used;i<TH-1;i++){
             for(int j=0;j<TW;j++) fb_char(' ');
             fb_str("\r\n");
         }
