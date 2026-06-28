@@ -198,6 +198,7 @@ static void detect_gpu(void) {
 static void detect_kernel(void) {
     read_file("/proc/sys/kernel/osrelease", _kernel, sizeof(_kernel));
     char *d = strchr(_kernel, '-'); if (d) *d='\0';
+    char *p = strchr(_kernel, '+'); if (p) *p='\0';
 }
 
 static void detect_packages(void) {
@@ -529,7 +530,8 @@ static void fb_tempcol(int temp){
 
 static void fb_hw_label(const char *label){
     fb_fg(15,80,60);
-    fb_printf("%-*s", LABEL_W, label);
+    fb_str(label);
+    fb_pad(LABEL_W - visw(label));
     fb_fg(30,60,45); fb_str(" | "); fb_R();
 }
 
