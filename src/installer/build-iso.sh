@@ -107,9 +107,33 @@ echo "==> Setting up BorealOS artwork..."
 mkdir -p "$WORK/squashfs-root/usr/share/boreal-artwork"
 # background_main.png is the primary wallpaper for installed system + live XFCE session
 WP_MAIN="${WALLPAPER_MAIN:-$WALLPAPER_DEFAULT}"
-cp "$WP_MAIN"         "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
+cp "$WP_MAIN"           "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
-cp "$WALLPAPER_ALT"   "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-alt.png"
+cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-alt.png"
+
+# Replace the xfdesktop default backdrop so our wallpaper shows immediately
+# on first boot before xfconf-query has a chance to run
+mkdir -p "$WORK/squashfs-root/usr/share/xfce4/backdrops"
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/xfce4/backdrops/BorealOS.png"
+# Remove all existing default backdrops so xfdesktop picks ours
+find "$WORK/squashfs-root/usr/share/xfce4/backdrops"     -not -name "BorealOS.png" -type f -delete 2>/dev/null || true
+# Set it as the xfdesktop default via the defaults config
+mkdir -p "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
+cat > "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" <<'SYSDESKTOP'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="last-image" type="string" value="/usr/share/xfce4/backdrops/BorealOS.png"/>
+          <property name="image-style" type="int" value="5"/>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>
+SYSDESKTOP
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
 cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
 
@@ -316,10 +340,22 @@ xfce_copy_to "$LIVE_ROOT"
 ok "XFCE rice applied to live ISO root home."
 
 echo "==> Applying BorealOS XFCE branding..."
-# Copy logo to a standard icon path so the panel can reference it
+# Copy logo to pixmaps
 mkdir -p "$WORK/squashfs-root/usr/share/pixmaps"
 cp "$LOGO" "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo.png"
 convert "$LOGO" -resize 24x24 -background none     "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-24.png" 2>/dev/null || true
+convert "$LOGO" -resize 48x48 -background none     "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-48.png" 2>/dev/null || true
+
+# Replace the xfce4 logo used by the apps-menu panel button with our logo.
+# xfce4-panel's applicationsmenu plugin uses "org.xfce.panel" or "xfce4-logo" icon.
+# We overwrite those in hicolor so our logo appears without any xfconf needed.
+for size in 16 24 32 48 64 96 128; do
+    dir="$WORK/squashfs-root/usr/share/icons/hicolor/${size}x${size}/apps"
+    mkdir -p "$dir"
+    convert "$LOGO" -resize ${size}x${size} -background none         "$dir/xfce4-logo.png" 2>/dev/null || true
+    cp "$dir/xfce4-logo.png" "$dir/org.xfce.panel.png" 2>/dev/null || true
+    cp "$dir/xfce4-logo.png" "$dir/xfce-logo.png" 2>/dev/null || true
+done
 
 # Write a xfconf xsettings channel to set GTK theme and icon theme
 mkdir -p "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml"
@@ -380,7 +416,8 @@ cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desk
 mkdir -p "$WORK/squashfs-root/root/Desktop"
 
 # Write desktop files
-cat > "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" <<'INSTDESK'
+# Graphical installer — named "1-" so it sorts above TTY Install
+cat > "$WORK/squashfs-root/root/Desktop/1-Install BorealOS.desktop" <<'INSTDESK'
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -392,14 +429,16 @@ Terminal=false
 Categories=System;
 INSTDESK
 
-cat > "$WORK/squashfs-root/root/Desktop/TTY Install.desktop" <<'TTYDESK'
+# TTY installer — named "2-" so it sorts below graphical
+# Exec uses a terminal finder script so kitty/xfce4-terminal/xterm all work
+cat > "$WORK/squashfs-root/root/Desktop/2-TTY Install.desktop" <<'TTYDESK'
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=TTY Install
 Comment=Launch the BorealOS terminal installer
-Exec=kitty --config /root/.config/kitty/kitty.conf bash -c "/usr/local/bin/boreal-tty-install; bash"
-Icon=/usr/share/pixmaps/boreal-logo.png
+Exec=/usr/local/bin/boreal-open-terminal /usr/local/bin/boreal-tty-install
+Icon=utilities-terminal
 Terminal=false
 Categories=System;
 TTYDESK
@@ -426,20 +465,38 @@ X-GNOME-Autostart-enabled=true
 StartupNotify=false
 AUTOSTART
 
-# TTY install wrapper script — runs installer.sh in terminal mode
+# TTY install wrapper — runs the terminal installer
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
 #!/bin/bash
-# Launched from the desktop TTY Install shortcut via kitty
-# Runs the borealOS terminal installer
 if [ -f /opt/borealOS/installer.sh ]; then
     bash /opt/borealOS/installer.sh
 else
-    echo "ERROR: installer.sh not found at /opt/borealOS/installer.sh"
-    echo "Press Enter to exit."
+    echo "ERROR: installer.sh not found"
     read -r
 fi
 TTYINSTALL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-tty-install"
+
+# Terminal launcher: tries kitty (with rice config) → xfce4-terminal → xterm
+# This is what the TTY Install desktop shortcut calls
+cat > "$WORK/squashfs-root/usr/local/bin/boreal-open-terminal" <<'TERMLAUNCH'
+#!/bin/bash
+# Usage: boreal-open-terminal <command>
+CMD="$1"
+KITTY_CONF=/root/.config/kitty/kitty.conf
+if command -v kitty >/dev/null 2>&1; then
+    if [ -f "$KITTY_CONF" ]; then
+        kitty --config "$KITTY_CONF" bash -c "$CMD; bash"
+    else
+        kitty bash -c "$CMD; bash"
+    fi
+elif command -v xfce4-terminal >/dev/null 2>&1; then
+    xfce4-terminal --hold -e "bash -c '$CMD; bash'"
+else
+    xterm -hold -e "bash -c '$CMD; bash'"
+fi
+TERMLAUNCH
+chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-open-terminal"
 
 # Copy kitty rice configs to live root so the TTY install terminal looks riced
 if [ -d "$RICE_DIR/kitty" ]; then
@@ -1070,15 +1127,20 @@ mkdir -p "$WORK/squashfs-root/etc/calamares"
 #   3. Writes settings.conf and unpackfs.conf accordingly
 #   4. Launches the real calamares binary
 
-# Find the real calamares binary and move it
+# Find and rename the real calamares binary
 CHROOT_CAL="$WORK/squashfs-root"
-for cal_bin in "$CHROOT_CAL/usr/bin/calamares" "$CHROOT_CAL/usr/sbin/calamares"; do
+CAL_FOUND=0
+for cal_bin in "$CHROOT_CAL/usr/bin/calamares" "$CHROOT_CAL/usr/sbin/calamares"                "$CHROOT_CAL/usr/local/bin/calamares"; do
     if [ -f "$cal_bin" ] && [ ! -L "$cal_bin" ]; then
         mv "$cal_bin" "${cal_bin}-real"
-        echo "  moved real calamares to ${cal_bin}-real"
+        echo "  calamares found and moved: ${cal_bin}-real"
+        CAL_FOUND=1
         break
     fi
 done
+if [ "$CAL_FOUND" -eq 0 ]; then
+    echo "  WARN: calamares binary not found in squashfs — wrapper will report error at runtime"
+fi
 
 cat > "$WORK/squashfs-root/usr/local/bin/calamares" << 'CALWRAPPER'
 #!/bin/bash
@@ -1090,10 +1152,22 @@ mkdir -p "$CONF_DIR/modules"
 
 # Find the real calamares binary
 CAL_REAL=""
-for b in /usr/bin/calamares-real /usr/sbin/calamares-real; do
+for b in /usr/bin/calamares-real /usr/sbin/calamares-real          /usr/local/bin/calamares-real /usr/bin/calamares.real; do
     [ -x "$b" ] && CAL_REAL="$b" && break
 done
-[ -z "$CAL_REAL" ] && { echo "ERROR: calamares-real not found"; exit 1; }
+if [ -z "$CAL_REAL" ]; then
+    # calamares might not be installed — show a clear error in a terminal window
+    if command -v xfce4-terminal >/dev/null 2>&1; then
+        xfce4-terminal --hold -e "bash -c 'echo ERROR: Calamares not installed in this ISO.; echo Rebuild with a Debian-based rootfs that has calamares in its repos.; read'"
+    elif command -v xterm >/dev/null 2>&1; then
+        xterm -hold -e "bash -c 'echo ERROR: Calamares not installed.; read'"
+    fi
+    exit 1
+fi
+# Calamares needs to run as root
+if [ "$(id -u)" -ne 0 ]; then
+    exec pkexec "$0" "$@"
+fi
 
 # Detect squashfs source path
 SQUASHFS=""
@@ -1308,6 +1382,8 @@ find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/nul
 find "$WORK/squashfs-root/usr/share/icons" -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/boot/grub" -name "*debian*" -delete 2>/dev/null || true
 
+# Remove plymouth entirely from the live env — not used, and its initramfs hook
+# adds boot delay and can conflict with simple console boot.
 find "$WORK/squashfs-root/usr/share/plymouth"      "$WORK/squashfs-root/etc/plymouth"      -delete 2>/dev/null || true
 rm -f "$WORK/squashfs-root/usr/share/initramfs-tools/hooks/plymouth"       "$WORK/squashfs-root/etc/initramfs-tools/conf.d/plymouth" 2>/dev/null || true
 
