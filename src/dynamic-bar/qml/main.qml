@@ -1,86 +1,128 @@
 import QtQuick
 import QtQuick.Window
+import Quickshell
+import Quickshell.Wayland
 import org.borealos.components 1.0
 
-Window {
-    id: root
-    visible: true
-    width: 1920
-    height: 60
-    color: "transparent"
-    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+ShellRoot {
+    PanelWindow {
+        id: root
+        visible: true
+        
+        anchors {
+            top: true
+            left: true
+            right: true
+        }
+        
+        height: 60
+        color: "transparent"
+        
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "BorealDynamicBar"
 
-    SystemStatus {
-        id: sysStatus
-    }
+        SystemStatus {
+            id: sysStatus
+        }
 
-    // Main Top Bar Background
-    Rectangle {
-        id: topBar
-        anchors.top: parent.top
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: parent.width * 0.95
-        height: 40
-        radius: 12
-        color: "#AA000000"
-
-        // Left Side: App Indicators
-
-
-        // Right Side: The Dynamic Island / Morphing Status
+        // Main Top Bar
         Rectangle {
-            id: dynamicIsland
+            id: topBar
+            anchors.top: parent.top
+            anchors.left: parent.left
             anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 15
+            height: 40
+            radius: 12
+            color: "#AA000000"
 
-            width: state === "expanded" ? 250 : 150
-            height: state === "expanded" ? 200 : 30
-            radius: 8
-            color: "#33FFFFFF"
+            // Task Bar (Left/Center Side)
+            Row {
+                id: taskBar
+                anchors.left: parent.left
+                anchors.leftMargin: 15
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
 
-            states: [
-                State { name: "collapsed" },
-                State { name: "expanded" }
-            ]
-            state: "collapsed"
+                Repeater {
+                    model: ToplevelManager.toplevels
+                    delegate: Rectangle {
+                        width: 120
+                        height: 30
+                        radius: 6
+                        color: modelData.activated ? "#66FFFFFF" : "#33FFFFFF"
 
-            transitions: Transition {
-                NumberAnimation { properties: "width,height"; duration: 200; easing.type: Easing.InOutQuad }
-            }
+                        Row {
+                            anchors.fill: parent
+                            anchors.margins: 5
+                            spacing: 5
+                            
+                            Text {
+                                text: modelData.title
+                                color: "white"
+                                width: parent.width - 10
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
 
-            MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                    dynamicIsland.state = (dynamicIsland.state === "collapsed") ? "expanded" : "collapsed"
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: modelData.activate()
+                        }
+                    }
                 }
             }
 
+            // Right Side
+            Rectangle {
+                id: dynamicIsland
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 15
 
-            Text {
-                anchors.top: parent.top
-                anchors.topMargin: 6
-                anchors.horizontalCenter: parent.horizontalCenter
-                color: "white"
+                width: state === "expanded" ? 250 : 150
+                height: state === "expanded" ? 200 : 30
+                radius: 8
+                color: "#33FFFFFF"
 
-                // Uses a JavaScript ternary expression to evaluate which string to display
-                // based on whether the island is expanded or collapsed.
-                text: {
-                    if (dynamicIsland.state === "expanded") {
-                        // Check if the battery read failed (returns -1)
-                        if (sysStatus.batteryLevel === -1) {
-                            return "AC Power\n" + sysStatus.currentTime
-                        } else {
-                            return "Battery: " + sysStatus.batteryLevel + "%\n" + sysStatus.currentTime
-                        }
-                    } else {
-                        // When collapsed, just show the current time string from C++
-                        return sysStatus.currentTime
+                states: [
+                    State { name: "collapsed" },
+                    State { name: "expanded" }
+                ]
+                state: "collapsed"
+
+                transitions: Transition {
+                    NumberAnimation { properties: "width,height"; duration: 200; easing.type: Easing.InOutQuad }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        dynamicIsland.state = (dynamicIsland.state === "collapsed") ? "expanded" : "collapsed"
                     }
                 }
 
-                // Centers multi-line text nicely when expanded
-                horizontalAlignment: Text.AlignHCenter
+                Text {
+                    anchors.top: parent.top
+                    anchors.topMargin: 6
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    color: "white"
+
+                    text: {
+                        if (dynamicIsland.state === "expanded") {
+                            if (sysStatus.batteryLevel === -1) {
+                                return "AC Power\n" + sysStatus.currentTime
+                            } else {
+                                return "Battery: " + sysStatus.batteryLevel + "%\n" + sysStatus.currentTime
+                            }
+                        } else {
+                            return sysStatus.currentTime
+                        }
+                    }
+
+                    horizontalAlignment: Text.AlignHCenter
+                }
             }
         }
     }
