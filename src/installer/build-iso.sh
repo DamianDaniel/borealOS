@@ -380,7 +380,7 @@ XFDESKTOP
 # Desktop shortcuts
 mkdir -p "$WORK/squashfs-root/root/Desktop"
 
-# 1. Graphical installer shortcut
+# Write desktop files
 cat > "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" <<'INSTDESK'
 [Desktop Entry]
 Version=1.0
@@ -392,35 +392,7 @@ Icon=/usr/share/pixmaps/boreal-logo.png
 Terminal=false
 Categories=System;
 INSTDESK
-chmod +x "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop"
-# Mark desktop files as trusted so XFCE shows them as launchers, not text files
-mkdir -p "$WORK/squashfs-root/root/.local/share/xfce4/helpers"
-# Set the gio trusted attribute — XFCE4 desktop checks this
-for df in "$WORK/squashfs-root/root/Desktop/"*.desktop; do
-    # Write a .xdg-trusted marker (used by thunar/xfdesktop)
-    chmod +x "$df"
-done
-# Also set the xfdesktop trust metadata via a startup script
-cat >> "$WORK/squashfs-root/root/.xinitrc.d/00-trust-desktop.sh" <<'TRUSTSH' 2>/dev/null || true
-#!/bin/bash
-# Trust all desktop files on the Desktop so XFCE shows them as launchers
-for df in ~/Desktop/*.desktop; do
-    [ -f "$df" ] && gio set "$df" metadata::trusted true 2>/dev/null || true
-done
-TRUSTSH
-# Simpler: run gio trust at XFCE session start via autostart
-mkdir -p "$WORK/squashfs-root/root/.config/autostart"
-cat > "$WORK/squashfs-root/root/.config/autostart/trust-desktop.desktop" <<'AUTOSTART'
-[Desktop Entry]
-Type=Application
-Name=Trust Desktop Files
-Exec=bash -c "sleep 3; for f in ~/Desktop/*.desktop; do gio set "$f" metadata::trusted true 2>/dev/null; done"
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-AUTOSTART
 
-# 2. TTY installer shortcut — opens kitty running the terminal installer
 cat > "$WORK/squashfs-root/root/Desktop/TTY Install.desktop" <<'TTYDESK'
 [Desktop Entry]
 Version=1.0
@@ -432,7 +404,28 @@ Icon=/usr/share/pixmaps/boreal-logo.png
 Terminal=false
 Categories=System;
 TTYDESK
-chmod +x "$WORK/squashfs-root/root/Desktop/TTY Install.desktop"
+
+chmod +x "$WORK/squashfs-root/root/Desktop/"*.desktop
+
+# Trust desktop files at build time using extended attributes so XFCE
+# shows them as launchers immediately without any runtime gio calls.
+# This writes the same metadata that gio/gvfs would write at runtime.
+for df in "$WORK/squashfs-root/root/Desktop/"*.desktop; do
+    attr -s "metadata::trusted" -V "true" "$df" 2>/dev/null ||     setfattr -n "user.metadata::trusted" -v "true" "$df" 2>/dev/null || true
+done
+
+# Fallback: autostart script that trusts them at first login (runs before xfdesktop redraws)
+mkdir -p "$WORK/squashfs-root/root/.config/autostart"
+cat > "$WORK/squashfs-root/root/.config/autostart/boreal-trust-desktop.desktop" <<'AUTOSTART'
+[Desktop Entry]
+Type=Application
+Name=BorealOS Trust Desktop
+Exec=bash -c "for f in $HOME/Desktop/*.desktop; do gio set "$f" metadata::trusted true; done; xfdesktop --reload"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+AUTOSTART
 
 # TTY install wrapper script — runs installer.sh in terminal mode
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
@@ -466,29 +459,38 @@ SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchanne
 # Remove power-manager-plugin from panel XML using grep/awk — no Python quoting issues.
 # Strategy: skip any line containing power-manager-plugin AND the next closing </property>
 # if it immediately follows (for multi-line blocks).
+# Remove power-manager-plugin from panel XML entirely using awk.
+# awk handles multi-line blocks and the orphaned array entry in one pass.
 patch_panel_xml_simple() {
     local f="$1"
     [ -f "$f" ] || return 0
-
-    # Collect plugin-N IDs used by power-manager-plugin before removing them
-    local bad_ids
-    bad_ids=$(grep -oP '(?<=name="plugin-)\d+(?=" type="string" value="power-manager-plugin")' "$f" 2>/dev/null || true)
-
-    # Remove power-manager-plugin property lines (both self-closing and opening tag lines)
-    grep -v 'value="power-manager-plugin"' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-
-    # Remove orphaned plugin-id array entries for the removed plugins
-    # so XFCE doesn't try to load a "(null)" plugin
-    for pid in $bad_ids; do
-        grep -v "type="int" value="${pid}"" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-    done
-
-    echo "  patched: $f (removed IDs: ${bad_ids:-none})"
+    awk '
+        # When we see power-manager-plugin, record its plugin number and skip the line
+        /value="power-manager-plugin"/ {
+            match($0, /name="plugin-([0-9]+)"/, arr)
+            bad[arr[1]] = 1
+            skip = 1
+            next
+        }
+        # Skip the closing tag of the power-manager block
+        skip && /<\/property>/ { skip = 0; next }
+        # Skip the plugin-id array entry for any removed plugin
+        {
+            found = 0
+            for (id in bad) {
+                if ($0 ~ "value=\"" id "\"" && $0 ~ "type=\"int\"") {
+                    found = 1; break
+                }
+            }
+            if (!found) print
+        }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    echo "  patched: $f"
 }
 
 patch_panel_xml_simple "$PANEL_XML"
 patch_panel_xml_simple "$SKEL_PANEL_XML"
-ok "Panel XML patched (power-manager removed, orphaned IDs cleaned)"
+ok "Panel XML patched (power-manager removed)"
 
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"
@@ -653,17 +655,28 @@ export DISPLAY=:0
 # D-Bus session
 eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
 
-# Wallpaper after desktop settles
-(sleep 8
+# Set wallpaper and trust desktop icons after XFCE is fully up
+(sleep 6
  WP=/usr/share/boreal-artwork/wallpaper-default.png
  [ -f "$WP" ] || WP=/usr/share/pixmaps/xfce4-logo.png
+ # Iterate all known monitor connector names
  for screen in screen0; do
-   for mon in VGA-1 VGA1 HDMI-1 HDMI1 Virtual-1 Virtual1 DP-1 DP1                eDP-1 eDP1 DVI-1 DVI1 monitor0; do
+   for mon in Virtual-1 Virtual1 VGA-1 VGA-0 VGA1 HDMI-1 HDMI1               DP-1 DP1 eDP-1 eDP1 DVI-I-1 DVI-D-1 monitor0; do
      xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/last-image" -s "$WP" 2>/dev/null || true
      xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/image-style" -t int -s 5 2>/dev/null || true
+     xfconf-query -c xfce4-desktop        -p "/backdrop/$screen/$mon/workspace0/color-style" -t int -s 0 2>/dev/null || true
    done
  done
  xfdesktop --reload 2>/dev/null || true
+
+ # Trust desktop shortcuts so they show as launchers not text files
+ for f in "$HOME/Desktop/"*.desktop; do
+   gio set "$f" metadata::trusted true 2>/dev/null || true
+ done
+ xfdesktop --reload 2>/dev/null || true
+
+ # Set panel app-menu button icon to BorealOS logo
+ xfconf-query -c xfce4-panel    -p "/plugins/plugin-2/button-icon"    -s "/usr/share/pixmaps/boreal-logo-24.png" 2>/dev/null || true
 ) &
 
 # Launch Calamares after desktop is ready.
@@ -819,7 +832,6 @@ done
 apt-get install -y --no-install-recommends \
     xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
     xfce4-session xfce4-panel xfce4-settings \
-    xfce4-power-manager \
     || echo "WARN: XFCE installer host install incomplete"
 
 # Install the user's chosen DE (also --no-install-recommends to stay safe)
@@ -1078,6 +1090,7 @@ sequence:
     - keyboard
     - users
     - bootloader
+    - shellprocess
   - show:
     - finished
 branding: boreal
@@ -1085,11 +1098,100 @@ prompt-install: true
 dont-chroot: false
 CALSETTINGS
 
-# Disable the unmount module — not available in this build
 mkdir -p "$WORK/squashfs-root/etc/calamares/modules"
+
+# ── Calamares module configs ───────────────────────────────────────────────────
+
+# unpackfs: copy the live squashfs to the target
+cat > "$WORK/squashfs-root/etc/calamares/modules/unpackfs.conf" <<'UNPACKFS'
+---
+unpack:
+  - source: /run/live/medium/live/filesystem.squashfs
+    sourcefs: squashfs
+    destination: ""
+UNPACKFS
+
+# locale
+cat > "$WORK/squashfs-root/etc/calamares/modules/locale.conf" <<'LOCALECONF'
+---
+region: "America"
+zone: "New_York"
+localeGenPath: "/etc/locale.gen"
+geoipStyle: "json"
+LOCALECONF
+
+# users
+cat > "$WORK/squashfs-root/etc/calamares/modules/users.conf" <<'USERSCONF'
+---
+userShell: /bin/bash
+autologinGroup: autologin
+sudoersGroup: sudo
+setRootPassword: false
+doAutologin: false
+doAdminAutologin: false
+passwordRequirements:
+  minLength: 6
+  maxLength: -1
+allowWeakPasswords: false
+allowWeakPasswordsDefault: false
+USERSCONF
+
+# bootloader
+cat > "$WORK/squashfs-root/etc/calamares/modules/bootloader.conf" <<'BOOTCONF'
+---
+efiBootloaderId: "BorealOS"
+installEFIFallback: true
+grubInstall: "grub-install"
+grubMkconfig: "grub-mkconfig"
+grubCfg: "/boot/grub/grub.cfg"
+grubProbe: "grub-probe"
+efiBootLoader: "grub"
+kernel: "/vmlinuz"
+img: "/initrd.img"
+kernelLine: ", with Linux"
+fallbackKernelLine: ", with Linux (fallback)"
+timeout: 5
+grubTheme: "/boot/grub/themes/boreal/theme.txt"
+BOOTCONF
+
+# fstab
+cat > "$WORK/squashfs-root/etc/calamares/modules/fstab.conf" <<'FSTABCONF'
+---
+mountOptions:
+  default: "defaults"
+  btrfs: "defaults,compress=zstd:1"
+  efi: "umask=0077"
+  swap: "sw"
+FSTABCONF
+
+# partition
+cat > "$WORK/squashfs-root/etc/calamares/modules/partition.conf" <<'PARTCONF'
+---
+efi:
+  mountPoint: "/boot/efi"
+  recommendedSize: 300MiB
+  minimumSize: 100MiB
+userSwapChoices:
+  - none
+  - small
+  - suspend
+  - file
+initialSwapChoice: none
+PARTCONF
+
+# shellprocess: post-install cleanup
+cat > "$WORK/squashfs-root/etc/calamares/modules/shellprocess.conf" <<'SHELLCONF'
+---
+dontChroot: false
+timeout: 30
+script:
+  - command: "bash -c "rm -rf /opt/borealOS/gui-debs /opt/borealOS/debs 2>/dev/null; exit 0""
+    timeout: 10
+SHELLCONF
+
+# Stub out unmount — module not available in this build
 cat > "$WORK/squashfs-root/etc/calamares/modules/unmount.conf" <<'UNMOUNTCONF'
 ---
-# Module disabled
 UNMOUNTCONF
 
 echo "==> Finalizing system..."
