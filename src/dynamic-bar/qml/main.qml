@@ -1,94 +1,89 @@
 import QtQuick
 import QtQuick.Window
+import Quickshell
+import Quickshell.Wayland
 import org.borealos.components 1.0
 
-Window {
-    id: root
-    visible: true
-    x: 0
-    y: 0
-    width: Screen.width
-    height: 60
-    color: "transparent"
-    title: "BorealDynamicBar"
-    flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+ShellRoot {
+    PanelWindow {
+        id: root
+        visible: true
+        
+        anchors {
+            top: true
+            left: true
+            right: true
+        }
+        
+        height: 60
+        color: "transparent"
+        
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "BorealDynamicBar"
 
-    Component.onCompleted: {
-        root.x = 0
-        root.y = 0
-    }
+        SystemStatus {
+            id: sysStatus
+        }
 
-    SystemStatus {
-        id: sysStatus
-    }
-
-    // Main Top Bar
-    Rectangle {
-        id: topBar
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 40
-        radius: 12
-        color: "#AA000000"
-
-
-
-
-        // Right Side
+        // Main Top Bar
         Rectangle {
-            id: dynamicIsland
+            id: topBar
+            anchors.top: parent.top
+            anchors.left: parent.left
             anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 15
+            height: 40
+            radius: 12
+            color: "#AA000000"
 
-            width: state === "expanded" ? 250 : 150
-            height: state === "expanded" ? 200 : 30
-            radius: 8
-            color: "#33FFFFFF"
+            // Right Side
+            Rectangle {
+                id: dynamicIsland
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 15
 
-            states: [
-                State { name: "collapsed" },
-                State { name: "expanded" }
-            ]
-            state: "collapsed"
+                width: state === "expanded" ? 250 : 150
+                height: state === "expanded" ? 200 : 30
+                radius: 8
+                color: "#33FFFFFF"
 
-            transitions: Transition {
-                NumberAnimation { properties: "width,height"; duration: 200; easing.type: Easing.InOutQuad }
-            }
+                states: [
+                    State { name: "collapsed" },
+                    State { name: "expanded" }
+                ]
+                state: "collapsed"
 
-            MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                    dynamicIsland.state = (dynamicIsland.state === "collapsed") ? "expanded" : "collapsed"
+                transitions: Transition {
+                    NumberAnimation { properties: "width,height"; duration: 200; easing.type: Easing.InOutQuad }
                 }
-            }
 
-
-            Text {
-                anchors.top: parent.top
-                anchors.topMargin: 6
-                anchors.horizontalCenter: parent.horizontalCenter
-                color: "white"
-
-                // Uses a JavaScript ternary expression to evaluate which string to display
-                // based on whether the island is expanded or collapsed.
-                text: {
-                    if (dynamicIsland.state === "expanded") {
-                        // Check if the battery read failed (returns -1)
-                        if (sysStatus.batteryLevel === -1) {
-                            return "AC Power\n" + sysStatus.currentTime
-                        } else {
-                            return "Battery: " + sysStatus.batteryLevel + "%\n" + sysStatus.currentTime
-                        }
-                    } else {
-                        // When collapsed, just show the current time string from C++
-                        return sysStatus.currentTime
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        dynamicIsland.state = (dynamicIsland.state === "collapsed") ? "expanded" : "collapsed"
                     }
                 }
 
-                // Centers multi-line text nicely when expanded
-                horizontalAlignment: Text.AlignHCenter
+                Text {
+                    anchors.top: parent.top
+                    anchors.topMargin: 6
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    color: "white"
+
+                    text: {
+                        if (dynamicIsland.state === "expanded") {
+                            if (sysStatus.batteryLevel === -1) {
+                                return "AC Power\n" + sysStatus.currentTime
+                            } else {
+                                return "Battery: " + sysStatus.batteryLevel + "%\n" + sysStatus.currentTime
+                            }
+                        } else {
+                            return sysStatus.currentTime
+                        }
+                    }
+
+                    horizontalAlignment: Text.AlignHCenter
+                }
             }
         }
     }

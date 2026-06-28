@@ -1,0 +1,6 @@
+find_package(Qt6 REQUIRED COMPONENTS WaylandClient)
+if(Qt6WaylandClient_FOUND)
+    message("WAYLAND_CLIENT_FOUND")
+else()
+    message("WAYLAND_CLIENT_NOT_FOUND")
+endif()
