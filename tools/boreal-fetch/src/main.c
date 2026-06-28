@@ -346,7 +346,7 @@ static void update_gpu(void) {
 static void update_uptime(void) {
     char buf[64];
     if (!read_file("/proc/uptime", buf, sizeof(buf))) return;
-    long secs = (long)atof(buf);
+    long secs = strtol(buf, NULL, 10);
     long d = secs/86400, h = (secs%86400)/3600, m = (secs%3600)/60;
     pthread_mutex_lock(&stats_lock);
     if (d > 0)      snprintf(_uptime, sizeof(_uptime), "%ldd %ldh %ldm", d, h, m);
@@ -506,26 +506,12 @@ static void render_tagline(double t){
 }
 
 #define LEFT_W  52
-#define BAR_W   12
 #define LABEL_W  8
-#define VALUE_W 20
 
 static void fb_valcol(double pct){
     if(pct>80)      fb_fg(220,80,60);
     else if(pct>50) fb_fg(220,180,50);
     else            fb_fg(50,200,130);
-}
-
-static void fb_bar(double pct){
-    int filled=(int)round(pct/100.0*BAR_W);
-    for(int i=0;i<BAR_W;i++)
-        fb_str(i<filled?"\xe2\x96\x88":"\xe2\x96\x91");
-}
-
-static void fb_tempcol(int temp){
-    if(temp>80)      fb_fg(220,80,60);
-    else if(temp>60) fb_fg(220,180,50);
-    else             fb_fg(50,200,130);
 }
 
 static void fb_hw_label(const char *label){
@@ -535,50 +521,28 @@ static void fb_hw_label(const char *label){
     fb_fg(30,60,45); fb_str(" | "); fb_R();
 }
 
-static void fb_hw_row(const char *label, const char *value,
-                      int has_bar, double pct)
-{
-    fb_hw_label(label);
-    int vw = visw(value);
-    if(vw > VALUE_W){
-        int vis=0; const char *p=value; int esc=0;
-        while(*p && vis<VALUE_W){
-            if(*p=='\033'){esc=1;fb_char(*p++);continue;}
-            if(esc){fb_char(*p); if(*p=='m')esc=0; p++;continue;}
-            if((*p&0xC0)==0x80){fb_char(*p++);continue;}
-            fb_char(*p++); vis++;
-        }
-        fb_R(); fb_pad(0);
-    } else {
-        fb_str(value); fb_R();
-        fb_pad(VALUE_W - vw);
-    }
-    fb_str("  ");
-    if(has_bar){ fb_valcol(pct); fb_bar(pct); fb_R(); }
-}
-
 static void fb_hw_model(const char *label, const char *value){
-    fb_hw_row(label, value, 0, 0);
+    fb_hw_label(label);
+    fb_fg(140,200,170); fb_str(value); fb_R();
 }
 
 static void fb_hw_pct(const char *label, double pct){
-    char tmp[16]; snprintf(tmp,sizeof(tmp),"%.1f%%",pct);
-    char vbuf[64]; int n=0;
-    if(pct>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
-    else if(pct>50) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
-    else            n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
-    snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
-    fb_hw_row(label, vbuf, 1, pct);
+    fb_hw_label(label);
+    fb_valcol(pct);
+    fb_printf("%.1f%%", pct);
+    fb_R();
 }
 
 static void fb_hw_ram(const char *label, long used, long total, double pct){
-    char tmp[32]; snprintf(tmp,sizeof(tmp),"%ld/%ld MB",used,total);
-    char vbuf[64]; int n=0;
-    if(pct>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
-    else if(pct>50) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
-    else            n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
-    snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
-    fb_hw_row(label, vbuf, 1, pct);
+    fb_hw_label(label);
+    fb_valcol(pct);
+    fb_printf("%ld/%ld MB", used, total);
+    fb_R();
+}
+
+static void fb_hw_plain(const char *label, const char *value, int r, int g, int b){
+    fb_hw_label(label);
+    fb_fg(r,g,b); fb_str(value); fb_R();
 }
 
 static void render_info_panel(double t){
@@ -630,12 +594,10 @@ static void render_info_panel(double t){
     if(ctemp > 0){
         CAPTURE({
             char tmp[16]; snprintf(tmp,sizeof(tmp),"%d\xc2\xb0""C",ctemp);
-            char vbuf[64]; int n=0;
-            if(ctemp>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
-            else if(ctemp>60) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
-            else              n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
-            snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
-            fb_hw_row("CPU \xc2\xb0""C", vbuf, 0, 0);
+            fb_hw_plain("CPU \xc2\xb0""C", tmp,
+                ctemp>80?220:ctemp>60?220:50,
+                ctemp>80?80:ctemp>60?180:200,
+                ctemp>80?60:ctemp>60?50:130);
         });
     }
 
@@ -647,34 +609,74 @@ static void render_info_panel(double t){
             fb_fg(80,80,80); fb_str("N/A"); fb_R();
         });
     }
-    CAPTURE({
-        fb_hw_label("Uptime");
-        fb_fg(100,180,200); fb_str(uptmp); fb_R();
-    });
-    CAPTURE({
-        fb_hw_label("Kernel");
-        fb_fg(100,180,200); fb_str(_kernel); fb_R();
-    });
+    CAPTURE(fb_hw_plain("Uptime", uptmp, 100,180,200));
+    CAPTURE(fb_hw_plain("Kernel", _kernel, 100,180,200));
+
+    /* value indent for continuation lines: 2(margin)+10(label)+" | " */
+#define VAL_INDENT 15
 
     int nrows=nd>nhw?nd:nhw;
+    int hw_i=0;
     for(int i=0;i<nrows;i++){
+        /* left column: may produce multiple lines for long values */
+        int extra_lines = 0;
         fb_str("  ");
         if(i<nd){
             double wv=sin(t*.35+i*1.0)*.5+.5;
             int lg=(int)(70+wv*70), vg=(int)(160+wv*70);
-            char lbuf[256];
-            snprintf(lbuf,sizeof(lbuf),
-                "\033[38;2;15;%d;80m%-10s\033[38;2;30;60;45m | \033[38;2;40;%d;140m%s\033[0m",
-                lg, drows[i].label, vg, drows[i].value);
-            int lv=visw(lbuf);
-            fb_str(lbuf);
-            fb_pad(LEFT_W-lv);
+
+            /* build label+sep prefix */
+            char prefix[64];
+            snprintf(prefix,sizeof(prefix),
+                "\033[38;2;15;%d;80m%-10s\033[38;2;30;60;45m | \033[0m",
+                lg, drows[i].label);
+
+            /* available width for value in left column */
+            int avail = LEFT_W - VAL_INDENT;
+            const char *val = drows[i].value;
+            int vlen = (int)strlen(val);
+
+            fb_str(prefix);
+
+            if(vlen <= avail){
+                fb_fg(40,vg,140); fb_str(val); fb_R();
+                fb_pad(LEFT_W - VAL_INDENT - vlen);
+            } else {
+                /* wrap: first chunk */
+                fb_fg(40,vg,140);
+                int written = 0;
+                while(written < vlen){
+                    int chunk = vlen - written;
+                    if(chunk > avail) chunk = avail;
+                    if(chunk < vlen - written){
+                        int bp = chunk;
+                        while(bp > 0 && val[written+bp] != ' ' && val[written+bp] != '+') bp--;
+                        if(bp > 0) chunk = bp;
+                    }
+                    memcpy(fbuf+fbpos, val+written, chunk); fbpos += chunk;
+                    fb_R();
+                    written += chunk;
+                    while(written < vlen && val[written]==' ') written++;
+                    if(written < vlen){
+                        fb_str("\r\n");
+                        fb_pad(2 + VAL_INDENT - 2);
+                        fb_fg(40,vg,140);
+                        extra_lines++;
+                    }
+                }
+                fb_R();
+            }
         } else {
             fb_pad(LEFT_W);
         }
         fb_str("  ");
-        if(i<nhw) fb_str(hw[i]);
+        if(hw_i<nhw) fb_str(hw[hw_i++]);
         fb_str("\r\n");
+        /* blank right column on continuation lines */
+        for(int e=0;e<extra_lines;e++){
+            fb_pad(LEFT_W+2+2); fb_str("\r\n");
+        }
+        i += 0; /* nd already advanced by loop */
     }
 }
 

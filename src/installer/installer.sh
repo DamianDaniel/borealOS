@@ -756,7 +756,7 @@ main() {
     mount_target
     rsync_system
     install_bundled_packages
-    write_fstab
+    write_fstab     
     write_network
     bind_mounts
     configure_system
