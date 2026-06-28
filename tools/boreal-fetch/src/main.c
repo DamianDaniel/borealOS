@@ -1,3 +1,7 @@
+/*  boreal-fetch  –  BorealOS system info fetcher
+    Build:  cmake -B build && cmake --build build
+    Run:    ./build/boreal-fetch
+*/
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +22,6 @@ static void hide_cursor(void) { fputs("\033[?25l", stdout); fflush(stdout); }
 static void show_cursor(void) { fputs("\033[?25h", stdout); fflush(stdout); }
 static void clear_screen(void){ fputs("\033[2J\033[H", stdout); fflush(stdout); }
 
-/* ── terminal size ────────────────────────────────────────────────────────── */
 static int TW = 80, TH = 24;
 static int prev_TW = 0, prev_TH = 0;
 
@@ -30,12 +33,10 @@ static void update_term_size(void) {
     }
 }
 
-/* ── signal handling ──────────────────────────────────────────────────────── */
 static volatile int running = 1;
 static void handle_sig(int s)    { (void)s; running = 0; }
 static void handle_winch(int s)  { (void)s; update_term_size(); }
 
-/* ── file / cmd helpers ───────────────────────────────────────────────────── */
 static int read_file(const char *path, char *buf, int sz) {
     FILE *f = fopen(path, "r");
     if (!f) { buf[0]='\0'; return 0; }
@@ -60,7 +61,6 @@ static int run_cmd(const char *cmd, char *buf, int sz) {
 
 static int file_exists(const char *path) { return access(path, F_OK) == 0; }
 
-/* ── system detection ─────────────────────────────────────────────────────── */
 static char _shell  [64] = "Unknown";
 static char _desktop[64] = "Unknown";
 static char _init   [64] = "Unknown";
@@ -125,7 +125,7 @@ static void detect_desktop(void) {
 }
 
 static void detect_init(void) {
-    /* 1. Check PID 1 comm */
+    
     char comm[64];
     if (read_file("/proc/1/comm", comm, sizeof(comm))) {
         if (strstr(comm,"systemd")) { strcpy(_init,"systemd"); return; }
@@ -135,17 +135,17 @@ static void detect_init(void) {
         if (strstr(comm,"dinit"))   { strcpy(_init,"dinit");   return; }
         if (strstr(comm,"sysvinit")){ strcpy(_init,"SysVinit");return; }
         if (strstr(comm,"init"))    {
-            /* could be several — check further */
+            
         }
     }
-    /* 2. Check well-known paths */
+    
     if (file_exists("/run/systemd/private"))       { strcpy(_init,"systemd");  return; }
     if (file_exists("/run/openrc"))                { strcpy(_init,"OpenRC");   return; }
     if (file_exists("/run/runit"))                 { strcpy(_init,"runit");    return; }
     if (file_exists("/run/s6"))                    { strcpy(_init,"s6");       return; }
     if (file_exists("/etc/dinit.d"))               { strcpy(_init,"dinit");    return; }
     if (file_exists("/sbin/openrc"))               { strcpy(_init,"OpenRC");   return; }
-    /* 3. Check systemctl / rc-status availability */
+    
     if (system("systemctl is-system-running >/dev/null 2>&1")==0)
         { strcpy(_init,"systemd"); return; }
     if (system("rc-status >/dev/null 2>&1")==0)
@@ -210,7 +210,6 @@ static void detect_kernel(void) {
     char *d = strchr(_kernel, '-'); if (d) *d='\0';
 }
 
-/* ── parallel gather ──────────────────────────────────────────────────────── */
 static void *thr_shell  (void*a){(void)a;detect_shell();  return NULL;}
 static void *thr_desktop(void*a){(void)a;detect_desktop();return NULL;}
 static void *thr_init   (void*a){(void)a;detect_init();   return NULL;}
@@ -230,7 +229,6 @@ static void gather_static(void) {
     for (int i=0;i<6;i++) pthread_timedjoin_np(t[i],NULL,&dl);
 }
 
-/* ── live stats ───────────────────────────────────────────────────────────── */
 static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
 static double cpu_pct=0, gpu_pct=-1;
 static long   ram_used=0, ram_total=0;
@@ -308,7 +306,6 @@ static void *stats_thread(void *a){
     return NULL;
 }
 
-/* ── frame buffer ─────────────────────────────────────────────────────────── */
 #define FBUF_SIZE (2*1024*1024)
 static char fbuf[FBUF_SIZE];
 static int  fbpos=0;
@@ -322,13 +319,12 @@ static void fb_flush(void)        { fwrite(fbuf,1,fbpos,stdout); fflush(stdout);
 static void fb_fg(int r,int g,int b){ fb_printf("\033[38;2;%d;%d;%dm",r,g,b); }
 static void fb_R(void)              { fb_str(RESET); }
 
-/* visible width (strips ANSI) */
 static int visw(const char *s){
     int n=0,esc=0;
     for(;*s;s++){
         if(*s=='\033'){esc=1;continue;}
         if(esc){if(*s=='m')esc=0;continue;}
-        /* skip UTF-8 continuation bytes so multi-byte chars count as 1 */
+        
         if((*s&0xC0)==0x80) continue;
         n++;
     }
@@ -337,7 +333,6 @@ static int visw(const char *s){
 
 static void fb_pad(int n){ for(int i=0;i<n;i++) fb_char(' '); }
 
-/* ── scene ────────────────────────────────────────────────────────────────── */
 #define SCENE_H    11
 #define GROUND_ROW  9
 #define MAX_COLS   512
@@ -412,14 +407,13 @@ static void render_scene(void){
             if(cl->r!=pr||cl->g!=pg||cl->b!=pb){
                 fb_fg(cl->r,cl->g,cl->b); pr=cl->r;pg=cl->g;pb=cl->b;
             }
-            if(row==GROUND_ROW) fb_str("\xe2\x96\x84"); /* ▄ */
+            if(row==GROUND_ROW) fb_str("\xe2\x96\x84"); 
             else                fb_char(cl->ch);
         }
         fb_R(); fb_str("\r\n");
     }
 }
 
-/* ── title ────────────────────────────────────────────────────────────────── */
 static const char *TITLE[]={
     "  ____                        _  ___  ____  ",
     " | __ )  ___  _ __ ___  __ _ | |/ _ \\/ ___| ",
@@ -454,20 +448,16 @@ static void render_tagline(double t){
     fb_str("\r\n");
 }
 
-/* ── info panel ───────────────────────────────────────────────────────────── */
-#define LEFT_W   52   /* visible chars for left column */
-#define BAR_W    12   /* progress bar width */
-#define LABEL_W   8   /* right column label field width */
-/* value start = LABEL_W + len(" | ") = 8+3 = 11; align all values there */
+#define LEFT_W   52   
+#define BAR_W    12   
+#define LABEL_W   8   
 
-/* bar: filled █, empty ░ — both are 3-byte UTF-8 */
 static void fb_bar(double pct){
     int filled=(int)round(pct/100.0*BAR_W);
     for(int i=0;i<BAR_W;i++)
         fb_str(i<filled?"\xe2\x96\x88":"\xe2\x96\x91");
 }
 
-/* colour based on pct */
 static void fb_valcol(double pct){
     if(pct>80)      fb_fg(220,80,60);
     else if(pct>50) fb_fg(220,180,50);
@@ -493,30 +483,61 @@ static void fb_hw_label(const char *label){
     fb_fg(30,60,45); fb_str(" | "); fb_R();
 }
 
-static void fb_hw_model(const char *label, const char *value){
+/* All right-column rows:
+ *   LABEL_W(8) + " | "(3) + VALUE_W(20) + "  " + BAR_W(12)
+ *   Value field is always 20 visible chars wide — truncated or padded.
+ *   This guarantees every bar starts at the exact same column.
+ */
+#define VALUE_W 20
+
+static void fb_hw_row(const char *label, const char *value,
+                      int has_bar, double pct)
+{
     fb_hw_label(label);
-    fb_fg(140,200,170); fb_str(value); fb_R();
+    
+    int vw = visw(value);
+    if(vw > VALUE_W){
+        
+        int vis=0; const char *p=value; int esc=0;
+        while(*p && vis<VALUE_W){
+            if(*p=='\033'){esc=1;fb_char(*p++);continue;}
+            if(esc){fb_char(*p); if(*p=='m')esc=0; p++;continue;}
+            if((*p&0xC0)==0x80){fb_char(*p++);continue;} 
+            fb_char(*p++); vis++;
+        }
+        fb_R();
+        fb_pad(0);
+    } else {
+        fb_str(value); fb_R();
+        fb_pad(VALUE_W - vw);
+    }
+    fb_str("  ");
+    if(has_bar){ fb_valcol(pct); fb_bar(pct); fb_R(); }
+}
+
+static void fb_hw_model(const char *label, const char *value){
+    fb_hw_row(label, value, 0, 0);
 }
 
 static void fb_hw_pct(const char *label, double pct){
-    fb_hw_label(label);
-    fb_valcol(pct);
-    /* pad pct string to 6 chars ("100.0%") so bars line up */
     char tmp[16]; snprintf(tmp,sizeof(tmp),"%.1f%%",pct);
-    fb_printf("%-6s  ",tmp);   /* 6 chars + 2 spaces before bar */
-    fb_valcol(pct);
-    fb_bar(pct);
-    fb_R();
+    
+    char vbuf[64]; int n=0;
+    if(pct>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
+    else if(pct>50) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
+    else            n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
+    snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
+    fb_hw_row(label, vbuf, 1, pct);
 }
 
 static void fb_hw_ram(const char *label, long used, long total, double pct){
-    fb_hw_label(label);
-    fb_valcol(pct);
     char tmp[32]; snprintf(tmp,sizeof(tmp),"%ld/%ld MB",used,total);
-    fb_printf("%-12s  ",tmp);  /* 12 chars + 2 spaces; matches ~"XXXXX/XXXXX MB" */
-    fb_valcol(pct);
-    fb_bar(pct);
-    fb_R();
+    char vbuf[64]; int n=0;
+    if(pct>80)      n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;80;60m");
+    else if(pct>50) n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;220;180;50m");
+    else            n+=snprintf(vbuf+n,sizeof(vbuf)-n,"\033[38;2;50;200;130m");
+    snprintf(vbuf+n,sizeof(vbuf)-n,"%s\033[0m",tmp);
+    fb_hw_row(label, vbuf, 1, pct);
 }
 
 static void render_info_panel(double t){
@@ -529,15 +550,15 @@ static void render_info_panel(double t){
     double wave=sin(t*.4)*.5+.5;
     int hg=(int)(120+wave*80);
 
-    /* ── header ── */
+    
     char lhdr[128], rhdr[64];
     snprintf(lhdr,sizeof(lhdr),"  \033[38;2;20;%d;100m\033[1m[ Software ]\033[0m",hg);
     snprintf(rhdr,sizeof(rhdr),   "\033[38;2;20;%d;100m\033[1m[ Hardware ]\033[0m",hg);
     int lhv=visw(lhdr);
     fb_str(lhdr); fb_pad(LEFT_W+2-lhv); fb_str("  "); fb_str(rhdr); fb_str("\r\n");
-    fb_str("\r\n"); /* blank line */
+    fb_str("\r\n"); 
 
-    /* ── left column rows ── */
+    
     struct { const char *label, *value; } drows[]={
         {"Base",    "Debian stable"},
         {"Init",    _init},
@@ -549,11 +570,11 @@ static void render_info_panel(double t){
     };
     int nd=0; for(;drows[nd].label;nd++);
 
-    /* ── right column rows (build into small bufs to pair with left) ── */
+    
 #define MAX_HW 8
     char hw[MAX_HW][512]; int nhw=0;
 
-    /* helper: capture a hw row into hw[nhw++] */
+    
 #define CAPTURE(code) do{ \
     int _s=fbpos; code; \
     int _len=fbpos-_s; \
@@ -578,10 +599,10 @@ static void render_info_panel(double t){
         fb_fg(100,180,200); fb_str(_kernel); fb_R();
     });
 
-    /* ── render pairs ── */
+    
     int nrows=nd>nhw?nd:nhw;
     for(int i=0;i<nrows;i++){
-        /* left */
+        
         fb_str("  ");
         if(i<nd){
             double wv=sin(t*.35+i*1.0)*.5+.5;
@@ -598,13 +619,12 @@ static void render_info_panel(double t){
             fb_pad(LEFT_W);
         }
         fb_str("  ");
-        /* right */
+        
         if(i<nhw) fb_str(hw[i]);
         fb_str("\r\n");
     }
 }
 
-/* ── timing ───────────────────────────────────────────────────────────────── */
 static double now_sec(void){
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
     return ts.tv_sec+ts.tv_nsec*1e-9;
@@ -617,7 +637,6 @@ static void sleep_until(double target){
     nanosleep(&ts,NULL);
 }
 
-/* ── main ─────────────────────────────────────────────────────────────────── */
 int main(void){
     signal(SIGINT,  handle_sig);
     signal(SIGTERM, handle_sig);
@@ -646,9 +665,9 @@ int main(void){
         build_scene(t);
         render_scene();
 
-        /* separator */
+        
         fb_fg(10,40,30);
-        for(int i=0;i<TW;i++) fb_str("\xe2\x94\x80"); /* ─ */
+        for(int i=0;i<TW;i++) fb_str("\xe2\x94\x80"); 
         fb_R(); fb_str("\r\n\r\n");
 
         render_title(t);
@@ -656,10 +675,10 @@ int main(void){
         fb_str("\r\n");
         render_info_panel(t);
 
-        /* blank remaining lines to clear stale content */
-        /* approximate lines written so far */
-        int used = SCENE_H + 1 /*sep*/ + 1 /*blank*/ + NTITLE + 1/*tag*/ + 1/*blank*/
-                 + 2/*hdrs+blank*/ + 8/*rows*/;
+        
+        
+        int used = SCENE_H + 1  + 1  + NTITLE + 1 + 1
+                 + 2 + 8;
         for(int i=used; i<TH-1; i++){
             for(int j=0;j<TW;j++) fb_char(' ');
             fb_str("\r\n");
