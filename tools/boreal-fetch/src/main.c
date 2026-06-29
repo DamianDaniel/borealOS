@@ -595,29 +595,39 @@ static void render_info_panel(double t){
                 fb_fg(40,vg,140); fb_str(val); fb_R();
                 fb_pad(val_avail - vlen);
             } else {
-                /* wrap long values at word boundaries */
-                fb_fg(40,vg,140);
+                /* first chunk on current line, rest on continuation lines */
                 int pos=0;
+                int first=1;
                 while(pos<vlen){
-                    int chunk=val_avail;
-                    if(pos+chunk<vlen){
+                    int avail = first ? val_avail : val_avail;
+                    int chunk = avail;
+                    if(pos+chunk < vlen){
+                        /* break at last space or + within chunk */
                         int bp=chunk;
-                        while(bp>0&&val[pos+bp]!=' '&&val[pos+bp]!='+') bp--;
+                        while(bp>0 && val[pos+bp]!=' ' && val[pos+bp]!='+') bp--;
                         if(bp>0) chunk=bp;
                     } else {
                         chunk=vlen-pos;
                     }
-                    memcpy(fbuf+fbpos,val+pos,chunk); fbpos+=chunk;
-                    pos+=chunk;
-                    while(pos<vlen&&val[pos]==' ') pos++;
-                    if(pos<vlen){
-                        fb_R(); fb_str("\r\n");
+                    if(first){
+                        fb_fg(40,vg,140);
+                        memcpy(fbuf+fbpos, val+pos, chunk); fbpos+=chunk;
+                        fb_R();
+                        /* pad remainder of first line so hw col is correct */
+                        fb_pad(val_avail - chunk);
+                        first=0;
+                    } else {
+                        /* continuation line: pad to value column, print chunk, newline */
+                        fb_str("\r\n");
                         fb_pad(val_col);
                         fb_fg(40,vg,140);
+                        memcpy(fbuf+fbpos, val+pos, chunk); fbpos+=chunk;
+                        fb_R();
                         extra++;
                     }
+                    pos+=chunk;
+                    while(pos<vlen && val[pos]==' ') pos++;
                 }
-                fb_R();
             }
         } else {
             /* no sw row — just indent to match right column position */
