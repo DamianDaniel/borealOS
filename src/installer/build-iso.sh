@@ -57,14 +57,14 @@ done
 
 echo ""
 echo -e "${BLD}Select kernel:${RST}"
-echo "  1) linux-image-amd64 (current)"
-echo "  2) linux-image-amd64 from bookworm-backports / LTS (6.18)"
+echo "  1) linux-image-amd64 from trixie-backports (current, 7.0.x)"
+echo "  2) linux-image-6.18-amd64 from trixie-backports (LTS 6.18.x)"
 while true; do
     echo -ne "${CYN}Choice${RST}: "
     read -r kern_choice
     case "$kern_choice" in
-        1) KERNEL_PKG="linux-image-amd64"; KERNEL_NAME="current"; break ;;
-        2) KERNEL_PKG="linux-image-6.18*-amd64"; KERNEL_NAME="6.18 LTS"; break ;;
+        1) KERNEL_PKG="linux-image-amd64"; KERNEL_NAME="7.0 current (trixie-backports)"; break ;;
+        2) KERNEL_PKG="linux-image-6.18-amd64"; KERNEL_NAME="6.18 LTS (trixie-backports)"; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
 done
@@ -897,8 +897,10 @@ chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation fai
 set -e
 apt-get update -qq
 
-# Install the kernel chosen at build time, fall back to the generic meta-package
-apt-get install -y --no-install-recommends ${KERNEL_PKG} 2>/dev/null || apt-get install -y --no-install-recommends linux-image-amd64
+echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
+apt-get update -qq
+
+apt-get install -y --no-install-recommends -t trixie-backports ${KERNEL_PKG}
 
 apt-get install -y --no-install-recommends \
     grub-efi-amd64 grub-efi-amd64-bin grub-pc-bin grub-common \
