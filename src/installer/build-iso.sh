@@ -13,6 +13,7 @@ INSTALLER_SH="$SCRIPT_DIR/installer.sh"
 WALLPAPER_DEFAULT="$SCRIPT_DIR/background_main.png"
 WALLPAPER_ALT="$SCRIPT_DIR/background_one.png"
 WALLPAPER_MAIN="$SCRIPT_DIR/background_main.png"
+WALLPAPER_BG2="$SCRIPT_DIR/background_2.png"
 LOGO="$SCRIPT_DIR/logo.png"
 BANNER="$SCRIPT_DIR/borealOS-text-and-logo-transparent.png"
 BRANDING_ZIP="$SCRIPT_DIR/borealOS-branding.zip"
@@ -23,7 +24,7 @@ die()  { echo -e "${RED}ERROR: $1${RST}" >&2; exit 1; }
 ok()   { echo -e "${GRN}$1${RST}"; }
 warn() { echo -e "${RED}WARN: $1${RST}"; }
 
-for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$LOGO" "$BANNER"; do
+for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$WALLPAPER_BG2" "$LOGO" "$BANNER"; do
     [ -f "$f" ] || die "Missing: $f"
 done
 [ "$EUID" -eq 0 ] || die "Run as root."
@@ -39,9 +40,8 @@ echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
 echo "  1) KDE Plasma"
 echo "  2) XFCE"
 echo "  3) Sway (Wayland)"
-echo "  4) Hyprland (Wayland)"
-echo "  5) Niri (Wayland, built from source)"
-echo "  6) None (TTY only)"
+echo "  4) Niri (Wayland, built from source)"
+echo "  5) None (TTY only)"
 while true; do
     echo -ne "${CYN}Choice${RST}: "
     read -r de_choice
@@ -49,9 +49,22 @@ while true; do
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
         2) DE_PKGS="xfce4 xfce4-goodies"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
         3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DM_PKGS=""; DE_NAME="Sway"; DE_START="sway"; break ;;
-        4) DE_PKGS="hyprland waybar foot wofi"; DM_PKGS=""; DE_NAME="Hyprland"; DE_START="Hyprland"; break ;;
-        5) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
-        6) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
+        4) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
+        5) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
+        *) echo -e "${RED}Invalid.${RST}" ;;
+    esac
+done
+
+echo ""
+echo -e "${BLD}Select kernel:${RST}"
+echo "  1) linux-image-amd64 (current)"
+echo "  2) linux-image-amd64 from bookworm-backports / LTS (6.18)"
+while true; do
+    echo -ne "${CYN}Choice${RST}: "
+    read -r kern_choice
+    case "$kern_choice" in
+        1) KERNEL_PKG="linux-image-amd64"; KERNEL_NAME="current"; break ;;
+        2) KERNEL_PKG="linux-image-6.18*-amd64"; KERNEL_NAME="6.18 LTS"; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
 done
@@ -87,7 +100,7 @@ echo "==> Injecting installer and assets..."
 mkdir -p "$WORK/squashfs-root/opt/borealOS"
 cp "$ROOTFS_TAR"        "$WORK/squashfs-root/opt/borealOS/rootfs.tar.gz" || die "Failed to copy rootfs"
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_main.png"
-cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_2.png"
+cp "$WALLPAPER_BG2"     "$WORK/squashfs-root/opt/borealOS/background_2.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/opt/borealOS/background_one.png"
 cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
@@ -119,57 +132,55 @@ cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/xfce4/backdrops/BorealOS.png"
 find "$WORK/squashfs-root/usr/share/xfce4/backdrops"     -not -name "BorealOS.png" -type f -delete 2>/dev/null || true
 # Set it as the xfdesktop default via the defaults config
 mkdir -p "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
-cat > "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" <<'SYSDESKTOP'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-desktop" version="1.0">
-  <property name="backdrop" type="empty">
-    <property name="screen0" type="empty">
-      <property name="monitor0" type="empty">
-        <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/xfce4/backdrops/BorealOS.png"/>
-          <property name="image-style" type="int" value="5"/>
-        </property>
-      </property>
-    </property>
-  </property>
-</channel>
-SYSDESKTOP
+{
+echo '<?xml version="1.0" encoding="UTF-8"?>'
+echo '<channel name="xfce4-desktop" version="1.0">'
+echo '  <property name="backdrop" type="empty">'
+echo '    <property name="screen0" type="empty">'
+echo '      <property name="monitor0" type="empty">'
+echo '        <property name="workspace0" type="empty">'
+echo '          <property name="last-image" type="string" value="/usr/share/xfce4/backdrops/BorealOS.png"/>'
+echo '          <property name="image-style" type="int" value="5"/>'
+echo '        </property>'
+echo '      </property>'
+for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0 DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
+    echo "      <property name=\"${mon}\" type=\"empty\">"
+    echo '        <property name="workspace0" type="empty">'
+    echo '          <property name="last-image" type="string" value="/usr/share/xfce4/backdrops/BorealOS.png"/>'
+    echo '          <property name="image-style" type="int" value="5"/>'
+    echo '        </property>'
+    echo '      </property>'
+done
+echo '    </property>'
+echo '  </property>'
+echo '</channel>'
+} > "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
 cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
 
 echo "==> Creating GRUB theme..."
-mkdir -p "$WORK/squashfs-root/usr/share/grub/themes/boreal"
-convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
-    "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png" 2>/dev/null || \
-    cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/grub/themes/boreal/background.png"
-# Banner PNG (logo+text combined, 3310x1254 = 2.638:1).
-# Resize to 520px wide — height auto-scales to ~197px. NO height in theme.txt.
-convert "$BANNER" -trim -resize 520x -background none \
-    "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png" 2>/dev/null || \
-    cp "$BANNER" "$WORK/squashfs-root/usr/share/grub/themes/boreal/title.png"
-
 GRUB_THEME_DIR="$WORK/squashfs-root/usr/share/grub/themes/boreal"
+mkdir -p "$GRUB_THEME_DIR"
+convert "$WALLPAPER_DEFAULT" -resize 1920x1080! \
+    "$GRUB_THEME_DIR/background.png" 2>/dev/null || \
+    cp "$WALLPAPER_DEFAULT" "$GRUB_THEME_DIR/background.png"
+convert "$BANNER" -trim -resize 520x -background none \
+    "$GRUB_THEME_DIR/title.png" 2>/dev/null || \
+    cp "$BANNER" "$GRUB_THEME_DIR/title.png"
 
-if [ -f "$RICE_DIR/grub/grub-theme.txt" ]; then
-    cp "$RICE_DIR/grub/grub-theme.txt" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    # Enforce width=520 (must match the resized title.png) and strip any height.
-    # If theme width != actual image width, GRUB stretches to fill → egg/oval warp.
-    python3 -c "
-import re, sys
-t = open(sys.argv[1]).read()
-# Strip height= only from inside + image { } blocks (not boot_menu height which is valid)
-t = re.sub(r'(\+\s*image\s*\{[^}]*)height\s*=\s*[^\n]+\n', r'\1', t, flags=re.DOTALL)
-# Enforce width=520 inside + image { } blocks to match the resized banner PNG
-t = re.sub(r'(\+\s*image\s*\{[^}]*)width\s*=\s*\d+', r'\g<1>width = 520', t, flags=re.DOTALL)
-open(sys.argv[1], 'w').write(t)
-" "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    # Remove selected_item_pixmap_style — GRUB requires glob pattern with *
-    # which doesn't work with a single file. Use color only.
-    sed -i '/selected_item_pixmap_style/d' \
-        "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt"
-    ok "Rice grub theme applied (width=520, height stripped, pixmap_style removed)"
-else
-    cat > "$WORK/squashfs-root/usr/share/grub/themes/boreal/theme.txt" <<'THEME'
+# Selection-highlight bar. GRUB's pixmap_style only requires the "_c" (center)
+# slice to be present — missing edge slices are silently skipped, so a single
+# flat image is a stable, supported highlight box (not a 9-slice gimmick).
+SELECT_IMG="$SCRIPT_DIR/select.png"
+if [ -f "$SELECT_IMG" ]; then
+    cp "$SELECT_IMG" "$GRUB_THEME_DIR/select_c.png"
+fi
+
+# Compute the actual rendered height of title.png so the theme never has to
+# guess at an aspect ratio (this was the source of the previous oval/egg warp).
+TITLE_H=$(identify -format "%h" "$GRUB_THEME_DIR/title.png" 2>/dev/null || echo 197)
+
+cat > "$GRUB_THEME_DIR/theme.txt" <<THEME
 desktop-image: "background.png"
 desktop-color: "#51b2bb"
 title-text: ""
@@ -180,12 +191,11 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
-# Banner PNG (logo+text, 3310x1254 = 2.638:1 ratio).
-# width=520 → natural height ~197px. NO height field — GRUB auto-scales correctly.
 + image {
     top = 6%
-    left = 50%-280
+    left = 50%-260
     width = 520
+    height = ${TITLE_H}
     file = "title.png"
 }
 
@@ -196,11 +206,20 @@ terminal-top: "15%"
     height = 36%
     item_font = "DejaVu Sans Bold 16"
     item_color = "#d0f5f0"
-    selected_item_color = "#ffffff"
+    selected_item_color = "#0d1f2d"
     item_height = 42
     item_padding = 14
     item_spacing = 4
+    icon_width = 0
+    icon_height = 0
     scrollbar = false
+THEME
+if [ -f "$GRUB_THEME_DIR/select_c.png" ]; then
+    cat >> "$GRUB_THEME_DIR/theme.txt" <<THEME
+    selected_item_pixmap_style = "select_*.png"
+THEME
+fi
+cat >> "$GRUB_THEME_DIR/theme.txt" <<THEME
 }
 
 + label {
@@ -213,7 +232,7 @@ terminal-top: "15%"
     text = "up/down: navigate    enter: boot    e: edit    c: console"
 }
 THEME
-fi
+ok "GRUB theme generated (stable, single source of truth, no regex patching)."
 
 echo "==> Writing xorg config..."
 mkdir -p "$WORK/squashfs-root/etc/X11/xorg.conf.d"
@@ -423,7 +442,7 @@ Version=1.0
 Type=Application
 Name=Install BorealOS
 Comment=Launch the BorealOS graphical installer
-Exec=calamares
+Exec=/usr/local/bin/calamares
 Icon=/usr/share/pixmaps/boreal-logo.png
 Terminal=false
 Categories=System;
@@ -452,13 +471,19 @@ for df in "$WORK/squashfs-root/root/Desktop/"*.desktop; do
     attr -s "metadata::trusted" -V "true" "$df" 2>/dev/null ||     setfattr -n "user.metadata::trusted" -v "true" "$df" 2>/dev/null || true
 done
 
+# Pin explicit grid positions so icon order is deterministic regardless of
+# directory scan order (xfdesktop falls back to scan order until a position
+# is cached, which is why "TTY Install" could render above "Install").
+attr -s "metadata::xfdesktop-icon-position" -V "0,0" "$WORK/squashfs-root/root/Desktop/1-Install BorealOS.desktop" 2>/dev/null ||     setfattr -n "user.metadata::xfdesktop-icon-position" -v "0,0" "$WORK/squashfs-root/root/Desktop/1-Install BorealOS.desktop" 2>/dev/null || true
+attr -s "metadata::xfdesktop-icon-position" -V "0,1" "$WORK/squashfs-root/root/Desktop/2-TTY Install.desktop" 2>/dev/null ||     setfattr -n "user.metadata::xfdesktop-icon-position" -v "0,1" "$WORK/squashfs-root/root/Desktop/2-TTY Install.desktop" 2>/dev/null || true
+
 # Fallback: autostart script that trusts them at first login (runs before xfdesktop redraws)
 mkdir -p "$WORK/squashfs-root/root/.config/autostart"
 cat > "$WORK/squashfs-root/root/.config/autostart/boreal-trust-desktop.desktop" <<'AUTOSTART'
 [Desktop Entry]
 Type=Application
 Name=BorealOS Trust Desktop
-Exec=bash -c 'for f in "$HOME/Desktop/"*.desktop; do gio set "$f" metadata::trusted true 2>/dev/null; done; xfdesktop --reload 2>/dev/null'
+Exec=bash -c 'gio set "$HOME/Desktop/1-Install BorealOS.desktop" metadata::trusted true 2>/dev/null; gio set "$HOME/Desktop/1-Install BorealOS.desktop" metadata::xfdesktop-icon-position "0,0" 2>/dev/null; gio set "$HOME/Desktop/2-TTY Install.desktop" metadata::trusted true 2>/dev/null; gio set "$HOME/Desktop/2-TTY Install.desktop" metadata::xfdesktop-icon-position "0,1" 2>/dev/null; xfdesktop --reload 2>/dev/null'
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
@@ -468,10 +493,10 @@ AUTOSTART
 # TTY install wrapper — runs the terminal installer
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
 #!/bin/bash
-if [ -f /opt/borealOS/installer.sh ]; then
-    bash /opt/borealOS/installer.sh
+if command -v borealOS-install >/dev/null 2>&1; then
+    borealOS-install
 else
-    echo "ERROR: installer.sh not found"
+    echo "ERROR: borealOS-install not found"
     read -r
 fi
 TTYINSTALL
@@ -543,13 +568,53 @@ patch_panel_xml_simple "$PANEL_XML"
 patch_panel_xml_simple "$SKEL_PANEL_XML"
 ok "Panel XML patched (power-manager removed)"
 
+# Reliable taskbar/menu-button icon fix. The previous approach overwrote
+# generic icon-theme filenames (xfce4-logo.png etc.) guessing what icon name
+# the applicationsmenu plugin requests — that name differs across Xfce
+# versions (4.16 uses "xfce4-logo", 4.18 often defaults to
+# "org.xfce.panel.applicationsmenu" or a generic "start-here" fallback), so
+# the guess silently misses depending on which Xfce is actually installed.
+# Set it explicitly via xfconf instead, which works regardless of version.
+cat > "$WORK/squashfs-root/usr/local/bin/boreal-panel-icon.sh" <<'PANELICON'
+#!/bin/bash
+for i in 1 2 3 4 5 6; do
+    command -v xfconf-query >/dev/null 2>&1 && xfconf-query -c xfce4-panel -p /plugins -l >/dev/null 2>&1 && break
+    sleep 2
+done
+IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)
+for id in $IDS; do
+    val=$(xfconf-query -c xfce4-panel -p "/plugins/$id" 2>/dev/null)
+    if [ "$val" = "applicationsmenu" ]; then
+        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -n -t string -s /usr/share/pixmaps/boreal-logo.png 2>/dev/null || \
+        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -t string -s /usr/share/pixmaps/boreal-logo.png 2>/dev/null
+    fi
+done
+xfce4-panel -r 2>/dev/null || true
+PANELICON
+chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-panel-icon.sh"
+
+mkdir -p "$WORK/squashfs-root/root/.config/autostart"
+cat > "$WORK/squashfs-root/root/.config/autostart/boreal-panel-icon.desktop" <<'PANELAUTOSTART'
+[Desktop Entry]
+Type=Application
+Name=BorealOS Panel Icon
+Exec=/usr/local/bin/boreal-panel-icon.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+PANELAUTOSTART
+mkdir -p "$WORK/squashfs-root/etc/skel/.config/autostart"
+cp "$WORK/squashfs-root/root/.config/autostart/boreal-panel-icon.desktop" \
+   "$WORK/squashfs-root/etc/skel/.config/autostart/boreal-panel-icon.desktop"
+
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"
 cat > "$WORK/squashfs-root/usr/share/applications/boreal-installer.desktop" <<'DESKTOP'
 [Desktop Entry]
 Name=BorealOS Installer
 Comment=Install BorealOS
-Exec=calamares
+Exec=/usr/local/bin/calamares
 Icon=/usr/share/pixmaps/boreal-logo.png
 Type=Application
 Categories=System;
@@ -608,19 +673,14 @@ BANNER
     echo ""
     echo "  BorealOS 1.0 Live  |  DE: $DE"
     echo ""
-    echo "  1) Terminal Installer"
-    echo "  2) Graphical Live Environment"
+    echo "  1) Graphical Live Environment"
+    echo "  2) Terminal Installer"
     echo "  3) Shell"
     echo ""
     echo -n "  Choice: "
     read -r choice
     case "$choice" in
         1)
-            clear
-            borealOS-install
-            break
-            ;;
-        2)
             if [ -z "$DE_START" ] || [ "$DE" = "None" ]; then
                 echo "No graphical DE in this ISO."
                 sleep 2
@@ -629,6 +689,11 @@ BANNER
                 /usr/local/bin/boreal-start-graphical
                 break
             fi
+            ;;
+        2)
+            clear
+            borealOS-install
+            break
             ;;
         3)
             clear
@@ -832,8 +897,8 @@ chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation fai
 set -e
 apt-get update -qq
 
-# Install Linux 7.1 if available, fall back to linux-image-amd64 (meta-package)
-apt-get install -y --no-install-recommends linux-image-7.1.0-1-amd64 2>/dev/null || apt-get install -y --no-install-recommends linux-image-amd64 || apt-get install -y --no-install-recommends linux-image-generic
+# Install the kernel chosen at build time, fall back to the generic meta-package
+apt-get install -y --no-install-recommends ${KERNEL_PKG} 2>/dev/null || apt-get install -y --no-install-recommends linux-image-amd64
 
 apt-get install -y --no-install-recommends \
     grub-efi-amd64 grub-efi-amd64-bin grub-pc-bin grub-common \
@@ -894,6 +959,15 @@ fi
 for pkg in fastfetch kitty; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
+
+if command -v kitty >/dev/null 2>&1; then
+    update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/kitty 50 2>/dev/null || true
+    update-alternatives --set x-terminal-emulator /usr/bin/kitty 2>/dev/null || true
+    mkdir -p /etc/xdg/xfce4
+    cat > /etc/xdg/xfce4/helpers.rc <<HELPERSRC
+TerminalEmulator=kitty
+HELPERSRC
+fi
 
 # Calamares: try qt6 first, fall back to qt5, then plain calamares
 apt-get install -y calamares-qt6 2>/dev/null || apt-get install -y calamares 2>/dev/null || echo "WARN: calamares not found in repos"
@@ -976,7 +1050,7 @@ componentName:  boreal
 welcomeStyleCalamares:   false
 welcomeExpandingLogo:    true
 
-windowExpanding:    normal
+windowExpanding:    fixed
 windowSize:         900px,600px
 windowPlacement:    center
 
@@ -1020,6 +1094,9 @@ BRANDDESC
 cat > "$BRAND_DEST/stylesheet.qss" << 'QSS'
 #mainApp, QDialog {
     background-color: #0d1f2d;
+    background-image: url(:/branding/boreal/wallpaper.png);
+    background-repeat: none;
+    background-position: center;
     color: #e0f7f4;
     font-family: "Inter", "Noto Sans", sans-serif;
     font-size: 11pt;
@@ -1111,11 +1188,12 @@ convert "$LOGO" -resize 320x320 -background none -gravity center \
     "$BRAND_DEST/welcome.png" 2>/dev/null || \
     cp "$LOGO" "$BRAND_DEST/welcome.png"
 
-# wallpaper.png : Calamares window background 900x600
-WP_MAIN="${WALLPAPER_MAIN:-$WALLPAPER_DEFAULT}"
-convert "$WP_MAIN" -resize 900x600 -background black -gravity center -extent 900x600 \
+# wallpaper.png : Calamares window background, generated at the exact fixed
+# window size (900x600) so Qt has nothing to tile — windowExpanding is also
+# set to "fixed" in branding.desc so the window can't be resized past this.
+convert "$WALLPAPER_BG2" -resize 900x600^ -gravity center -extent 900x600 \
     "$BRAND_DEST/wallpaper.png" 2>/dev/null || \
-    cp "$WP_MAIN" "$BRAND_DEST/wallpaper.png"
+    cp "$WALLPAPER_BG2" "$BRAND_DEST/wallpaper.png"
 
 ok "Calamares branding installed (BorealOS assets + theme)."
 
@@ -1145,10 +1223,23 @@ fi
 cat > "$WORK/squashfs-root/usr/local/bin/calamares" << 'CALWRAPPER'
 #!/bin/bash
 # BorealOS Calamares wrapper — auto-detects modules and squashfs path
+exec > /var/log/boreal-calamares-wrapper.log 2>&1
 
 MODULES_DIR=/usr/lib/calamares/modules
 CONF_DIR=/etc/calamares
 mkdir -p "$CONF_DIR/modules"
+
+show_error() {
+    local msg="$1"
+    echo "ERROR: $msg"
+    if command -v zenity >/dev/null 2>&1; then
+        DISPLAY="${DISPLAY:-:0}" zenity --error --text="$msg" 2>/dev/null &
+    elif command -v xfce4-terminal >/dev/null 2>&1; then
+        DISPLAY="${DISPLAY:-:0}" xfce4-terminal --hold -e "bash -c 'echo \"$msg\"; read'" &
+    elif command -v xterm >/dev/null 2>&1; then
+        DISPLAY="${DISPLAY:-:0}" xterm -hold -e "bash -c 'echo \"$msg\"; read'" &
+    fi
+}
 
 # Find the real calamares binary
 CAL_REAL=""
@@ -1156,18 +1247,28 @@ for b in /usr/bin/calamares-real /usr/sbin/calamares-real          /usr/local/bi
     [ -x "$b" ] && CAL_REAL="$b" && break
 done
 if [ -z "$CAL_REAL" ]; then
-    # calamares might not be installed — show a clear error in a terminal window
-    if command -v xfce4-terminal >/dev/null 2>&1; then
-        xfce4-terminal --hold -e "bash -c 'echo ERROR: Calamares not installed in this ISO.; echo Rebuild with a Debian-based rootfs that has calamares in its repos.; read'"
-    elif command -v xterm >/dev/null 2>&1; then
-        xterm -hold -e "bash -c 'echo ERROR: Calamares not installed.; read'"
-    fi
+    show_error "Calamares not installed in this ISO. Rebuild with a rootfs that has calamares in its repos."
     exit 1
 fi
 # Calamares needs to run as root
 if [ "$(id -u)" -ne 0 ]; then
-    exec pkexec "$0" "$@"
+    exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" "$0" "$@"
 fi
+
+# kpmcore (the partition module backend) refuses to touch mounted partitions,
+# which is why a disk with auto-mounted leftover partitions from a previous
+# install shows up as "no partitions to install on". Unmount everything that
+# isn't our own root/EFI/live mounts before launching.
+for part in $(lsblk -lnpo NAME,TYPE | awk '$2=="part"{print $1}'); do
+    case "$part" in
+        $(findmnt -n -o SOURCE / 2>/dev/null)|$(findmnt -n -o SOURCE /boot/efi 2>/dev/null)) continue ;;
+    esac
+    mountpoint=$(findmnt -n -o TARGET "$part" 2>/dev/null) || continue
+    case "$mountpoint" in
+        /run/live*|/lib/live*) continue ;;
+    esac
+    umount "$part" 2>/dev/null && echo "  unmounted leftover partition: $part ($mountpoint)"
+done
 
 # Detect squashfs source path
 SQUASHFS=""
@@ -1397,7 +1498,7 @@ if [ "$DE_NAME" = "Niri" ]; then
 set -e
 apt-get install -y --no-install-recommends \
     build-essential git cmake pkg-config meson ninja-build \
-    rustc cargo clang libclang-dev \
+    curl clang libclang-dev \
     libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
     libxcb1-dev libxcb-xkb-dev libxcb-composite0-dev libxcb-present-dev libxcb-xfixes0-dev \
     libinput-dev libseat-dev libpam0g-dev \
@@ -1406,6 +1507,12 @@ apt-get install -y --no-install-recommends \
     libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev libglib2.0-dev \
     libffi-dev libexpat1-dev libcap-dev libxrandr-dev \
     xwayland wayland-protocols
+
+# Debian stable's apt rustc/cargo are frequently older than niri's MSRV, which
+# is the usual reason this build silently fails. Install rust via rustup
+# instead so we always get a current stable toolchain.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+source "$HOME/.cargo/env"
 
 for optpkg in libwayland-egl1 libegl-dev libegl1-mesa-dev libgles-dev libgles2-mesa-dev \
     libgtk-3-dev libpulse-dev libpcre2-dev wayland-utils swaybg waybar wlr-randr grim slurp; do
@@ -1434,7 +1541,8 @@ Type=Application
 DesktopNames=niri
 DESK
 cd / && rm -rf /tmp/niri-src
-apt-get remove -y --purge rustc cargo git cmake meson ninja-build build-essential libclang-dev clang 2>/dev/null || true
+rustup self uninstall -y 2>/dev/null || rm -rf "$HOME/.cargo" "$HOME/.rustup"
+apt-get remove -y --purge cmake meson ninja-build build-essential libclang-dev clang 2>/dev/null || true
 apt-get autoremove -y 2>/dev/null || true
 NIRICHROOT
     umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
