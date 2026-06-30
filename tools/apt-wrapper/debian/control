@@ -1,0 +1,18 @@
+Source: borealos-apt-skin
+Section: admin
+Priority: optional
+Maintainer: BorealOS <damarts@borealos.dev>
+Build-Depends: debhelper-compat (= 13), cmake, gcc
+Standards-Version: 4.6.2
+Homepage: https://github.com/DamianDaniel/borealOS
+
+Package: borealos-apt-skin
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, apt
+Description: Boreal-themed visual skin for apt
+ A real wrapper around apt for BorealOS. Every command, flag, and
+ prompt behaves exactly like stock apt; the wrapper only adds
+ boreal-themed coloring on top of the real output by running the
+ actual apt binary inside a pseudo-terminal.
+ .
+ Includes boreal-apt, a small utility to toggle the skin on or off.
