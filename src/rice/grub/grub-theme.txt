@@ -1,5 +1,5 @@
 desktop-image: "background.png"
-desktop-color: "#0d1b2a"
+desktop-color: "#51b2bb"
 title-text: ""
 message-font: "DejaVu Sans Regular 14"
 message-color: "#4dffd2"
@@ -8,34 +8,35 @@ terminal-height: "70%"
 terminal-left: "10%"
 terminal-top: "15%"
 
+# Banner PNG (logo+text, 3310x1254). width=520 only — NO height field.
+# GRUB auto-calculates height from the image ratio. Setting height causes oval warp.
 + image {
     top = 6%
-    left = 30%-205
-    width = 596
-    height = 200
+    left = 50%-280
+    width = 520
     file = "title.png"
 }
 
 + boot_menu {
-    top = 52%
-    left = 25%
-    width = 50%
-    height = 35%
-    item_font = "DejaVu Sans Regular 16"
-    item_color = "#4a9d9d"
+    top = 46%
+    left = 50%-200
+    width = 400
+    height = 36%
+    item_font = "DejaVu Sans Bold 16"
+    item_color = "#d0f5f0"
     selected_item_color = "#ffffff"
-    item_height = 36
-    item_padding = 12
+    item_height = 42
+    item_padding = 14
     item_spacing = 4
     scrollbar = false
 }
 
 + label {
-    top = 90%
+    top = 91%
     left = 0
     width = 100%
     align = "center"
-    font = "DejaVu Sans Regular 12"
+    font = "DejaVu Sans Regular 13"
     color = "#4dffd2"
     text = "up/down: navigate    enter: boot    e: edit    c: console"
 }

@@ -1,23 +1,41 @@
 #include <QGuiApplication>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
-#include "systemstatus.h"
+#include <QProcess>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
 
 int main(int argc, char *argv[]) {
-    qputenv("QT_QPA_PLATFORM", "wayland");
-
     QGuiApplication app(argc, argv);
-    QQmlApplicationEngine engine;
 
-    const QUrl url(QStringLiteral("qrc:/qt/qml/org/borealos/components/qml/main.qml"));
+    QString qmlPath = QGuiApplication::applicationDirPath() + "/org/borealos/components/qml/main.qml";
+    if (!QFile::exists(qmlPath)) {
+        qmlPath = QGuiApplication::applicationDirPath() + "/main.qml";
+    }
+    
+    // Absolute path is safer for QProcess
+    qmlPath = QDir(qmlPath).absolutePath();
 
-    QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url](QObject *obj, const QUrl &objUrl) {
-        if (!obj && url == objUrl)
-            QCoreApplication::exit(-1);
-    }, Qt::QueuedConnection);
+    // The build directory (or where the plugin is)
+    // We want the parent of the org/borealos/components directory
+    QString importPath = QDir(QGuiApplication::applicationDirPath()).absolutePath();
 
-    engine.load(url);
+    QProcess *process = new QProcess(&app);
+    QStringList arguments;
+    arguments << "-p" << qmlPath;
+    
+    // Set up environment to ensure wayland is used and our plugin is found
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("QT_QPA_PLATFORM", "wayland");
+    env.insert("QML_IMPORT_PATH", importPath);
+    // Also add current dir to library path just in case
+    env.insert("LD_LIBRARY_PATH", importPath + ":" + env.value("LD_LIBRARY_PATH"));
+    process->setProcessEnvironment(env);
+
+    process->start("quickshell", arguments);
+    
+    if (!process->waitForStarted()) {
+        process->start("qs", arguments);
+    }
 
     return app.exec();
 }
