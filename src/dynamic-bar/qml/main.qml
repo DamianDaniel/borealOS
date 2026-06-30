@@ -56,19 +56,35 @@ ShellRoot {
                             anchors.margins: 5
                             spacing: 5
                             
+                            Image {
+                                source: modelData.icon || ""
+                                width: 20
+                                height: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: modelData.icon && modelData.icon.toString() !== ""
+                            }
+
                             Text {
                                 text: modelData.title
                                 color: "white"
-                                width: parent.width - 10
+                                width: (modelData.icon && modelData.icon.toString() !== "") ? parent.width - (parent.spacing + 20) : parent.width - 5
                                 elide: Text.ElideRight
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
+                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: modelData.activate()
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: (mouse) => {
+                                if (mouse.button === Qt.RightButton) {
+                                    modelData.close();
+                                } else {
+                                    modelData.activate();
+                                }
+                            }
                         }
                     }
                 }
