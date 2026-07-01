@@ -514,21 +514,50 @@ background=/usr/share/boreal-artwork/wallpaper-default.png
 LDM
             fi
             mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
-            cat > /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<XFCE
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-desktop" version="1.0">
-  <property name="backdrop" type="empty">
-    <property name="screen0" type="empty">
-      <property name="monitor0" type="empty">
-        <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>
-          <property name="image-style" type="int" value="5"/>
-        </property>
-      </property>
-    </property>
-  </property>
-</channel>
-XFCE
+            {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<channel name="xfce4-desktop" version="1.0">'
+            echo '  <property name="backdrop" type="empty">'
+            echo '    <property name="screen0" type="empty">'
+            echo '      <property name="monitor0" type="empty">'
+            echo '        <property name="workspace0" type="empty">'
+            echo '          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>'
+            echo '          <property name="image-style" type="int" value="5"/>'
+            echo '        </property>'
+            echo '      </property>'
+            for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0 DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
+                echo "      <property name=\"${mon}\" type=\"empty\">"
+                echo '        <property name="workspace0" type="empty">'
+                echo '          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>'
+                echo '          <property name="image-style" type="int" value="5"/>'
+                echo '        </property>'
+                echo '      </property>'
+            done
+            echo '    </property>'
+            echo '  </property>'
+            echo '</channel>'
+            } > /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+            # Also write to skel so any installed user actually gets it — the
+            # system-default file above only applies when no per-user config
+            # exists, and is silently ignored by some xfdesktop versions once
+            # a session has run once.
+            mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
+            cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
+               /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+            # Also drop the panel-icon autostart fixer (see live env section)
+            # into skel so the panel logo applies for installed users too.
+            mkdir -p /mnt/etc/skel/.config/autostart
+            cp /usr/local/bin/boreal-panel-icon.sh /mnt/usr/local/bin/boreal-panel-icon.sh 2>/dev/null || true
+            cat > /mnt/etc/skel/.config/autostart/boreal-panel-icon.desktop <<PANELAUTOSTART
+[Desktop Entry]
+Type=Application
+Name=BorealOS Panel Icon
+Exec=/usr/local/bin/boreal-panel-icon.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+PANELAUTOSTART
             ;;
         "Sway")
             mkdir -p /mnt/etc/sway
