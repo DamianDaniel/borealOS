@@ -1,6 +1,6 @@
 <img src=".assets/boreal-banner-neue-blurred.png" alt="BorealOS banner" style="width:100%;">
 
-- BorealOS is a Debian-based desktop Linux distribution for x86_64 systems. It aims to provide an optimized Debian experience without systemd, using OpenRC.
+BorealOS is a Debian based (debian 13, trixie) linux distro for desktops. It gives an optimized debian experience without SystemD (using OpenRC instead).
 
 <br clear="all">
 
@@ -8,28 +8,26 @@
 
 | Area | Plans |
 |---|---|
-| Base | Debian-based |
-| Architecture | x86_64 for now |
-| Target users | Intermediate Linux users |
-| Init system | OpenRC |
-| Shells | `sh` & `fish`|
-| Documentation | Documentation first, with focus on Man pages |
+| Base | Debian based |
+| Architecture | x86_64 (for now) |
+| Target Users | Intermediate users |
+| Init System | OpenRC |
+| Shells | `sh` & `fish` |
 
 <br>
 
 ## Key Features
 
-- Debain-based desktop operating system.
-- Community-driven development.
-- Pre-riced desktops and window managers.
-- Warnings before risky operations.
-- Documentation-first approach with focus on man pages.
+- Debian based desktop operating system
+- Community driven development
+- Pre-customized desktop environments and window managers
+- Safety warnings before running risky commands
 
 <br>
 
 ## Supported Desktops
 
-BorealOS plans to support three graphical interfaces as a choice during setup:
+BorealOS plans to offer a choice of four graphical interfaces during setup:
 
 - KDE Plasma
 - XFCE
@@ -40,13 +38,12 @@ BorealOS plans to support three graphical interfaces as a choice during setup:
 
 ## Shell
 
-The project uses the `sh` shell by default, with the choice in setup to use the `fish` shell 
+- The `sh` shell is set as the default shell
+- The `fish` shell is available as an option during setup
 
 <br>
 
-## Documentation
-
-Planned documentation areas include:
+## Planned documentations
 
 - Installation guide
 - Man pages
@@ -56,12 +53,26 @@ Planned documentation areas include:
 
 <br>
 
-## Development Status
+## Development Status & Milestones
 
-BorealOS is currently in the early repository-structure and build-planning phase.
+- BorealOS is currently in the early repository structuring and planning phase
+- The first technical milestone is a minimal debian based ISO that successfully boots in a virtual machine using `OpenRC` as PID 1
 
-The first technical milestone is a minimal Debian-based ISO that boots in a
-virtual machine with `OpenRC` as PID 1.
+<br>
+
+## Reasons to use BorealOS
+
+- Sleek new interface
+- Performant operating system
+- Clean by default
+- SystemD free
+
+<br>
+
+## Licence
+
+- BorealOS is a free and open source licensed under GNU General Public License v3 [GPL-3.0]
+- This software is free to use, to modify, and to redistribute provided that all of the derived works must be entirely open source under this licence
 
 <br>
 
