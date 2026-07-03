@@ -442,7 +442,7 @@ Version=1.0
 Type=Application
 Name=Install BorealOS
 Comment=Launch the BorealOS graphical installer
-Exec=/usr/local/bin/calamares
+Exec=/usr/local/bin/boreal-installer
 Icon=/usr/share/pixmaps/boreal-logo.png
 Terminal=false
 Categories=System;
@@ -614,7 +614,7 @@ cat > "$WORK/squashfs-root/usr/share/applications/boreal-installer.desktop" <<'D
 [Desktop Entry]
 Name=BorealOS Installer
 Comment=Install BorealOS
-Exec=/usr/local/bin/calamares
+Exec=/usr/local/bin/boreal-installer
 Icon=/usr/share/pixmaps/boreal-logo.png
 Type=Application
 Categories=System;
@@ -791,18 +791,13 @@ eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
  xfdesktop --reload 2>/dev/null || true
 ) &
 
-# Launch Calamares after desktop is ready.
+# Launch the BorealOS graphical installer after desktop is ready.
 (sleep 14
- CAL_BIN=""
- for b in calamares /usr/bin/calamares /usr/sbin/calamares /usr/local/bin/calamares; do
-   command -v "$b" >/dev/null 2>&1 && CAL_BIN="$b" && break
-   [ -x "$b" ] && CAL_BIN="$b" && break
- done
- if [ -z "$CAL_BIN" ]; then
-   DISPLAY=:0 xterm -e "echo calamares not found; read" &
+ if [ ! -x /usr/local/bin/boreal-installer ]; then
+   DISPLAY=:0 xterm -e "echo boreal-installer not found; read" &
  else
    while true; do
-     DISPLAY=:0 "$CAL_BIN" 2>/tmp/calamares.log
+     DISPLAY=:0 /usr/local/bin/boreal-installer 2>/tmp/boreal-installer.log
      [ "$?" -eq 0 ] && break
      sleep 4
    done
@@ -867,8 +862,8 @@ echo "--- Xorg log (last 30 lines) ---"
 tail -30 /tmp/xorg.log
 echo "--- XFCE session log ---"
 cat /tmp/xfce4-session.log 2>/dev/null | tail -20 || true
-echo "--- Calamares log ---"
-cat /tmp/calamares.log 2>/dev/null | tail -10 || true
+echo "--- boreal-installer log ---"
+cat /tmp/boreal-installer.log 2>/dev/null | tail -10 || true
 echo ""
 echo "Press Enter to return to the menu."
 read -r
@@ -971,20 +966,8 @@ TerminalEmulator=kitty
 HELPERSRC
 fi
 
-# Calamares: try qt6 first, fall back to qt5, then plain calamares
-apt-get install -y calamares-qt6 2>/dev/null || apt-get install -y calamares 2>/dev/null || echo "WARN: calamares not found in repos"
-
-# Verify the binary exists and create a wrapper if it is named differently
-if ! command -v calamares >/dev/null 2>&1; then
-    for bin in /usr/bin/calamares /usr/sbin/calamares                /usr/lib/calamares/calamares; do
-        if [ -x "$bin" ]; then
-            ln -sf "$bin" /usr/local/bin/calamares
-            echo "  calamares symlinked from $bin"
-            break
-        fi
-    done
-fi
-command -v calamares >/dev/null 2>&1 && echo "  calamares: OK" || echo "  WARN: calamares binary not found after install"
+apt-get install -y --no-install-recommends gcc make pkg-config libgtk-3-dev libgtk-3-0 \
+    || echo "WARN: GTK3 build deps failed"
 
 # lightdm is installed by installer.sh directly into the target, not the live env
 
@@ -1027,451 +1010,22 @@ CHROOT
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
 
-echo "==> Setting up Calamares branding..."
-BRAND_DEST="$WORK/squashfs-root/usr/share/calamares/branding/boreal"
-mkdir -p "$BRAND_DEST"
-
-if [ -f "$BRANDING_ZIP" ]; then
-    rm -rf /tmp/calamares-branding
-    unzip -o "$BRANDING_ZIP" -d /tmp/calamares-branding/ 2>/dev/null || true
-    # Copy the base files (install.png, languages.png etc) from zip as fallback
-    if [ -d /tmp/calamares-branding/branding/default ]; then
-        cp /tmp/calamares-branding/branding/default/*.png "$BRAND_DEST/" 2>/dev/null || true
-        cp /tmp/calamares-branding/branding/default/lang "$BRAND_DEST/" -r 2>/dev/null || true
-    fi
-    rm -rf /tmp/calamares-branding
+echo "==> Building and installing BorealOS graphical installer..."
+GUI_SRC="$SCRIPT_DIR/gui-installer"
+if [ ! -f "$GUI_SRC/boreal-installer.c" ]; then
+    die "Missing $GUI_SRC/boreal-installer.c - graphical installer source not found"
 fi
+mkdir -p "$WORK/squashfs-root/usr/share/boreal-installer"
+cp "$GUI_SRC/boreal-installer.c" "$WORK/squashfs-root/tmp/boreal-installer.c"
+cp "$GUI_SRC/style.css" "$WORK/squashfs-root/usr/share/boreal-installer/style.css"
 
-# --- branding.desc: fully updated for BorealOS ---
-cat > "$BRAND_DEST/branding.desc" << 'BRANDDESC'
-# BorealOS Calamares Branding
-# SPDX-License-Identifier: CC0-1.0
----
-componentName:  boreal
-
-welcomeStyleCalamares:   false
-welcomeExpandingLogo:    true
-
-windowExpanding:    fixed
-windowSize:         900px,600px
-windowPlacement:    center
-
-sidebar:    widget
-navigation: widget
-
-strings:
-    productName:         "BorealOS"
-    shortProductName:    "Boreal"
-    version:             "Alpha"
-    shortVersion:        "alpha"
-    versionedName:       "BorealOS Alpha"
-    shortVersionedName:  "BorealOS Alpha"
-    bootloaderEntryName: "BorealOS"
-    productUrl:          "https://github.com/DamianDaniel/borealOS"
-    supportUrl:          "https://github.com/DamianDaniel/borealOS/issues"
-
-images:
-    productBanner:       "banner.png"
-    productIcon:         "logo.png"
-    productLogo:         "logo.png"
-    productWallpaper:    "wallpaper.png"
-    productWelcome:      "welcome.png"
-
-style:
-    SidebarBackground:        "#0d1f2d"
-    SidebarText:              "#b2f0e8"
-    SidebarTextCurrent:       "#0d1f2d"
-    SidebarBackgroundCurrent: "#3dffd2"
-
-slideshow:      [ "install.png" ]
-slideshowAPI:   1
-
-uploadServer:
-    type:      "none"
-    url:       ""
-    sizeLimit: -1
-BRANDDESC
-
-# --- stylesheet.qss: BorealOS teal/dark-navy palette ---
-cat > "$BRAND_DEST/stylesheet.qss" << 'QSS'
-#mainApp, QDialog {
-    background-color: #0d1f2d;
-    background-image: url(:/branding/boreal/wallpaper.png);
-    background-repeat: none;
-    background-position: center;
-    color: #e0f7f4;
-    font-family: "Inter", "Noto Sans", sans-serif;
-    font-size: 11pt;
-}
-#sidebarApp { background-color: #0d1f2d; color: #b2f0e8; }
-#sidebarMenuApp { background-color: #0d1f2d; }
-QPushButton {
-    background-color: #163a4a; color: #3dffd2;
-    border: 1px solid #3dffd2; border-radius: 4px; padding: 6px 16px;
-}
-QPushButton:hover { background-color: #1e5060; color: #ffffff; }
-QPushButton:pressed { background-color: #3dffd2; color: #0d1f2d; }
-QPushButton:disabled { background-color: #0d2535; color: #4a7a7a; border-color: #2a5555; }
-QPushButton#pushButtonNext, QPushButton#pushButtonInstall {
-    background-color: #3dffd2; color: #0d1f2d; font-weight: bold; border: none;
-}
-QPushButton#pushButtonNext:hover, QPushButton#pushButtonInstall:hover {
-    background-color: #7fffd4;
-}
-QProgressBar {
-    background-color: #163a4a; border: 1px solid #3dffd2;
-    border-radius: 4px; text-align: center; color: #e0f7f4; height: 18px;
-}
-QProgressBar::chunk {
-    background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #3dffd2,stop:1 #5fffaa);
-    border-radius: 3px;
-}
-QLineEdit, QComboBox, QSpinBox {
-    background-color: #163a4a; color: #e0f7f4;
-    border: 1px solid #2a6060; border-radius: 4px; padding: 4px 8px;
-    selection-background-color: #3dffd2; selection-color: #0d1f2d;
-}
-QLineEdit:focus, QComboBox:focus { border-color: #3dffd2; }
-QComboBox QAbstractItemView {
-    background-color: #163a4a; color: #e0f7f4;
-    selection-background-color: #3dffd2; selection-color: #0d1f2d;
-    border: 1px solid #3dffd2;
-}
-QListView, QTreeView, QTableView {
-    background-color: #0f2535; color: #e0f7f4;
-    border: 1px solid #2a6060; alternate-background-color: #163a4a;
-}
-QListView::item:selected, QTreeView::item:selected {
-    background-color: #3dffd2; color: #0d1f2d;
-}
-QScrollBar:vertical { background: #0d1f2d; width: 8px; border-radius: 4px; }
-QScrollBar::handle:vertical { background: #3dffd2; border-radius: 4px; min-height: 20px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar:horizontal { background: #0d1f2d; height: 8px; border-radius: 4px; }
-QScrollBar::handle:horizontal { background: #3dffd2; border-radius: 4px; min-width: 20px; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-QLabel { color: #e0f7f4; }
-QLabel#labelWelcome, QLabel#labelSubtitle { color: #3dffd2; font-size: 14pt; font-weight: bold; }
-QCheckBox, QRadioButton { color: #e0f7f4; spacing: 6px; }
-QCheckBox::indicator, QRadioButton::indicator {
-    width: 14px; height: 14px; border: 1px solid #3dffd2;
-    background: #163a4a; border-radius: 3px;
-}
-QCheckBox::indicator:checked { background-color: #3dffd2; }
-QRadioButton::indicator { border-radius: 7px; }
-QRadioButton::indicator:checked { background-color: #3dffd2; }
-QGroupBox {
-    border: 1px solid #2a6060; border-radius: 6px;
-    margin-top: 8px; padding-top: 8px; color: #3dffd2; font-weight: bold;
-}
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }
-QTabBar::tab {
-    background: #163a4a; color: #b2f0e8; border: 1px solid #2a6060;
-    border-bottom: none; padding: 6px 14px;
-    border-top-left-radius: 4px; border-top-right-radius: 4px;
-}
-QTabBar::tab:selected { background: #0d1f2d; color: #3dffd2; border-bottom: 2px solid #3dffd2; }
-QTabWidget::pane { border: 1px solid #2a6060; }
-QSS
-
-# --- Convert borealOS images to correct Calamares slot sizes ---
-# banner.png  : top-of-welcome wide banner, max 460x64px
-convert "$BANNER" -trim -resize 460x64 -background none -gravity center \
-    -extent 460x64 "$BRAND_DEST/banner.png" 2>/dev/null || \
-    cp "$BANNER" "$BRAND_DEST/banner.png"
-
-# logo.png    : sidebar step indicator + window icon, 80x80px square
-convert "$LOGO" -resize 80x80 -background none -gravity center \
-    -extent 80x80 "$BRAND_DEST/logo.png" 2>/dev/null || \
-    cp "$LOGO" "$BRAND_DEST/logo.png"
-
-# welcome.png : center of welcome page, 320x150px (fits the window well)
-convert "$LOGO" -resize 320x320 -background none -gravity center \
-    "$BRAND_DEST/welcome.png" 2>/dev/null || \
-    cp "$LOGO" "$BRAND_DEST/welcome.png"
-
-# wallpaper.png : Calamares window background, generated at the exact fixed
-# window size (900x600) so Qt has nothing to tile — windowExpanding is also
-# set to "fixed" in branding.desc so the window can't be resized past this.
-convert "$WALLPAPER_BG2" -resize 900x600^ -gravity center -extent 900x600 \
-    "$BRAND_DEST/wallpaper.png" 2>/dev/null || \
-    cp "$WALLPAPER_BG2" "$BRAND_DEST/wallpaper.png"
-
-ok "Calamares branding installed (BorealOS assets + theme)."
-
-mkdir -p "$WORK/squashfs-root/etc/calamares"
-# ── Calamares: wrapper script + module configs ────────────────────────────────
-# The wrapper runs at install time (inside the live env) and:
-#   1. Detects which calamares modules are actually compiled in
-#   2. Finds the squashfs source path dynamically
-#   3. Writes settings.conf and unpackfs.conf accordingly
-#   4. Launches the real calamares binary
-
-# Find and rename the real calamares binary
-CHROOT_CAL="$WORK/squashfs-root"
-CAL_FOUND=0
-for cal_bin in "$CHROOT_CAL/usr/bin/calamares" "$CHROOT_CAL/usr/sbin/calamares"                "$CHROOT_CAL/usr/local/bin/calamares"; do
-    if [ -f "$cal_bin" ] && [ ! -L "$cal_bin" ]; then
-        mv "$cal_bin" "${cal_bin}-real"
-        echo "  calamares found and moved: ${cal_bin}-real"
-        CAL_FOUND=1
-        break
-    fi
-done
-if [ "$CAL_FOUND" -eq 0 ]; then
-    echo "  WARN: calamares binary not found in squashfs — wrapper will report error at runtime"
-fi
-
-cat > "$WORK/squashfs-root/usr/local/bin/calamares" << 'CALWRAPPER'
-#!/bin/bash
-# BorealOS Calamares wrapper — auto-detects modules and squashfs path
-exec > /var/log/boreal-calamares-wrapper.log 2>&1
-
-MODULES_DIR=/usr/lib/calamares/modules
-CONF_DIR=/etc/calamares
-mkdir -p "$CONF_DIR/modules"
-
-show_error() {
-    local msg="$1"
-    echo "ERROR: $msg"
-    if command -v zenity >/dev/null 2>&1; then
-        DISPLAY="${DISPLAY:-:0}" zenity --error --text="$msg" 2>/dev/null &
-    elif command -v xfce4-terminal >/dev/null 2>&1; then
-        DISPLAY="${DISPLAY:-:0}" xfce4-terminal --hold -e "bash -c 'echo \"$msg\"; read'" &
-    elif command -v xterm >/dev/null 2>&1; then
-        DISPLAY="${DISPLAY:-:0}" xterm -hold -e "bash -c 'echo \"$msg\"; read'" &
-    fi
-}
-
-# Find the real calamares binary
-CAL_REAL=""
-for b in /usr/bin/calamares-real /usr/sbin/calamares-real          /usr/local/bin/calamares-real /usr/bin/calamares.real; do
-    [ -x "$b" ] && CAL_REAL="$b" && break
-done
-if [ -z "$CAL_REAL" ]; then
-    show_error "Calamares not installed in this ISO. Rebuild with a rootfs that has calamares in its repos."
-    exit 1
-fi
-# Calamares needs to run as root
-if [ "$(id -u)" -ne 0 ]; then
-    exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" "$0" "$@"
-fi
-
-# kpmcore (the partition module backend) refuses to touch mounted partitions,
-# which is why a disk with auto-mounted leftover partitions from a previous
-# install shows up as "no partitions to install on". Unmount everything that
-# isn't our own root/EFI/live mounts before launching.
-for part in $(lsblk -lnpo NAME,TYPE | awk '$2=="part"{print $1}'); do
-    case "$part" in
-        $(findmnt -n -o SOURCE / 2>/dev/null)|$(findmnt -n -o SOURCE /boot/efi 2>/dev/null)) continue ;;
-    esac
-    mountpoint=$(findmnt -n -o TARGET "$part" 2>/dev/null) || continue
-    case "$mountpoint" in
-        /run/live*|/lib/live*) continue ;;
-    esac
-    umount "$part" 2>/dev/null && echo "  unmounted leftover partition: $part ($mountpoint)"
-done
-
-# Detect squashfs source path
-SQUASHFS=""
-for p in \
-    /run/live/medium/live/filesystem.squashfs \
-    /lib/live/mount/medium/live/filesystem.squashfs \
-    /run/live/rootfs/filesystem.squashfs \
-    /mnt/live/filesystem.squashfs; do
-    [ -f "$p" ] && SQUASHFS="$p" && break
-done
-if [ -z "$SQUASHFS" ]; then
-    SQUASHFS=$(find /run /lib /mnt -name "filesystem.squashfs" 2>/dev/null | head -1)
-fi
-echo "calamares-wrapper: squashfs at $SQUASHFS"
-
-# Write unpackfs.conf with detected path
-cat > "$CONF_DIR/modules/unpackfs.conf" << UNPACKFSCONF
----
-unpack:
-  - source: ${SQUASHFS}
-    sourcefs: squashfs
-    destination: ""
-UNPACKFSCONF
-
-# Write welcome.conf — relax requirements so installer isn't blocked
-cat > "$CONF_DIR/modules/welcome.conf" << WELCOMECONF
----
-showSupportUrl: true
-showKnownIssuesUrl: true
-showReleaseNotesUrl: false
-requirements:
-  requiredStorage: 8
-  requiredRam: 0.5
-  internetCheckUrl: ""
-  check:
-    - storage
-    - ram
-  nocheck:
-    - internet
-    - power
-    - root
-WELCOMECONF
-
-# Write finished.conf
-cat > "$CONF_DIR/modules/finished.conf" << FINISHEDCONF
----
-restartNowEnabled: true
-restartNowChecked: true
-restartNowCommand: "shutdown -r now"
-FINISHEDCONF
-
-# Detect which exec modules are available
-has_module() {
-    [ -d "$MODULES_DIR/$1" ] || \
-    [ -f "$MODULES_DIR/$1.so" ] || \
-    [ -f "$MODULES_DIR/${1}/${1}.so" ]
-}
-
-build_exec_sequence() {
-    for mod in partition mount unpackfs fstab locale keyboard users bootloader; do
-        has_module "$mod" && echo "    - $mod"
-    done
-}
-
-EXEC_SEQ=$(build_exec_sequence)
-echo "calamares-wrapper: exec modules: $(echo $EXEC_SEQ | tr '\n' ' ')"
-
-# Write settings.conf
-cat > /tmp/boreal-calamares-settings.conf << CALCONF
----
-modules-search: [ local, $MODULES_DIR ]
-sequence:
-  - show:
-    - welcome
-    - locale
-    - keyboard
-    - partition
-    - users
-    - summary
-  - exec:
-$EXEC_SEQ
-  - show:
-    - finished
-branding: boreal
-prompt-install: true
-dont-chroot: false
-CALCONF
-
-exec "$CAL_REAL" -D 6 --config /tmp/boreal-calamares-settings.conf "$@"
-CALWRAPPER
-chmod +x "$WORK/squashfs-root/usr/local/bin/calamares"
-# Also symlink from /usr/bin if it was moved
-ln -sf /usr/local/bin/calamares "$WORK/squashfs-root/usr/bin/calamares" 2>/dev/null || true
-
-mkdir -p "$WORK/squashfs-root/etc/calamares/modules"
-
-# ── Module configs (static ones that don't need runtime detection) ────────────
-
-# locale
-cat > "$WORK/squashfs-root/etc/calamares/modules/locale.conf" << 'LOCALECONF'
----
-region: "America"
-zone: "New_York"
-localeGenPath: "/etc/locale.gen"
-geoipStyle: "json"
-LOCALECONF
-
-# users
-cat > "$WORK/squashfs-root/etc/calamares/modules/users.conf" << 'USERSCONF'
----
-userShell: /bin/bash
-autologinGroup: autologin
-sudoersGroup: sudo
-setRootPassword: false
-doAutologin: false
-doAdminAutologin: false
-passwordRequirements:
-  minLength: 6
-  maxLength: -1
-allowWeakPasswords: false
-allowWeakPasswordsDefault: false
-USERSCONF
-
-# bootloader
-cat > "$WORK/squashfs-root/etc/calamares/modules/bootloader.conf" << 'BOOTCONF'
----
-efiBootloaderId: "BorealOS"
-installEFIFallback: true
-grubInstall: "grub-install"
-grubMkconfig: "grub-mkconfig"
-grubCfg: "/boot/grub/grub.cfg"
-grubProbe: "grub-probe"
-efiBootLoader: "grub"
-kernel: "/vmlinuz"
-img: "/initrd.img"
-kernelLine: ", with Linux"
-fallbackKernelLine: ", with Linux (fallback)"
-timeout: 5
-grubTheme: "/boot/grub/themes/boreal/theme.txt"
-BOOTCONF
-
-# fstab
-cat > "$WORK/squashfs-root/etc/calamares/modules/fstab.conf" << 'FSTABCONF'
----
-mountOptions:
-  default: "defaults"
-  btrfs: "defaults,compress=zstd:1"
-  efi: "umask=0077"
-  swap: "sw"
-FSTABCONF
-
-# partition
-cat > "$WORK/squashfs-root/etc/calamares/modules/partition.conf" << 'PARTCONF'
----
-efi:
-  mountPoint: "/boot/efi"
-  recommendedSize: 300MiB
-  minimumSize: 100MiB
-userSwapChoices:
-  - none
-  - small
-  - suspend
-  - file
-initialSwapChoice: none
-PARTCONF
-
-# Remove leftover shellprocess.conf (module not available on Debian calamares)
-rm -f "$WORK/squashfs-root/etc/calamares/modules/shellprocess.conf"
-# Stub unmount so calamares doesn't error if it finds a reference to it
-cat > "$WORK/squashfs-root/etc/calamares/modules/unmount.conf" << 'UNMOUNTCONF'
----
-UNMOUNTCONF
-
-# settings.conf: minimal static version — wrapper will override with /tmp version at runtime
-# This serves as a fallback if the wrapper fails for any reason
-cat > "$WORK/squashfs-root/etc/calamares/settings.conf" << 'CALSETTINGS'
----
-modules-search: [ local, /usr/lib/calamares/modules ]
-sequence:
-  - show:
-    - welcome
-    - locale
-    - keyboard
-    - partition
-    - users
-    - summary
-  - exec:
-    - partition
-    - mount
-    - unpackfs
-    - fstab
-    - locale
-    - keyboard
-    - users
-    - bootloader
-  - show:
-    - finished
-branding: boreal
-prompt-install: true
-dont-chroot: false
-CALSETTINGS
+chroot "$WORK/squashfs-root" /bin/bash <<GUIBUILD || die "boreal-installer build failed"
+set -e
+gcc \$(pkg-config --cflags gtk+-3.0) -O2 -o /usr/local/bin/boreal-installer /tmp/boreal-installer.c \$(pkg-config --libs gtk+-3.0) -lpthread
+chmod +x /usr/local/bin/boreal-installer
+rm -f /tmp/boreal-installer.c
+GUIBUILD
+ok "boreal-installer built."
 
 echo "==> Finalizing system..."
 find "$WORK/squashfs-root/usr/share" \
@@ -1508,6 +1062,7 @@ apt-get install -y --no-install-recommends \
     libudev-dev libdbus-1-dev libsystemd-dev \
     libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev libglib2.0-dev \
     libffi-dev libexpat1-dev libcap-dev libxrandr-dev \
+    libpipewire-0.3-dev libspa-0.2-dev \
     xwayland wayland-protocols
 
 # Debian stable's apt rustc/cargo are frequently older than niri's MSRV, which
