@@ -1039,8 +1039,6 @@ find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/nul
 find "$WORK/squashfs-root/usr/share/icons" -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/boot/grub" -name "*debian*" -delete 2>/dev/null || true
 
-# Remove plymouth entirely from the live env — not used, and its initramfs hook
-# adds boot delay and can conflict with simple console boot.
 find "$WORK/squashfs-root/usr/share/plymouth"      "$WORK/squashfs-root/etc/plymouth"      -delete 2>/dev/null || true
 rm -f "$WORK/squashfs-root/usr/share/initramfs-tools/hooks/plymouth"       "$WORK/squashfs-root/etc/initramfs-tools/conf.d/plymouth" 2>/dev/null || true
 
