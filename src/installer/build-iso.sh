@@ -125,28 +125,6 @@ cp "$WP_MAIN"           "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-alt.png"
 
-# Replace the xfdesktop default backdrop so our wallpaper shows immediately
-# on first boot before xfconf-query has a chance to run
-mkdir -p "$WORK/squashfs-root/usr/share/xfce4/backdrops"
-cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/xfce4/backdrops/BorealOS.png"
-# Remove all existing default backdrops so xfdesktop picks ours
-find "$WORK/squashfs-root/usr/share/xfce4/backdrops"     -not -name "BorealOS.png" -type f -delete 2>/dev/null || true
-
-# Forcefully overwrite every stock wallpaper file byte-for-byte, wherever it lives.
-# This guarantees our image shows regardless of which path xfdesktop or any
-# other component actually references, no xfconf plumbing required.
-for dir in \
-    "$WORK/squashfs-root/usr/share/backgrounds" \
-    "$WORK/squashfs-root/usr/share/wallpapers" \
-    "$WORK/squashfs-root/usr/share/pixmaps/backgrounds"; do
-    [ -d "$dir" ] || continue
-    find "$dir" -type f \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" \) -print0 2>/dev/null | \
-        while IFS= read -r -d '' f; do cp "$WP_MAIN" "$f" 2>/dev/null || true; done
-done
-mkdir -p "$WORK/squashfs-root/usr/share/backgrounds/xfce"
-cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-shapes.png" 2>/dev/null || true
-cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-verticals.png" 2>/dev/null || true
-cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-stripes.png" 2>/dev/null || true
 
 # Set it as the xfdesktop default via the defaults config
 mkdir -p "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
@@ -451,62 +429,39 @@ cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desk
 # Desktop shortcuts
 mkdir -p "$WORK/squashfs-root/root/Desktop"
 
-# Write desktop files
-# Graphical installer — named "1-" so it sorts above TTY Install
-cat > "$WORK/squashfs-root/root/Desktop/1-Install BorealOS.desktop" <<'INSTDESK'
+cat > "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" <<'INSTDESK'
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Install BorealOS
 Comment=Launch the BorealOS graphical installer
-Exec=/usr/local/bin/boreal-installer
+Exec=bash -c '/usr/local/bin/boreal-installer 2>/tmp/boreal-installer.log'
 Icon=/usr/share/pixmaps/boreal-logo.png
 StartupWMClass=boreal-installer
 Terminal=false
 Categories=System;
 INSTDESK
 
-# TTY installer — named "2-" so it sorts below graphical
-# Exec uses a terminal finder script so kitty/xfce4-terminal/xterm all work
-cat > "$WORK/squashfs-root/root/Desktop/2-TTY Install.desktop" <<'TTYDESK'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=TTY Install
-Comment=Launch the BorealOS terminal installer
-Exec=/usr/local/bin/boreal-open-terminal /usr/local/bin/boreal-tty-install
-Icon=utilities-terminal
-Terminal=false
-Categories=System;
-TTYDESK
-
 chmod +x "$WORK/squashfs-root/root/Desktop/"*.desktop
 
-# Trust desktop files at build time using extended attributes so XFCE
-# shows them as launchers immediately without any runtime gio calls.
-# This writes the same metadata that gio/gvfs would write at runtime.
 for df in "$WORK/squashfs-root/root/Desktop/"*.desktop; do
     attr -s "metadata::trusted" -V "true" "$df" 2>/dev/null ||     setfattr -n "user.metadata::trusted" -v "true" "$df" 2>/dev/null || true
 done
 
-# Pin explicit grid positions so icon order is deterministic regardless of
-# directory scan order (xfdesktop falls back to scan order until a position
-# is cached, which is why "TTY Install" could render above "Install").
-attr -s "metadata::xfdesktop-icon-position" -V "0,0" "$WORK/squashfs-root/root/Desktop/1-Install BorealOS.desktop" 2>/dev/null ||     setfattr -n "user.metadata::xfdesktop-icon-position" -v "0,0" "$WORK/squashfs-root/root/Desktop/1-Install BorealOS.desktop" 2>/dev/null || true
-attr -s "metadata::xfdesktop-icon-position" -V "0,1" "$WORK/squashfs-root/root/Desktop/2-TTY Install.desktop" 2>/dev/null ||     setfattr -n "user.metadata::xfdesktop-icon-position" -v "0,1" "$WORK/squashfs-root/root/Desktop/2-TTY Install.desktop" 2>/dev/null || true
+attr -s "metadata::xfdesktop-icon-position" -V "0,0" "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" 2>/dev/null ||     setfattr -n "user.metadata::xfdesktop-icon-position" -v "0,0" "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" 2>/dev/null || true
 
-# Fallback: autostart script that trusts them at first login (runs before xfdesktop redraws)
 mkdir -p "$WORK/squashfs-root/root/.config/autostart"
 cat > "$WORK/squashfs-root/root/.config/autostart/boreal-trust-desktop.desktop" <<'AUTOSTART'
 [Desktop Entry]
 Type=Application
 Name=BorealOS Trust Desktop
-Exec=bash -c 'gio set "$HOME/Desktop/1-Install BorealOS.desktop" metadata::trusted true 2>/dev/null; gio set "$HOME/Desktop/1-Install BorealOS.desktop" metadata::xfdesktop-icon-position "0,0" 2>/dev/null; gio set "$HOME/Desktop/2-TTY Install.desktop" metadata::trusted true 2>/dev/null; gio set "$HOME/Desktop/2-TTY Install.desktop" metadata::xfdesktop-icon-position "0,1" 2>/dev/null; xfdesktop --reload 2>/dev/null'
+Exec=bash -c 'gio set "$HOME/Desktop/Install BorealOS.desktop" metadata::trusted true 2>/dev/null; gio set "$HOME/Desktop/Install BorealOS.desktop" metadata::xfdesktop-icon-position "0,0" 2>/dev/null; xfdesktop --reload 2>/dev/null'
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 StartupNotify=false
 AUTOSTART
+
 
 # TTY install wrapper — runs the terminal installer
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
@@ -521,7 +476,7 @@ TTYINSTALL
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-tty-install"
 
 # Terminal launcher: tries kitty (with rice config) → xfce4-terminal → xterm
-# This is what the TTY Install desktop shortcut calls
+# Terminal launcher helper, used by tty install command if run manually
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-open-terminal" <<'TERMLAUNCH'
 #!/bin/bash
 # Usage: boreal-open-terminal <command>
@@ -822,19 +777,6 @@ eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
    [ -f "$f" ] && gio set "$f" metadata::trusted true 2>/dev/null || true
  done
  xfdesktop --reload 2>/dev/null || true
-) &
-
-# Launch the BorealOS graphical installer after desktop is ready.
-(sleep 14
- if [ ! -x /usr/local/bin/boreal-installer ]; then
-   DISPLAY=:0 xterm -e "echo boreal-installer not found; read" &
- else
-   while true; do
-     DISPLAY=:0 /usr/local/bin/boreal-installer 2>/tmp/boreal-installer.log
-     [ "$?" -eq 0 ] && break
-     sleep 4
-   done
- fi
 ) &
 
 exec startxfce4
@@ -1150,6 +1092,24 @@ if ! grep -q "autologin" "$WORK/squashfs-root/etc/inittab"; then
     sed -i '/^1:/d' "$WORK/squashfs-root/etc/inittab"
     echo "1:2345:respawn:/sbin/agetty --autologin root --noclear 38400 tty1" >> "$WORK/squashfs-root/etc/inittab"
 fi
+
+echo "==> Forcing BorealOS wallpaper over any package-installed defaults..."
+mkdir -p "$WORK/squashfs-root/usr/share/xfce4/backdrops"
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/xfce4/backdrops/BorealOS.png"
+find "$WORK/squashfs-root/usr/share/xfce4/backdrops"     -not -name "BorealOS.png" -type f -delete 2>/dev/null || true
+
+for dir in \
+    "$WORK/squashfs-root/usr/share/backgrounds" \
+    "$WORK/squashfs-root/usr/share/wallpapers" \
+    "$WORK/squashfs-root/usr/share/pixmaps/backgrounds"; do
+    [ -d "$dir" ] || continue
+    find "$dir" -type f \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" \) -print0 2>/dev/null | \
+        while IFS= read -r -d '' f; do cp "$WP_MAIN" "$f" 2>/dev/null || true; done
+done
+mkdir -p "$WORK/squashfs-root/usr/share/backgrounds/xfce"
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-shapes.png" 2>/dev/null || true
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-verticals.png" 2>/dev/null || true
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-stripes.png" 2>/dev/null || true
 
 echo "==> Building SquashFS..."
 mksquashfs "$WORK/squashfs-root" "$WORK/iso/live/filesystem.squashfs" \

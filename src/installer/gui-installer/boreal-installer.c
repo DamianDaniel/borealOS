@@ -66,6 +66,8 @@ static gboolean log_idle(gpointer data) {
     gtk_text_buffer_get_end_iter(app.log_buffer, &end);
     gtk_text_buffer_insert(app.log_buffer, &end, m->text, -1);
     gtk_text_buffer_insert(app.log_buffer, &end, "\n", -1);
+    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+    gtk_text_buffer_place_cursor(app.log_buffer, &end);
     GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
     gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
     g_free(m->text);
@@ -149,7 +151,7 @@ static gboolean err_idle(gpointer data) {
 static void fail_install(const char *msg) {
     log_line("FATAL: %s", msg);
     ErrMsg *m = g_new0(ErrMsg, 1);
-    m->msg = g_strdup(msg);
+    m->msg = g_strdup_printf("Installation failed: %s\n\nSee the log below for details.", msg);
     g_idle_add(err_idle, m);
 }
 
@@ -362,7 +364,7 @@ static gboolean configure_system(void) {
         "echo 'BorealOS' > /etc/issue\necho 'BorealOS 1.0' > /etc/issue.net\necho 'BorealOS' > /etc/debian_version\n",
         app.hostname, app.hostname, app.timezone, app.timezone,
         app.locale, app.locale, app.locale, app.locale, app.locale);
-    write_file("/tmp/boreal-configure.sh", script);
+    write_file("/mnt/tmp/boreal-configure.sh", script);
     if (run_cmd("chroot /mnt /bin/bash /tmp/boreal-configure.sh") != 0) {
         fail_install("System configuration failed");
         return FALSE;
@@ -617,6 +619,13 @@ static gboolean show_finish_idle(gpointer data) {
 
 typedef gboolean (*StepFn)(void);
 
+static gboolean show_failed_idle(gpointer data) {
+    (void)data;
+    gtk_widget_show(app.btn_cancel);
+    gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Quit");
+    return FALSE;
+}
+
 static void *install_thread(void *arg) {
     (void)arg;
     struct { const char *name; StepFn fn; double frac; } steps[] = {
@@ -644,7 +653,7 @@ static void *install_thread(void *arg) {
         if (use_bind) bind_mounts();
         gboolean ok = steps[i].fn();
         if (use_bind) unbind_mounts();
-        if (!ok) { cleanup_mounts(); return NULL; }
+        if (!ok) { cleanup_mounts(); g_idle_add(show_failed_idle, NULL); return NULL; }
         set_progress(steps[i].frac, steps[i].name);
     }
     cleanup_mounts();
@@ -942,11 +951,23 @@ static void on_net_static_toggled(GtkToggleButton *btn, gpointer data) {
     gtk_widget_set_visible(app.net_static_box, gtk_toggle_button_get_active(btn));
 }
 
-static void on_tz_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer data) {
+static void on_tz_row_selected(GtkListBox *box, GtkListBoxRow *row, gpointer data) {
     (void)box; (void)data;
     if (!row) return;
     GtkWidget *lbl = gtk_bin_get_child(GTK_BIN(row));
     strncpy(app.timezone, gtk_label_get_text(GTK_LABEL(lbl)), sizeof(app.timezone) - 1);
+}
+
+static gboolean on_tz_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+    (void)data;
+    if (event->type != GDK_BUTTON_PRESS || event->button != 1) return FALSE;
+    GtkListBoxRow *clicked = gtk_list_box_get_row_at_y(GTK_LIST_BOX(widget), (int)event->y);
+    GtkListBoxRow *selected = gtk_list_box_get_selected_row(GTK_LIST_BOX(widget));
+    if (clicked && selected && clicked == selected) {
+        on_next(NULL, NULL);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static void refresh_tz_list(void) {
@@ -1061,6 +1082,9 @@ static GtkWidget *page_welcome(void) {
         img = gtk_image_new_from_file("/usr/share/boreal-artwork/logo.png");
     }
     GtkWidget *sub = gtk_label_new("This will guide you through installing BorealOS to disk.");
+    gtk_widget_set_margin_bottom(sub, 20);
+    gtk_widget_set_margin_start(sub, 24);
+    gtk_widget_set_margin_end(sub, 24);
     gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), sub, FALSE, FALSE, 0);
     return box;
@@ -1139,7 +1163,8 @@ static GtkWidget *page_timezone(void) {
     gtk_widget_set_size_request(scroll, 480, 380);
     app.tz_list = gtk_list_box_new();
     gtk_widget_set_name(app.tz_list, "dark-listbox");
-    g_signal_connect(app.tz_list, "row-activated", G_CALLBACK(on_tz_row_activated), NULL);
+    g_signal_connect(app.tz_list, "row-selected", G_CALLBACK(on_tz_row_selected), NULL);
+    g_signal_connect(app.tz_list, "button-press-event", G_CALLBACK(on_tz_button_press), NULL);
     gtk_container_add(GTK_CONTAINER(scroll), app.tz_list);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
@@ -1419,8 +1444,8 @@ int main(int argc, char **argv) {
     app.current_page = 0;
     update_nav_buttons();
 
-    gtk_widget_show_all(app.window);
     gtk_window_fullscreen(GTK_WINDOW(app.window));
+    gtk_widget_show_all(app.window);
     gtk_widget_hide(app.net_static_box);
     gtk_widget_hide(app.wifi_box);
     refresh_wifi_list();
