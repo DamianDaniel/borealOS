@@ -23,6 +23,7 @@ typedef struct {
     GtkWidget *net_dhcp, *net_static, *net_skip, *net_if_combo;
     GtkWidget *net_ip_entry, *net_gw_entry, *net_dns_entry;
     GtkWidget *net_static_box;
+    GtkWidget *net_wifi, *wifi_box, *wifi_ssid_combo, *wifi_pass_entry;
     GtkWidget *summary_label;
     GtkWidget *progress_bar, *progress_label, *log_view;
     GtkWidget *finish_box;
@@ -40,6 +41,8 @@ typedef struct {
     char net_ip[64];
     char net_gw[64];
     char net_dns[64];
+    char wifi_ssid[128];
+    char wifi_pass[128];
     char root_uuid[64];
     char efi_uuid[64];
     char bios_part[64];
@@ -300,6 +303,30 @@ static gboolean write_network(void) {
         run_cmd("rm -f /mnt/etc/runlevels/default/dhcpcd /mnt/etc/runlevels/default/NetworkManager");
         run_cmd("ln -sf ../init.d/dhcpcd /mnt/etc/rc2.d/S02dhcpcd");
         run_cmd("ln -sf /etc/init.d/dhcpcd /mnt/etc/runlevels/default/dhcpcd");
+    } else if (strcmp(app.net_type, "wifi") == 0) {
+        run_cmd("rm -f /mnt/etc/rc2.d/S*dhcpcd /mnt/etc/rc2.d/S*NetworkManager");
+        run_cmd("rm -f /mnt/etc/runlevels/default/dhcpcd /mnt/etc/runlevels/default/NetworkManager");
+        run_cmd("ln -sf ../init.d/NetworkManager /mnt/etc/rc2.d/S02NetworkManager");
+        run_cmd("ln -sf /etc/init.d/NetworkManager /mnt/etc/runlevels/default/NetworkManager");
+
+        char *uuid = run_capture("cat /proc/sys/kernel/random/uuid");
+        if (uuid) g_strstrip(uuid);
+        run_cmd("mkdir -p /mnt/etc/NetworkManager/system-connections");
+        char conf[1024];
+        snprintf(conf, sizeof(conf),
+            "[connection]\nid=%s\nuuid=%s\ntype=wifi\nautoconnect=true\n\n"
+            "[wifi]\nmode=infrastructure\nssid=%s\n\n"
+            "[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n"
+            "[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n",
+            app.wifi_ssid, uuid ? uuid : "00000000-0000-0000-0000-000000000000",
+            app.wifi_ssid, app.wifi_pass);
+        char path[256];
+        snprintf(path, sizeof(path), "/mnt/etc/NetworkManager/system-connections/%s.nmconnection", app.wifi_ssid);
+        write_file(path, conf);
+        char chmodcmd[300];
+        snprintf(chmodcmd, sizeof(chmodcmd), "chmod 600 '%s'", path);
+        run_cmd(chmodcmd);
+        g_free(uuid);
     } else {
         FILE *f = fopen("/mnt/etc/network/interfaces", "a");
         if (f) {
@@ -635,8 +662,13 @@ static void collect_state_from_ui(void) {
     strncpy(app.locale, gtk_entry_get_text(GTK_ENTRY(app.locale_entry)), sizeof(app.locale) - 1);
 
     if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_dhcp))) strcpy(app.net_type, "dhcp");
+    else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_wifi))) strcpy(app.net_type, "wifi");
     else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_static))) strcpy(app.net_type, "static");
     else strcpy(app.net_type, "skip");
+
+    gchar *ssid_active = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(app.wifi_ssid_combo));
+    if (ssid_active) { strncpy(app.wifi_ssid, ssid_active, sizeof(app.wifi_ssid) - 1); g_free(ssid_active); }
+    strncpy(app.wifi_pass, gtk_entry_get_text(GTK_ENTRY(app.wifi_pass_entry)), sizeof(app.wifi_pass) - 1);
 
     GtkTreeIter iter;
     if (gtk_combo_box_get_active_iter(GTK_COMBO_BOX(app.net_if_combo), &iter)) {
@@ -683,19 +715,40 @@ static void update_nav_buttons(void) {
     }
 }
 
+static void add_summary_row(GtkGrid *grid, int row, const char *key, const char *value) {
+    GtkWidget *k = gtk_label_new(key);
+    gtk_widget_set_halign(k, GTK_ALIGN_START);
+    PangoAttrList *attrs = pango_attr_list_new();
+    pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+    gtk_label_set_attributes(GTK_LABEL(k), attrs);
+    pango_attr_list_unref(attrs);
+    GtkWidget *v = gtk_label_new(value);
+    gtk_widget_set_halign(v, GTK_ALIGN_START);
+    gtk_grid_attach(grid, k, 0, row, 1, 1);
+    gtk_grid_attach(grid, v, 1, row, 1, 1);
+}
+
 static void build_summary(void) {
     collect_state_from_ui();
-    GString *s = g_string_new(NULL);
-    g_string_append_printf(s, "Disk:          %s\n", app.disk);
-    g_string_append_printf(s, "Hostname:      %s\n", app.hostname);
-    g_string_append_printf(s, "Locale:        %s\n", app.locale);
-    g_string_append_printf(s, "Timezone:      %s\n", app.timezone);
-    g_string_append_printf(s, "Desktop:       %s\n", app.de_choice);
-    g_string_append_printf(s, "Network:       %s\n", app.net_type);
-    g_string_append_printf(s, "Extra users:   %d\n", g_list_length(app.extra_users));
-    g_string_append(s, "\nAll data on the selected disk will be erased.");
-    gtk_label_set_text(GTK_LABEL(app.summary_label), s->str);
-    g_string_free(s, TRUE);
+    GList *children = gtk_container_get_children(GTK_CONTAINER(app.summary_label));
+    for (GList *l = children; l; l = l->next) gtk_widget_destroy(GTK_WIDGET(l->data));
+    g_list_free(children);
+
+    GtkGrid *grid = GTK_GRID(app.summary_label);
+    char users[16];
+    snprintf(users, sizeof(users), "%d", g_list_length(app.extra_users));
+    add_summary_row(grid, 0, "Disk", app.disk);
+    add_summary_row(grid, 1, "Hostname", app.hostname);
+    add_summary_row(grid, 2, "Locale", app.locale);
+    add_summary_row(grid, 3, "Timezone", app.timezone);
+    add_summary_row(grid, 4, "Desktop", app.de_choice);
+    add_summary_row(grid, 5, "Network", app.net_type);
+    add_summary_row(grid, 6, "Extra users", users);
+    GtkWidget *warn = gtk_label_new("All data on the selected disk will be erased.");
+    gtk_widget_set_name(warn, "warn-label");
+    gtk_widget_set_halign(warn, GTK_ALIGN_START);
+    gtk_grid_attach(grid, warn, 0, 7, 2, 1);
+    gtk_widget_show_all(GTK_WIDGET(grid));
 }
 
 static gboolean validate_page(int idx) {
@@ -730,6 +783,12 @@ static gboolean validate_page(int idx) {
         if (!strcmp(app.net_type, "static") && (!app.net_if[0] || !app.net_ip[0] || !app.net_gw[0])) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Fill in interface, IP and gateway for static networking.");
+            gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
+            return FALSE;
+        }
+        if (!strcmp(app.net_type, "wifi") && (!app.wifi_ssid[0] || !app.wifi_pass[0])) {
+            GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
+                GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Select a Wi-Fi network and enter its password.");
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
         }
@@ -851,6 +910,33 @@ static void refresh_iface_list(void) {
     g_object_unref(store);
 }
 
+static void refresh_wifi_list(void) {
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(app.wifi_ssid_combo));
+    run_cmd("nmcli device wifi rescan 2>/dev/null");
+    char *out = run_capture("nmcli -t -f SSID device wifi list 2>/dev/null | awk 'NF && !seen[$0]++'");
+    if (!out) return;
+    gchar **lines = g_strsplit(out, "\n", -1);
+    for (int i = 0; lines[i]; i++) {
+        if (!lines[i][0]) continue;
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.wifi_ssid_combo), lines[i]);
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(app.wifi_ssid_combo), 0);
+    g_strfreev(lines);
+    g_free(out);
+}
+
+static void on_wifi_scan(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    refresh_wifi_list();
+}
+
+static void on_net_wifi_toggled(GtkToggleButton *btn, gpointer data) {
+    (void)data;
+    gboolean active = gtk_toggle_button_get_active(btn);
+    gtk_widget_set_visible(app.wifi_box, active);
+    if (active) refresh_wifi_list();
+}
+
 static void on_net_static_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
     gtk_widget_set_visible(app.net_static_box, gtk_toggle_button_get_active(btn));
@@ -924,27 +1010,41 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     GtkWidget *name_e = gtk_entry_new();
     GtkWidget *pass_e = gtk_entry_new();
     gtk_entry_set_visibility(GTK_ENTRY(pass_e), FALSE);
+    GtkWidget *pass2_e = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(pass2_e), FALSE);
     GtkWidget *sudo_c = gtk_check_button_new_with_label("Grant sudo");
 
     gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Username"), 0, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), name_e, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Password"), 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), pass_e, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), sudo_c, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm password"), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), pass2_e, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), sudo_c, 1, 3, 1, 1);
     gtk_container_add(GTK_CONTAINER(content), grid);
     gtk_widget_show_all(dlg);
 
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
+    gboolean added = FALSE;
+    while (!added) {
+        int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        if (resp != GTK_RESPONSE_OK) break;
         const char *name = gtk_entry_get_text(GTK_ENTRY(name_e));
         const char *pass = gtk_entry_get_text(GTK_ENTRY(pass_e));
-        if (name[0] && pass[0]) {
-            ExtraUser *u = g_new0(ExtraUser, 1);
-            strncpy(u->name, name, sizeof(u->name) - 1);
-            strncpy(u->pass, pass, sizeof(u->pass) - 1);
-            u->sudo = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sudo_c));
-            app.extra_users = g_list_append(app.extra_users, u);
-            refresh_user_list_display();
+        const char *pass2 = gtk_entry_get_text(GTK_ENTRY(pass2_e));
+        if (!name[0] || !pass[0] || strcmp(pass, pass2)) {
+            GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(dlg), GTK_DIALOG_MODAL,
+                GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Enter a username and matching passwords.");
+            gtk_dialog_run(GTK_DIALOG(d));
+            gtk_widget_destroy(d);
+            continue;
         }
+        ExtraUser *u = g_new0(ExtraUser, 1);
+        strncpy(u->name, name, sizeof(u->name) - 1);
+        strncpy(u->pass, pass, sizeof(u->pass) - 1);
+        u->sudo = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sudo_c));
+        app.extra_users = g_list_append(app.extra_users, u);
+        refresh_user_list_display();
+        added = TRUE;
     }
     gtk_widget_destroy(dlg);
 }
@@ -977,6 +1077,7 @@ static GtkWidget *page_disk(void) {
     gtk_widget_set_halign(warn, GTK_ALIGN_START);
     app.disk_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     GtkWidget *refresh = gtk_button_new_with_label("Refresh");
+    gtk_widget_set_name(refresh, "nav-button");
     g_signal_connect_swapped(refresh, "clicked", G_CALLBACK(refresh_disk_list), NULL);
     g_signal_connect_after(refresh, "clicked", G_CALLBACK(wire_disk_radios), NULL);
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
@@ -997,12 +1098,16 @@ static GtkWidget *page_user(void) {
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
 
     app.hostname_entry = gtk_entry_new();
+    gtk_widget_set_name(app.hostname_entry, "dark-entry");
     gtk_entry_set_text(GTK_ENTRY(app.hostname_entry), "borealOS");
     app.pass1_entry = gtk_entry_new();
+    gtk_widget_set_name(app.pass1_entry, "dark-entry");
     gtk_entry_set_visibility(GTK_ENTRY(app.pass1_entry), FALSE);
     app.pass2_entry = gtk_entry_new();
+    gtk_widget_set_name(app.pass2_entry, "dark-entry");
     gtk_entry_set_visibility(GTK_ENTRY(app.pass2_entry), FALSE);
     app.locale_entry = gtk_entry_new();
+    gtk_widget_set_name(app.locale_entry, "dark-entry");
     gtk_entry_set_text(GTK_ENTRY(app.locale_entry), "en_US.UTF-8");
 
     gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Hostname"), 0, 0, 1, 1);
@@ -1026,12 +1131,14 @@ static GtkWidget *page_timezone(void) {
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
     app.tz_filter_entry = gtk_entry_new();
+    gtk_widget_set_name(app.tz_filter_entry, "dark-entry");
     gtk_entry_set_placeholder_text(GTK_ENTRY(app.tz_filter_entry), "Filter, e.g. Europe/Berlin");
     g_signal_connect(app.tz_filter_entry, "changed", G_CALLBACK(on_tz_filter_changed), NULL);
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_size_request(scroll, -1, 240);
+    gtk_widget_set_size_request(scroll, 480, 380);
     app.tz_list = gtk_list_box_new();
+    gtk_widget_set_name(app.tz_list, "dark-listbox");
     g_signal_connect(app.tz_list, "row-activated", G_CALLBACK(on_tz_row_activated), NULL);
     gtk_container_add(GTK_CONTAINER(scroll), app.tz_list);
 
@@ -1049,6 +1156,7 @@ static GtkWidget *page_extrausers(void) {
     gtk_widget_set_halign(title, GTK_ALIGN_START);
     app.user_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     GtkWidget *add = gtk_button_new_with_label("Add user");
+    gtk_widget_set_name(add, "nav-button");
     g_signal_connect(add, "clicked", G_CALLBACK(on_add_user), NULL);
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.user_list_box, FALSE, FALSE, 8);
@@ -1064,18 +1172,40 @@ static GtkWidget *page_network(void) {
     gtk_widget_set_halign(title, GTK_ALIGN_START);
 
     app.net_dhcp = gtk_radio_button_new_with_label(NULL, "DHCP (automatic)");
+    app.net_wifi = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.net_dhcp), "Wi-Fi");
     app.net_static = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.net_dhcp), "Static IP");
     app.net_skip = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.net_dhcp), "Skip");
     g_signal_connect(app.net_static, "toggled", G_CALLBACK(on_net_static_toggled), NULL);
+    g_signal_connect(app.net_wifi, "toggled", G_CALLBACK(on_net_wifi_toggled), NULL);
+
+    app.wifi_box = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(app.wifi_box), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(app.wifi_box), 12);
+    app.wifi_ssid_combo = gtk_combo_box_text_new();
+    app.wifi_pass_entry = gtk_entry_new();
+    gtk_widget_set_name(app.wifi_pass_entry, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(app.wifi_pass_entry), FALSE);
+    GtkWidget *wifi_refresh = gtk_button_new_with_label("Scan");
+    gtk_widget_set_name(wifi_refresh, "nav-button");
+    g_signal_connect(wifi_refresh, "clicked", G_CALLBACK(on_wifi_scan), NULL);
+    gtk_grid_attach(GTK_GRID(app.wifi_box), gtk_label_new("Network"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.wifi_box), app.wifi_ssid_combo, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.wifi_box), wifi_refresh, 2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.wifi_box), gtk_label_new("Password"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.wifi_box), app.wifi_pass_entry, 1, 1, 2, 1);
+    gtk_widget_set_no_show_all(app.wifi_box, TRUE);
 
     app.net_static_box = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(app.net_static_box), 6);
     gtk_grid_set_column_spacing(GTK_GRID(app.net_static_box), 12);
     app.net_if_combo = gtk_combo_box_text_new();
     app.net_ip_entry = gtk_entry_new();
+    gtk_widget_set_name(app.net_ip_entry, "dark-entry");
     gtk_entry_set_placeholder_text(GTK_ENTRY(app.net_ip_entry), "192.168.1.100/24");
     app.net_gw_entry = gtk_entry_new();
+    gtk_widget_set_name(app.net_gw_entry, "dark-entry");
     app.net_dns_entry = gtk_entry_new();
+    gtk_widget_set_name(app.net_dns_entry, "dark-entry");
     gtk_entry_set_placeholder_text(GTK_ENTRY(app.net_dns_entry), "1.1.1.1");
 
     gtk_grid_attach(GTK_GRID(app.net_static_box), gtk_label_new("Interface"), 0, 0, 1, 1);
@@ -1090,6 +1220,8 @@ static GtkWidget *page_network(void) {
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.net_dhcp, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.net_wifi, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.wifi_box, FALSE, FALSE, 8);
     gtk_box_pack_start(GTK_BOX(box), app.net_static, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.net_static_box, FALSE, FALSE, 8);
     gtk_box_pack_start(GTK_BOX(box), app.net_skip, FALSE, FALSE, 0);
@@ -1102,7 +1234,9 @@ static GtkWidget *page_summary(void) {
     GtkWidget *title = gtk_label_new("Summary");
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
-    app.summary_label = gtk_label_new("");
+    app.summary_label = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(app.summary_label), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(app.summary_label), 16);
     gtk_widget_set_halign(app.summary_label, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.summary_label, FALSE, FALSE, 8);
@@ -1118,9 +1252,11 @@ static GtkWidget *page_progress(void) {
     app.progress_label = gtk_label_new("Starting...");
     gtk_widget_set_halign(app.progress_label, GTK_ALIGN_START);
     app.progress_bar = gtk_progress_bar_new();
+    gtk_widget_set_name(app.progress_bar, "boreal-progress");
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, -1, 260);
     app.log_view = gtk_text_view_new();
+    gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(app.log_view), TRUE);
     app.log_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app.log_view));
@@ -1143,6 +1279,7 @@ static GtkWidget *page_finish(void) {
     gtk_widget_set_name(reboot, "primary-button");
     g_signal_connect(reboot, "clicked", G_CALLBACK(on_reboot), NULL);
     GtkWidget *shell = gtk_button_new_with_label("Open shell");
+    gtk_widget_set_name(shell, "nav-button");
     g_signal_connect(shell, "clicked", G_CALLBACK(on_shell), NULL);
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), reboot, FALSE, FALSE, 0);
@@ -1197,10 +1334,23 @@ int main(int argc, char **argv) {
 
     load_css();
 
-    GError *icon_err = NULL;
-    if (!gtk_window_set_default_icon_from_file("/usr/share/boreal-artwork/logo.png", &icon_err)) {
-        fprintf(stderr, "icon load failed: %s\n", icon_err ? icon_err->message : "unknown");
-        if (icon_err) g_error_free(icon_err);
+    GList *icon_list = NULL;
+    const int icon_sizes[] = {16, 24, 32, 48, 64, 128};
+    for (size_t i = 0; i < sizeof(icon_sizes) / sizeof(icon_sizes[0]); i++) {
+        GError *e = NULL;
+        GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_scale("/usr/share/boreal-artwork/logo.png",
+            icon_sizes[i], icon_sizes[i], TRUE, &e);
+        if (pb) icon_list = g_list_append(icon_list, pb);
+        else {
+            fprintf(stderr, "icon load failed at size %d: %s\n", icon_sizes[i], e ? e->message : "unknown");
+            if (e) g_error_free(e);
+        }
+    }
+    if (icon_list) {
+        gtk_window_set_default_icon_list(icon_list);
+        g_list_free_full(icon_list, g_object_unref);
+    } else {
+        fprintf(stderr, "no icon could be loaded from /usr/share/boreal-artwork/logo.png\n");
     }
 
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -1242,8 +1392,10 @@ int main(int argc, char **argv) {
     GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(nav), 12);
     app.btn_cancel = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_name(app.btn_cancel, "nav-button");
     g_signal_connect(app.btn_cancel, "clicked", G_CALLBACK(on_cancel), NULL);
     app.btn_back = gtk_button_new_with_label("Back");
+    gtk_widget_set_name(app.btn_back, "nav-button");
     g_signal_connect(app.btn_back, "clicked", G_CALLBACK(on_back), NULL);
     app.btn_next = gtk_button_new_with_label("Next");
     gtk_widget_set_name(app.btn_next, "primary-button");
@@ -1268,6 +1420,8 @@ int main(int argc, char **argv) {
 
     gtk_widget_show_all(app.window);
     gtk_widget_hide(app.net_static_box);
+    gtk_widget_hide(app.wifi_box);
+    refresh_wifi_list();
     gtk_main();
     return 0;
 }

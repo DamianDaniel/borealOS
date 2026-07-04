@@ -4,117 +4,111 @@
     background-position: center;
 }
 
-#boreal-window label {
-    color: #e0f7f4;
-}
-
-#boreal-window #title-label {
+#title-label {
     font-size: 22px;
     font-weight: bold;
     color: #3dffd2;
 }
 
-#boreal-window #warn-label {
+#warn-label {
     color: #ff6b6b;
 }
 
-#boreal-window #content-panel {
-    background-color: rgba(10, 26, 36, 0.72);
+#content-panel {
+    background-color: rgba(10, 26, 36, 0.82);
     border-radius: 10px;
 }
 
-#boreal-window entry {
+#content-panel label {
+    color: #e8f7f4;
+}
+
+#dark-entry {
     background-color: #0f2535;
-    color: #e0f7f4;
+    color: #ffffff;
     border: 1px solid #2a6060;
     border-radius: 6px;
     padding: 6px;
 }
 
-#boreal-window entry:focus {
+#dark-entry:focus {
     border-color: #3dffd2;
 }
 
-#boreal-window button {
-    background-color: #163a4a;
-    color: #b2f0e8;
-    border: 1px solid #2a6060;
+#nav-button {
+    background-color: #dfe6e6;
+    border: 1px solid #9fb3b3;
+    border-radius: 6px;
+    padding: 6px 14px;
+    color: #000000;
+}
+
+#nav-button label {
+    color: #000000;
+}
+
+#nav-button:disabled {
+    background-color: #cfd6d6;
+    border-color: #b8c2c2;
+}
+
+#nav-button:disabled label {
+    color: #8a9494;
+}
+
+#primary-button {
+    background-color: #3dffd2;
+    border: none;
     border-radius: 6px;
     padding: 6px 14px;
 }
 
-#boreal-window button label {
-    color: #b2f0e8;
+#primary-button label {
+    color: #0d1f2d;
+    font-weight: bold;
 }
 
-#boreal-window button:hover {
-    background-color: #1e5060;
+#primary-button:disabled {
+    background-color: #7fa8a0;
 }
 
-#boreal-window button:hover label {
+#primary-button:disabled label {
+    color: #33403d;
+}
+
+#dark-listbox {
+    background-color: #0f2535;
     color: #ffffff;
 }
 
-#boreal-window #primary-button {
-    background-color: #3dffd2;
-    font-weight: bold;
-    border: none;
-}
-
-#boreal-window #primary-button label {
-    color: #0d1f2d;
-    font-weight: bold;
-}
-
-#boreal-window #primary-button:hover {
-    background-color: #7fffd4;
-}
-
-#boreal-window radiobutton,
-#boreal-window checkbutton {
-    color: #e0f7f4;
-}
-
-#boreal-window list,
-#boreal-window listbox {
-    background-color: rgba(15, 37, 53, 0.9);
-    color: #e0f7f4;
-}
-
-#boreal-window listbox row:selected {
+#dark-listbox row:selected {
     background-color: #3dffd2;
 }
 
-#boreal-window listbox row:selected label {
+#dark-listbox row:selected label {
     color: #0d1f2d;
 }
 
-#boreal-window textview,
-#boreal-window textview text {
-    background-color: rgba(10, 26, 36, 0.9);
+#dark-listbox label {
+    color: #ffffff;
+}
+
+#log-view {
+    background-color: #0a1a24;
     color: #b2f0e8;
 }
 
-#boreal-window progressbar trough {
+#log-view text {
+    background-color: #0a1a24;
+    color: #b2f0e8;
+}
+
+#boreal-progress trough {
     background-color: #0f2535;
     border-radius: 6px;
 }
 
-#boreal-window progressbar progress {
+#boreal-progress progress {
     background-color: #3dffd2;
     border-radius: 6px;
-}
-
-#boreal-window button:disabled {
-    background-color: #0f2535;
-    border-color: #1e3a44;
-}
-
-#boreal-window button:disabled label {
-    color: #5a7a78;
-}
-
-#boreal-window scrolledwindow,
-#boreal-window viewport {
-    background-color: transparent;
 }

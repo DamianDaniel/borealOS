@@ -383,7 +383,6 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettin
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xsettings" version="1.0">
   <property name="Net" type="empty">
-    <property name="ThemeName" type="string" value="Adwaita-dark"/>
     <property name="IconThemeName" type="string" value="hicolor"/>
   </property>
   <property name="Gtk" type="empty">
@@ -776,17 +775,28 @@ eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
 (sleep 5
  WP=/usr/share/boreal-artwork/wallpaper-default.png
  [ -f "$WP" ] || WP=/usr/share/pixmaps/xfce4-logo.png
- # Detect connected monitors via xrandr — much more reliable than guessing names
- MONITORS=$(DISPLAY=:0 xrandr --query 2>/dev/null | awk '/ connected/ {print $1}')
- [ -z "$MONITORS" ] && MONITORS="Virtual-1 VGA-1 HDMI-1 eDP-1"
- for mon in $MONITORS; do
-   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -n -t string -s "$WP" 2>/dev/null || \
-   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -s "$WP" 2>/dev/null || true
-   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -n -t int -s 5 2>/dev/null || \
-   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -t int -s 5 2>/dev/null || true
-   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -n -t int -s 0 2>/dev/null || \
-   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -t int -s 0 2>/dev/null || true
- done
+ apply_wallpaper() {
+   MONITORS=$(DISPLAY=:0 xrandr --query 2>/dev/null | awk '/ connected/ {print $1}')
+   [ -z "$MONITORS" ] && MONITORS="Virtual-1 VGA-1 HDMI-1 eDP-1"
+   for mon in $MONITORS; do
+     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -n -t string -s "$WP" 2>/dev/null || \
+     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -s "$WP" 2>/dev/null || true
+     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -n -t int -s 5 2>/dev/null || \
+     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -t int -s 5 2>/dev/null || true
+     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -n -t int -s 0 2>/dev/null || \
+     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -t int -s 0 2>/dev/null || true
+   done
+   xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/last-image$' | while read -r prop; do
+     xfconf-query -c xfce4-desktop -p "$prop" -s "$WP" 2>/dev/null || true
+   done
+   xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/image-style$' | while read -r prop; do
+     xfconf-query -c xfce4-desktop -p "$prop" -t int -s 5 2>/dev/null || true
+   done
+ }
+ apply_wallpaper
+ xfdesktop --reload 2>/dev/null || true
+ sleep 3
+ apply_wallpaper
  xfdesktop --reload 2>/dev/null || true
  # Trust desktop shortcuts
  for f in "$HOME/Desktop/"*.desktop; do
