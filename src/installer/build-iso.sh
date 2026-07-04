@@ -131,6 +131,23 @@ mkdir -p "$WORK/squashfs-root/usr/share/xfce4/backdrops"
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/xfce4/backdrops/BorealOS.png"
 # Remove all existing default backdrops so xfdesktop picks ours
 find "$WORK/squashfs-root/usr/share/xfce4/backdrops"     -not -name "BorealOS.png" -type f -delete 2>/dev/null || true
+
+# Forcefully overwrite every stock wallpaper file byte-for-byte, wherever it lives.
+# This guarantees our image shows regardless of which path xfdesktop or any
+# other component actually references, no xfconf plumbing required.
+for dir in \
+    "$WORK/squashfs-root/usr/share/backgrounds" \
+    "$WORK/squashfs-root/usr/share/wallpapers" \
+    "$WORK/squashfs-root/usr/share/pixmaps/backgrounds"; do
+    [ -d "$dir" ] || continue
+    find "$dir" -type f \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" \) -print0 2>/dev/null | \
+        while IFS= read -r -d '' f; do cp "$WP_MAIN" "$f" 2>/dev/null || true; done
+done
+mkdir -p "$WORK/squashfs-root/usr/share/backgrounds/xfce"
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-shapes.png" 2>/dev/null || true
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-verticals.png" 2>/dev/null || true
+cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-stripes.png" 2>/dev/null || true
+
 # Set it as the xfdesktop default via the defaults config
 mkdir -p "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
 {
@@ -383,7 +400,7 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettin
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xsettings" version="1.0">
   <property name="Net" type="empty">
-    <property name="IconThemeName" type="string" value="hicolor"/>
+    <property name="IconThemeName" type="string" value="Adwaita"/>
   </property>
   <property name="Gtk" type="empty">
     <property name="CursorThemeName" type="string" value="Adwaita"/>
@@ -444,6 +461,7 @@ Name=Install BorealOS
 Comment=Launch the BorealOS graphical installer
 Exec=/usr/local/bin/boreal-installer
 Icon=/usr/share/pixmaps/boreal-logo.png
+StartupWMClass=boreal-installer
 Terminal=false
 Categories=System;
 INSTDESK
@@ -616,6 +634,7 @@ Name=BorealOS Installer
 Comment=Install BorealOS
 Exec=/usr/local/bin/boreal-installer
 Icon=/usr/share/pixmaps/boreal-logo.png
+StartupWMClass=boreal-installer
 Type=Application
 Categories=System;
 DESKTOP

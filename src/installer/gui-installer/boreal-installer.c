@@ -1254,7 +1254,7 @@ static GtkWidget *page_progress(void) {
     app.progress_bar = gtk_progress_bar_new();
     gtk_widget_set_name(app.progress_bar, "boreal-progress");
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_size_request(scroll, -1, 260);
+    gtk_widget_set_size_request(scroll, 760, 480);
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
@@ -1320,6 +1320,7 @@ static void load_css(void) {
 }
 
 int main(int argc, char **argv) {
+    g_set_prgname("boreal-installer");
     gtk_init(&argc, &argv);
     memset(&app, 0, sizeof(app));
     strcpy(app.net_type, "dhcp");
@@ -1419,6 +1420,7 @@ int main(int argc, char **argv) {
     update_nav_buttons();
 
     gtk_widget_show_all(app.window);
+    gtk_window_fullscreen(GTK_WINDOW(app.window));
     gtk_widget_hide(app.net_static_box);
     gtk_widget_hide(app.wifi_box);
     refresh_wifi_list();
