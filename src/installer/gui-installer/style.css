@@ -43,16 +43,27 @@
     padding: 6px 14px;
 }
 
+#boreal-window button label {
+    color: #b2f0e8;
+}
+
 #boreal-window button:hover {
     background-color: #1e5060;
+}
+
+#boreal-window button:hover label {
     color: #ffffff;
 }
 
 #boreal-window #primary-button {
     background-color: #3dffd2;
-    color: #0d1f2d;
     font-weight: bold;
     border: none;
+}
+
+#boreal-window #primary-button label {
+    color: #0d1f2d;
+    font-weight: bold;
 }
 
 #boreal-window #primary-button:hover {
@@ -92,6 +103,15 @@
 #boreal-window progressbar progress {
     background-color: #3dffd2;
     border-radius: 6px;
+}
+
+#boreal-window button:disabled {
+    background-color: #0f2535;
+    border-color: #1e3a44;
+}
+
+#boreal-window button:disabled label {
+    color: #5a7a78;
 }
 
 #boreal-window scrolledwindow,

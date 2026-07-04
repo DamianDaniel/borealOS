@@ -626,7 +626,10 @@ static void *install_thread(void *arg) {
     return NULL;
 }
 
+static gboolean sync_selected_disk(void);
+
 static void collect_state_from_ui(void) {
+    sync_selected_disk();
     strncpy(app.hostname, gtk_entry_get_text(GTK_ENTRY(app.hostname_entry)), sizeof(app.hostname) - 1);
     strncpy(app.root_pass, gtk_entry_get_text(GTK_ENTRY(app.pass1_entry)), sizeof(app.root_pass) - 1);
     strncpy(app.locale, gtk_entry_get_text(GTK_ENTRY(app.locale_entry)), sizeof(app.locale) - 1);
@@ -698,6 +701,7 @@ static void build_summary(void) {
 static gboolean validate_page(int idx) {
     const char *name = PAGE_ORDER[idx];
     if (!strcmp(name, "disk")) {
+        sync_selected_disk();
         if (!app.disk[0]) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Select a target disk.");
@@ -805,6 +809,20 @@ static void on_disk_toggled(GtkToggleButton *btn, gpointer data) {
     if (!gtk_toggle_button_get_active(btn)) return;
     const char *dev = g_object_get_data(G_OBJECT(btn), "devname");
     if (dev) strncpy(app.disk, dev, sizeof(app.disk) - 1);
+}
+
+static gboolean sync_selected_disk(void) {
+    GList *children = gtk_container_get_children(GTK_CONTAINER(app.disk_list));
+    gboolean found = FALSE;
+    for (GList *l = children; l; l = l->next) {
+        if (GTK_IS_TOGGLE_BUTTON(l->data) && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(l->data))) {
+            const char *dev = g_object_get_data(G_OBJECT(l->data), "devname");
+            if (dev) { strncpy(app.disk, dev, sizeof(app.disk) - 1); found = TRUE; }
+            break;
+        }
+    }
+    g_list_free(children);
+    return found;
 }
 
 static void wire_disk_radios(void) {
@@ -1145,9 +1163,20 @@ static GtkWidget *wrap_page(GtkWidget *content) {
     return outer;
 }
 
+static void on_css_parse_error(GtkCssProvider *p, GtkCssSection *section, GError *error, gpointer data) {
+    (void)p; (void)data;
+    guint line = gtk_css_section_get_end_line(section);
+    fprintf(stderr, "CSS parse error at line %u: %s\n", line + 1, error->message);
+}
+
 static void load_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_path(provider, "/usr/share/boreal-installer/style.css", NULL);
+    g_signal_connect(provider, "parsing-error", G_CALLBACK(on_css_parse_error), NULL);
+    GError *err = NULL;
+    if (!gtk_css_provider_load_from_path(provider, "/usr/share/boreal-installer/style.css", &err)) {
+        fprintf(stderr, "CSS load failed: %s\n", err ? err->message : "unknown");
+        if (err) g_error_free(err);
+    }
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
         GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);
@@ -1167,6 +1196,12 @@ int main(int argc, char **argv) {
     check_assets();
 
     load_css();
+
+    GError *icon_err = NULL;
+    if (!gtk_window_set_default_icon_from_file("/usr/share/boreal-artwork/logo.png", &icon_err)) {
+        fprintf(stderr, "icon load failed: %s\n", icon_err ? icon_err->message : "unknown");
+        if (icon_err) g_error_free(icon_err);
+    }
 
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(app.window), "BorealOS Installer");
