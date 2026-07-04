@@ -585,7 +585,7 @@ done
 IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)
 for id in $IDS; do
     val=$(xfconf-query -c xfce4-panel -p "/plugins/$id" 2>/dev/null)
-    if [ "$val" = "applicationsmenu" ]; then
+    if [ "$val" = "applicationsmenu" ] || [ "$val" = "whiskermenu" ]; then
         xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -n -t string -s /usr/share/pixmaps/boreal-logo.png 2>/dev/null || \
         xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -t string -s /usr/share/pixmaps/boreal-logo.png 2>/dev/null
     fi
@@ -780,8 +780,11 @@ eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
  MONITORS=$(DISPLAY=:0 xrandr --query 2>/dev/null | awk '/ connected/ {print $1}')
  [ -z "$MONITORS" ] && MONITORS="Virtual-1 VGA-1 HDMI-1 eDP-1"
  for mon in $MONITORS; do
+   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -n -t string -s "$WP" 2>/dev/null || \
    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -s "$WP" 2>/dev/null || true
+   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -n -t int -s 5 2>/dev/null || \
    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -t int -s 5 2>/dev/null || true
+   xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -n -t int -s 0 2>/dev/null || \
    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -t int -s 0 2>/dev/null || true
  done
  xfdesktop --reload 2>/dev/null || true
