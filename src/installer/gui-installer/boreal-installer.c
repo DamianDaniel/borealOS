@@ -350,6 +350,7 @@ static gboolean configure_system(void) {
     run_cmd("cp /opt/borealOS/background_2.png    /mnt/usr/share/boreal-artwork/wallpaper-waves.png");
     run_cmd("cp /opt/borealOS/background_one.png  /mnt/usr/share/boreal-artwork/wallpaper-alt.png");
     run_cmd("cp /opt/borealOS/logo.png            /mnt/usr/share/boreal-artwork/logo.png");
+    run_cmd("cp /opt/borealOS/banner.png /mnt/usr/share/boreal-artwork/banner.png 2>/dev/null || true");
     return TRUE;
 }
 
@@ -388,6 +389,10 @@ static gboolean remove_live_boot(void) {
         run_cmd("chroot /mnt apt-get autoremove --purge -y");
     }
     run_cmd("rm -rf /mnt/opt/borealOS");
+    run_cmd("rm -f /mnt/usr/local/bin/boreal-installer");
+    run_cmd("rm -f /mnt/usr/share/applications/boreal-installer.desktop");
+    run_cmd("rm -rf /mnt/usr/share/boreal-installer");
+    run_cmd("rm -f /mnt/root/Desktop/boreal-installer.desktop /mnt/etc/skel/Desktop/boreal-installer.desktop");
 
     STEP("Purging plymouth");
     run_cmd("chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5 "
@@ -930,12 +935,15 @@ static GtkWidget *page_welcome(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
-    GtkWidget *img = gtk_image_new_from_file("/usr/share/boreal-artwork/logo.png");
-    GtkWidget *title = gtk_label_new("Install BorealOS");
-    gtk_widget_set_name(title, "title-label");
+    GtkWidget *img;
+    if (access("/usr/share/boreal-artwork/banner.png", F_OK) == 0) {
+        GdkPixbuf *pix = gdk_pixbuf_new_from_file_at_scale("/usr/share/boreal-artwork/banner.png", 420, -1, TRUE, NULL);
+        img = pix ? gtk_image_new_from_pixbuf(pix) : gtk_image_new_from_file("/usr/share/boreal-artwork/logo.png");
+    } else {
+        img = gtk_image_new_from_file("/usr/share/boreal-artwork/logo.png");
+    }
     GtkWidget *sub = gtk_label_new("This will guide you through installing BorealOS to disk.");
     gtk_box_pack_start(GTK_BOX(box), img, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), sub, FALSE, FALSE, 0);
     return box;
 }
@@ -1125,6 +1133,18 @@ static GtkWidget *page_finish(void) {
     return box;
 }
 
+static GtkWidget *wrap_page(GtkWidget *content) {
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_valign(outer, GTK_ALIGN_CENTER);
+    gtk_widget_set_halign(outer, GTK_ALIGN_CENTER);
+    GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_name(panel, "content-panel");
+    gtk_container_set_border_width(GTK_CONTAINER(panel), 8);
+    gtk_box_pack_start(GTK_BOX(panel), content, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, TRUE, 24);
+    return outer;
+}
+
 static void load_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     gtk_css_provider_load_from_path(provider, "/usr/share/boreal-installer/style.css", NULL);
@@ -1150,7 +1170,21 @@ int main(int argc, char **argv) {
 
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(app.window), "BorealOS Installer");
-    gtk_window_set_default_size(GTK_WINDOW(app.window), 760, 560);
+
+    int win_w = 760, win_h = 560;
+    GdkDisplay *display = gdk_display_get_default();
+    if (display) {
+        GdkMonitor *mon = gdk_display_get_monitor(display, 0);
+        if (mon) {
+            GdkRectangle geo;
+            gdk_monitor_get_geometry(mon, &geo);
+            win_w = (int)(geo.width * 0.75);
+            win_h = (int)(geo.height * 0.80);
+            if (win_w > 900) win_w = 900;
+            if (win_h > 680) win_h = 680;
+        }
+    }
+    gtk_window_set_default_size(GTK_WINDOW(app.window), win_w, win_h);
     gtk_window_set_position(GTK_WINDOW(app.window), GTK_WIN_POS_CENTER);
     gtk_window_set_icon_from_file(GTK_WINDOW(app.window), "/usr/share/boreal-artwork/logo.png", NULL);
     gtk_widget_set_name(app.window, "boreal-window");
@@ -1160,15 +1194,15 @@ int main(int argc, char **argv) {
     app.stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(app.stack), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
 
-    gtk_stack_add_named(GTK_STACK(app.stack), page_welcome(), "welcome");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_disk(), "disk");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_user(), "user");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_timezone(), "timezone");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_extrausers(), "extrausers");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_network(), "network");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_summary(), "summary");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_progress(), "progress");
-    gtk_stack_add_named(GTK_STACK(app.stack), page_finish(), "finish");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_welcome()), "welcome");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_disk()), "disk");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_user()), "user");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_timezone()), "timezone");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_extrausers()), "extrausers");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_network()), "network");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_summary()), "summary");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_progress()), "progress");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_finish()), "finish");
 
     GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(nav), 12);

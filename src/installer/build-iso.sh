@@ -103,6 +103,7 @@ cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_main.png"
 cp "$WALLPAPER_BG2"     "$WORK/squashfs-root/opt/borealOS/background_2.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/opt/borealOS/background_one.png"
 cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
+cp "$BANNER"            "$WORK/squashfs-root/opt/borealOS/banner.png"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 echo "$DE_NAME"   > "$WORK/squashfs-root/opt/borealOS/de"
@@ -1039,6 +1040,8 @@ find "$WORK/squashfs-root/usr/share/pixmaps" -name "*debian*" -delete 2>/dev/nul
 find "$WORK/squashfs-root/usr/share/icons" -name "*debian*" -delete 2>/dev/null || true
 find "$WORK/squashfs-root/boot/grub" -name "*debian*" -delete 2>/dev/null || true
 
+# Remove plymouth entirely from the live env — not used, and its initramfs hook
+# adds boot delay and can conflict with simple console boot.
 find "$WORK/squashfs-root/usr/share/plymouth"      "$WORK/squashfs-root/etc/plymouth"      -delete 2>/dev/null || true
 rm -f "$WORK/squashfs-root/usr/share/initramfs-tools/hooks/plymouth"       "$WORK/squashfs-root/etc/initramfs-tools/conf.d/plymouth" 2>/dev/null || true
 

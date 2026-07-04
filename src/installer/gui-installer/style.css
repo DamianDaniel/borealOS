@@ -1,23 +1,29 @@
 #boreal-window {
-    background-image: linear-gradient(to bottom, #0d1f2d, #163a4a, #1e5060);
-    color: #e0f7f4;
+    background-image: url("/usr/share/boreal-artwork/wallpaper-alt.png");
+    background-size: cover;
+    background-position: center;
 }
 
 #boreal-window label {
     color: #e0f7f4;
 }
 
-#title-label {
+#boreal-window #title-label {
     font-size: 22px;
     font-weight: bold;
     color: #3dffd2;
 }
 
-#warn-label {
+#boreal-window #warn-label {
     color: #ff6b6b;
 }
 
-entry {
+#boreal-window #content-panel {
+    background-color: rgba(10, 26, 36, 0.72);
+    border-radius: 10px;
+}
+
+#boreal-window entry {
     background-color: #0f2535;
     color: #e0f7f4;
     border: 1px solid #2a6060;
@@ -25,11 +31,11 @@ entry {
     padding: 6px;
 }
 
-entry:focus {
+#boreal-window entry:focus {
     border-color: #3dffd2;
 }
 
-button {
+#boreal-window button {
     background-color: #163a4a;
     color: #b2f0e8;
     border: 1px solid #2a6060;
@@ -37,59 +43,58 @@ button {
     padding: 6px 14px;
 }
 
-button:hover {
+#boreal-window button:hover {
     background-color: #1e5060;
     color: #ffffff;
 }
 
-#primary-button {
+#boreal-window #primary-button {
     background-color: #3dffd2;
     color: #0d1f2d;
     font-weight: bold;
     border: none;
 }
 
-#primary-button:hover {
+#boreal-window #primary-button:hover {
     background-color: #7fffd4;
 }
 
-radiobutton, checkbutton {
+#boreal-window radiobutton,
+#boreal-window checkbutton {
     color: #e0f7f4;
 }
 
-list, listbox {
-    background-color: #0f2535;
+#boreal-window list,
+#boreal-window listbox {
+    background-color: rgba(15, 37, 53, 0.9);
     color: #e0f7f4;
 }
 
-listbox row:selected {
+#boreal-window listbox row:selected {
     background-color: #3dffd2;
 }
 
-listbox row:selected label {
+#boreal-window listbox row:selected label {
     color: #0d1f2d;
 }
 
-textview {
-    background-color: #0a1a24;
+#boreal-window textview,
+#boreal-window textview text {
+    background-color: rgba(10, 26, 36, 0.9);
     color: #b2f0e8;
 }
 
-textview text {
-    background-color: #0a1a24;
-    color: #b2f0e8;
-}
-
-progressbar trough {
+#boreal-window progressbar trough {
     background-color: #0f2535;
     border-radius: 6px;
 }
 
-progressbar progress {
+#boreal-window progressbar progress {
     background-color: #3dffd2;
     border-radius: 6px;
 }
 
-scrolledwindow, viewport {
+#boreal-window scrolledwindow,
+#boreal-window viewport {
     background-color: transparent;
 }
