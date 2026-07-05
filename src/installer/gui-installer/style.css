@@ -26,6 +26,7 @@
 #dark-entry {
     background-color: #0f2535;
     color: #ffffff;
+    caret-color: #ffffff;
     border: 1px solid #2a6060;
     border-radius: 6px;
     padding: 6px;
@@ -77,7 +78,7 @@
 }
 
 #dark-listbox {
-    background-color: #0f2535;
+    background-color: rgba(15, 37, 53, 0.82);
     color: #ffffff;
 }
 
@@ -94,12 +95,12 @@
 }
 
 #log-view {
-    background-color: #0a1a24;
+    background-color: rgba(10, 26, 36, 0.82);
     color: #b2f0e8;
 }
 
 #log-view text {
-    background-color: #0a1a24;
+    background-color: rgba(10, 26, 36, 0.82);
     color: #b2f0e8;
 }
 
