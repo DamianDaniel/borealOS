@@ -39,18 +39,16 @@ echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
 echo "  1) KDE Plasma"
 echo "  2) XFCE"
-echo "  3) Sway (Wayland)"
-echo "  4) Niri (Wayland, built from source)"
-echo "  5) None (TTY only)"
+echo "  3) Niri (Wayland, built from source)"
+echo "  4) None (TTY only)"
 while true; do
     echo -ne "${CYN}Choice${RST}: "
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
         2) DE_PKGS="xfce4 xfce4-goodies"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
-        3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DM_PKGS=""; DE_NAME="Sway"; DE_START="sway"; break ;;
-        4) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
-        5) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
+        3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
+        4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
 done
@@ -300,7 +298,6 @@ copy_rice "kitty/kitty.conf"       ".config/kitty/kitty.conf"
 copy_rice "kitty/dark.conf"        ".config/kitty/dark.conf"
 copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
 copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
-copy_rice "sway/config"            ".config/sway/config"
 
 echo "==> Copying XFCE rice configs..."
 XFCE_RICE="$RICE_DIR/xfce4"
@@ -605,7 +602,7 @@ ok "BorealOS XFCE branding applied."
 echo "==> Applying branding..."
 cat > "$WORK/squashfs-root/etc/os-release" <<OS
 NAME="BorealOS"
-PRETTY_NAME="BorealOS 1.0"
+PRETTY_NAME="BorealOS alpha"
 ID=borealos
 ID_LIKE=
 VERSION="1.0"
@@ -616,10 +613,10 @@ cat > "$WORK/squashfs-root/etc/lsb-release" <<LSB
 DISTRIB_ID=BorealOS
 DISTRIB_RELEASE=1.0
 DISTRIB_CODENAME=boreal
-DISTRIB_DESCRIPTION="BorealOS 1.0"
+DISTRIB_DESCRIPTION="BorealOS alpha"
 LSB
 echo "BorealOS"      > "$WORK/squashfs-root/etc/issue"
-echo "BorealOS 1.0"  > "$WORK/squashfs-root/etc/issue.net"
+echo "BorealOS alpha"  > "$WORK/squashfs-root/etc/issue.net"
 echo "BorealOS"      > "$WORK/squashfs-root/etc/debian_version"
 echo "borealOS-live" > "$WORK/squashfs-root/etc/hostname"
 
@@ -645,7 +642,7 @@ while true; do
 BANNER
     printf '\033[0m'
     echo ""
-    echo "  BorealOS 1.0 Live  |  DE: $DE"
+    echo "  BorealOS alpha |  DE: $DE"
     echo ""
     echo "  1) Graphical Install"
     echo "  2) Terminal Installer"
@@ -791,6 +788,17 @@ chmod +x "$WORK/squashfs-root/usr/sbin/policy-rc.d"
 
 chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation failed"
 set -e
+PYVER=\$(ls /usr/lib/ | grep -oP '^python3\.[0-9]+\$' | sort -V | tail -1)
+if [ -n "\$PYVER" ]; then
+    mkdir -p /etc/python3
+    cat > /etc/python3/debian_defaults <<PYDEFAULTS
+[DEFAULT]
+default-version = \${PYVER}
+supported-versions = \${PYVER}
+unsupported-versions =
+requested-versions = \${PYVER#python}
+PYDEFAULTS
+fi
 apt-get update -qq
 
 echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
@@ -842,17 +850,19 @@ elif [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
-for pkg in fastfetch kitty; do
-    apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
-done
+if [ "$DE_NAME" != "None" ]; then
+    apt-get install -y fastfetch || echo "FAILED: fastfetch install, see error above"
+    apt-get install -y kitty || { echo "FATAL: kitty install failed, see error above"; exit 1; }
+    command -v kitty >/dev/null 2>&1 || { echo "FATAL: kitty binary missing after install"; exit 1; }
 
-if command -v kitty >/dev/null 2>&1; then
-    update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/kitty 50 2>/dev/null || true
-    update-alternatives --set x-terminal-emulator /usr/bin/kitty 2>/dev/null || true
-    mkdir -p /etc/xdg/xfce4
-    cat > /etc/xdg/xfce4/helpers.rc <<HELPERSRC
+    if command -v kitty >/dev/null 2>&1; then
+        update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/kitty 50 2>/dev/null || true
+        update-alternatives --set x-terminal-emulator /usr/bin/kitty 2>/dev/null || true
+        mkdir -p /etc/xdg/xfce4
+        cat > /etc/xdg/xfce4/helpers.rc <<HELPERSRC
 TerminalEmulator=kitty
 HELPERSRC
+    fi
 fi
 
 apt-get install -y --no-install-recommends gcc make pkg-config libgtk-3-dev libgtk-3-0 \

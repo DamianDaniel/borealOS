@@ -20,7 +20,6 @@ typedef struct {
     GtkWidget *hostname_entry, *pass1_entry, *pass2_entry, *locale_entry;
     GtkWidget *tz_filter_entry, *tz_list;
     GtkWidget *user_list_box;
-    GtkWidget *new_user_name, *new_user_pass, *new_user_pass2, *new_user_sudo, *new_user_error;
     GtkWidget *net_dhcp, *net_static, *net_skip, *net_if_combo;
     GtkWidget *net_ip_entry, *net_gw_entry, *net_dns_entry;
     GtkWidget *net_static_box;
@@ -91,6 +90,7 @@ static gboolean prog_idle(gpointer data) {
     ProgMsg *m = data;
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(app.progress_bar), m->frac);
     gtk_label_set_text(GTK_LABEL(app.progress_label), m->label);
+    gtk_widget_queue_draw(app.progress_bar);
     g_free(m->label);
     g_free(m);
     return FALSE;
@@ -106,7 +106,7 @@ static void set_progress(double frac, const char *label) {
 static int run_cmd(const char *cmd) {
     log_line("$ %s", cmd);
     char full[4096];
-    snprintf(full, sizeof(full), "%s 2>&1", cmd);
+    snprintf(full, sizeof(full), "DEBIAN_FRONTEND=noninteractive %s </dev/null 2>&1", cmd);
     FILE *fp = popen(full, "r");
     if (!fp) { log_line("failed to spawn command"); return -1; }
     char line[1024];
@@ -422,7 +422,8 @@ static gboolean remove_live_boot(void) {
     run_cmd("rm -f /mnt/usr/local/bin/boreal-installer");
     run_cmd("rm -f /mnt/usr/share/applications/boreal-installer.desktop");
     run_cmd("rm -rf /mnt/usr/share/boreal-installer");
-    run_cmd("rm -f /mnt/root/Desktop/boreal-installer.desktop /mnt/etc/skel/Desktop/boreal-installer.desktop");
+    run_cmd("rm -f \"/mnt/root/Desktop/Install BorealOS.desktop\" \"/mnt/etc/skel/Desktop/Install BorealOS.desktop\"");
+    run_cmd("find /mnt/home -maxdepth 2 -name 'Install BorealOS.desktop' -delete 2>/dev/null || true");
 
     STEP("Purging plymouth");
     run_cmd("chroot /mnt dpkg -r --force-depends plymouth plymouth-themes libplymouth5 "
@@ -496,6 +497,19 @@ static gboolean setup_de(void) {
         run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
         run_cmd("cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml "
                 "/mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml");
+
+        run_cmd("mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml");
+        write_file("/mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
+            "  <property name=\"Net\" type=\"empty\">\n"
+            "    <property name=\"IconThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
+            "  </property>\n</channel>\n");
+        run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
+        run_cmd("cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml "
+                "/mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml");
+
+        run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
+                "-type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \\) -exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
         run_cmd("mkdir -p /mnt/etc/skel/.config/autostart");
         run_cmd("cp /usr/local/bin/boreal-panel-icon.sh /mnt/usr/local/bin/boreal-panel-icon.sh");
         write_file("/mnt/etc/skel/.config/autostart/boreal-panel-icon.desktop",
@@ -503,15 +517,6 @@ static gboolean setup_de(void) {
             "Exec=/usr/local/bin/boreal-panel-icon.sh\nHidden=false\nNoDisplay=true\n"
             "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
         g_string_free(xml, TRUE);
-    } else if (strcmp(app.de_choice, "Sway") == 0) {
-        run_cmd("mkdir -p /mnt/etc/sway");
-        write_file("/mnt/etc/sway/config",
-            "set $mod Mod4\noutput * bg /usr/share/boreal-artwork/wallpaper-default.png fill\n"
-            "input type:keyboard { xkb_layout us }\nbindsym $mod+Return exec foot\n"
-            "bindsym $mod+d exec wofi --show run\nbindsym $mod+Shift+q kill\n"
-            "bindsym $mod+Shift+e exec swaymsg exit\n"
-            "bar {\n    statusbar_command while date +'%Y-%m-%d %H:%M'; do sleep 1; done\n"
-            "    colors { background #0d1b2a; statusline #4dffd2 }\n}\n");
     } else if (strcmp(app.de_choice, "Niri") == 0) {
         run_cmd("mkdir -p /mnt/etc/niri");
         write_file("/mnt/etc/niri/config.kdl",
@@ -632,7 +637,7 @@ static void *install_thread(void *arg) {
     struct { const char *name; StepFn fn; double frac; } steps[] = {
         {"Partitioning disk", partition_disk, 0.10},
         {"Mounting target", mount_target, 0.15},
-        {"Copying system", rsync_system, 0.45},
+        {"Copying system (can take a while)", rsync_system, 0.45},
         {"Installing display manager", install_bundled_packages, 0.55},
         {"Writing fstab", write_fstab, 0.58},
         {"Writing network config", write_network, 0.60},
@@ -754,10 +759,6 @@ static void build_summary(void) {
     add_summary_row(grid, 4, "Desktop", app.de_choice);
     add_summary_row(grid, 5, "Network", app.net_type);
     add_summary_row(grid, 6, "Extra users", users);
-    GtkWidget *warn = gtk_label_new("All data on the selected disk will be erased.");
-    gtk_widget_set_name(warn, "warn-label");
-    gtk_widget_set_halign(warn, GTK_ALIGN_START);
-    gtk_grid_attach(grid, warn, 0, 7, 2, 1);
     gtk_widget_show_all(GTK_WIDGET(grid));
 }
 
@@ -1026,27 +1027,54 @@ static void refresh_user_list_display(void) {
 
 static void on_add_user(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
-    const char *name = gtk_entry_get_text(GTK_ENTRY(app.new_user_name));
-    const char *pass = gtk_entry_get_text(GTK_ENTRY(app.new_user_pass));
-    const char *pass2 = gtk_entry_get_text(GTK_ENTRY(app.new_user_pass2));
+    GtkWidget *dlg = gtk_dialog_new_with_buttons("Add user", GTK_WINDOW(app.window),
+        GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_OK, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
 
-    if (!name[0] || !pass[0] || strcmp(pass, pass2)) {
-        gtk_label_set_text(GTK_LABEL(app.new_user_error), "Enter a username and matching passwords.");
-        return;
+    GtkWidget *name_e = gtk_entry_new();
+    GtkWidget *pass_e = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(pass_e), FALSE);
+    GtkWidget *pass2_e = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(pass2_e), FALSE);
+    GtkWidget *sudo_c = gtk_check_button_new_with_label("Grant sudo");
+
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Username"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), name_e, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Password"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), pass_e, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm password"), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), pass2_e, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), sudo_c, 1, 3, 1, 1);
+    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_widget_show_all(dlg);
+
+    gboolean added = FALSE;
+    while (!added) {
+        int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        if (resp != GTK_RESPONSE_OK) break;
+        const char *name = gtk_entry_get_text(GTK_ENTRY(name_e));
+        const char *pass = gtk_entry_get_text(GTK_ENTRY(pass_e));
+        const char *pass2 = gtk_entry_get_text(GTK_ENTRY(pass2_e));
+        if (!name[0] || !pass[0] || strcmp(pass, pass2)) {
+            GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(dlg), GTK_DIALOG_MODAL,
+                GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Enter a username and matching passwords.");
+            gtk_dialog_run(GTK_DIALOG(d));
+            gtk_widget_destroy(d);
+            continue;
+        }
+        ExtraUser *u = g_new0(ExtraUser, 1);
+        strncpy(u->name, name, sizeof(u->name) - 1);
+        strncpy(u->pass, pass, sizeof(u->pass) - 1);
+        u->sudo = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sudo_c));
+        app.extra_users = g_list_append(app.extra_users, u);
+        refresh_user_list_display();
+        added = TRUE;
     }
-
-    ExtraUser *u = g_new0(ExtraUser, 1);
-    strncpy(u->name, name, sizeof(u->name) - 1);
-    strncpy(u->pass, pass, sizeof(u->pass) - 1);
-    u->sudo = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.new_user_sudo));
-    app.extra_users = g_list_append(app.extra_users, u);
-    refresh_user_list_display();
-
-    gtk_entry_set_text(GTK_ENTRY(app.new_user_name), "");
-    gtk_entry_set_text(GTK_ENTRY(app.new_user_pass), "");
-    gtk_entry_set_text(GTK_ENTRY(app.new_user_pass2), "");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.new_user_sudo), FALSE);
-    gtk_label_set_text(GTK_LABEL(app.new_user_error), "");
+    gtk_widget_destroy(dlg);
 }
 
 static GtkWidget *page_welcome(void) {
@@ -1158,46 +1186,13 @@ static GtkWidget *page_extrausers(void) {
     GtkWidget *title = gtk_label_new("Extra user accounts");
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
-
     app.user_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-
-    app.new_user_name = gtk_entry_new();
-    gtk_widget_set_name(app.new_user_name, "dark-entry");
-    gtk_entry_set_placeholder_text(GTK_ENTRY(app.new_user_name), "Username");
-    app.new_user_pass = gtk_entry_new();
-    gtk_widget_set_name(app.new_user_pass, "dark-entry");
-    gtk_entry_set_visibility(GTK_ENTRY(app.new_user_pass), FALSE);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(app.new_user_pass), "Password");
-    app.new_user_pass2 = gtk_entry_new();
-    gtk_widget_set_name(app.new_user_pass2, "dark-entry");
-    gtk_entry_set_visibility(GTK_ENTRY(app.new_user_pass2), FALSE);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(app.new_user_pass2), "Confirm password");
-    app.new_user_sudo = gtk_check_button_new_with_label("Grant sudo");
-
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Username"), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), app.new_user_name, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Password"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), app.new_user_pass, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm"), 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), app.new_user_pass2, 1, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), app.new_user_sudo, 1, 3, 1, 1);
-
     GtkWidget *add = gtk_button_new_with_label("Add user");
     gtk_widget_set_name(add, "nav-button");
     g_signal_connect(add, "clicked", G_CALLBACK(on_add_user), NULL);
-
-    app.new_user_error = gtk_label_new("");
-    gtk_widget_set_name(app.new_user_error, "warn-label");
-
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.user_list_box, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), app.new_user_error, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), add, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(box), add, FALSE, FALSE, 0);
     return box;
 }
 
@@ -1280,6 +1275,45 @@ static GtkWidget *page_summary(void) {
     return box;
 }
 
+static gboolean on_progress_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    (void)data;
+    int width = gtk_widget_get_allocated_width(widget);
+    int height = gtk_widget_get_allocated_height(widget);
+    double fraction = gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(widget));
+    const char *text = gtk_label_get_text(GTK_LABEL(app.progress_label));
+    if (!text || !text[0]) return FALSE;
+
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+    pango_layout_set_text(layout, text, -1);
+    PangoFontDescription *desc = pango_font_description_from_string("sans bold 11");
+    pango_layout_set_font_description(layout, desc);
+    pango_font_description_free(desc);
+    int th;
+    pango_layout_get_pixel_size(layout, NULL, &th);
+    double x = 12.0;
+    double y = (height - th) / 2.0;
+    int split = (int)(width * fraction);
+
+    cairo_save(cr);
+    cairo_rectangle(cr, 0, 0, split, height);
+    cairo_clip(cr);
+    cairo_set_source_rgb(cr, 0.05, 0.12, 0.17);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, layout);
+    cairo_restore(cr);
+
+    cairo_save(cr);
+    cairo_rectangle(cr, split, 0, width - split, height);
+    cairo_clip(cr);
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, layout);
+    cairo_restore(cr);
+
+    g_object_unref(layout);
+    return FALSE;
+}
+
 static GtkWidget *page_progress(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(box), 24);
@@ -1287,9 +1321,12 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
     app.progress_label = gtk_label_new("Starting...");
-    gtk_widget_set_halign(app.progress_label, GTK_ALIGN_START);
+    gtk_widget_set_no_show_all(app.progress_label, TRUE);
+    gtk_widget_hide(app.progress_label);
     app.progress_bar = gtk_progress_bar_new();
     gtk_widget_set_name(app.progress_bar, "boreal-progress");
+    gtk_widget_set_size_request(app.progress_bar, -1, 28);
+    g_signal_connect_after(app.progress_bar, "draw", G_CALLBACK(on_progress_draw), NULL);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, 760, 480);
     app.log_view = gtk_text_view_new();
@@ -1300,23 +1337,27 @@ static GtkWidget *page_progress(void) {
     gtk_container_add(GTK_CONTAINER(scroll), app.log_view);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.progress_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.progress_bar, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 8);
     return box;
 }
 
 static GtkWidget *page_finish(void) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 32);
     gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
     GtkWidget *title = gtk_label_new("Installation complete");
     gtk_widget_set_name(title, "title-label");
+    gtk_widget_set_halign(title, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_bottom(title, 12);
     GtkWidget *reboot = gtk_button_new_with_label("Reboot");
     gtk_widget_set_name(reboot, "primary-button");
+    gtk_widget_set_size_request(reboot, 200, -1);
     g_signal_connect(reboot, "clicked", G_CALLBACK(on_reboot), NULL);
     GtkWidget *shell = gtk_button_new_with_label("Open shell");
     gtk_widget_set_name(shell, "nav-button");
+    gtk_widget_set_size_request(shell, 200, -1);
     g_signal_connect(shell, "clicked", G_CALLBACK(on_shell), NULL);
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), reboot, FALSE, FALSE, 0);
@@ -1474,6 +1515,12 @@ int main(int argc, char **argv) {
     gtk_widget_hide(app.net_static_box);
     gtk_widget_hide(app.wifi_box);
     refresh_wifi_list();
+
+    GdkWindow *gdkwin = gtk_widget_get_window(app.window);
+    if (gdkwin) {
+        GdkCursor *cursor = gdk_cursor_new_from_name(gdk_display_get_default(), "default");
+        if (cursor) gdk_window_set_cursor(gdkwin, cursor);
+    }
     gtk_main();
     return 0;
 }
