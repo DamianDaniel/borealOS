@@ -642,7 +642,7 @@ while true; do
 BANNER
     printf '\033[0m'
     echo ""
-    echo "  BorealOS alpha |  DE: $DE"
+    echo "  BorealOS alpha Live  |  DE: $DE"
     echo ""
     echo "  1) Graphical Install"
     echo "  2) Terminal Installer"
@@ -717,6 +717,7 @@ cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
 export DISPLAY=:0
 eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
+xsetroot -cursor_name left_ptr 2>/dev/null || true
 exec /usr/local/bin/boreal-installer
 XINITRC
 chmod +x /root/.xinitrc

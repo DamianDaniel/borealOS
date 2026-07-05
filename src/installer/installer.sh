@@ -80,9 +80,10 @@ menu() {
 }
 
 confirm() {
-    echo -ne "${CYN}$1 [y/N]${RST}: "
+    echo -ne "${CYN}$1 [Y/n]${RST}: "
     read -r ans
-    [[ "$ans" =~ ^[Yy]$ ]]
+    [[ "$ans" =~ ^[Nn]$ ]] && return 1
+    return 0
 }
 
 check_root() { [ "$EUID" -eq 0 ] || die "Must run as root."; }
@@ -157,10 +158,10 @@ get_extra_users() {
         read -r uname
         [ -z "$uname" ] && break
         ask_pass "Password for $uname" upass
-        local usudo="n"
-        echo -ne "${CYN}Give $uname sudo rights? [y/N]${RST}: "
+        local usudo="y"
+        echo -ne "${CYN}Give $uname sudo rights? [Y/n]${RST}: "
         read -r usudo
-        [[ "$usudo" =~ ^[Yy]$ ]] && usudo="y" || usudo="n"
+        [[ "$usudo" =~ ^[Nn]$ ]] && usudo="n" || usudo="y"
         EXTRA_USERS+=("${uname}|${upass}|${usudo}")
         ok "Added: $uname (sudo: $usudo)"
     done

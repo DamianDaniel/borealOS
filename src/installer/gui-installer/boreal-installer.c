@@ -138,10 +138,48 @@ static void write_file(const char *path, const char *content) {
 
 typedef struct { gboolean *result; char *msg; } ErrMsg;
 
+static void on_dialog_realize(GtkWidget *widget, gpointer data) {
+    (void)data;
+    GdkWindow *w = gtk_widget_get_window(widget);
+    if (w) {
+        GdkCursor *c = gdk_cursor_new_from_name(gdk_display_get_default(), "default");
+        if (c) gdk_window_set_cursor(w, c);
+    }
+}
+
+static void center_dialog_text(GtkWidget *container) {
+    GList *children = gtk_container_get_children(GTK_CONTAINER(container));
+    for (GList *l = children; l; l = l->next) {
+        if (GTK_IS_LABEL(l->data)) {
+            gtk_label_set_justify(GTK_LABEL(l->data), GTK_JUSTIFY_CENTER);
+            gtk_widget_set_halign(GTK_WIDGET(l->data), GTK_ALIGN_CENTER);
+        } else if (GTK_IS_CONTAINER(l->data)) {
+            center_dialog_text(GTK_WIDGET(l->data));
+        }
+    }
+    g_list_free(children);
+}
+
+static void style_dialog(GtkWidget *dlg) {
+    gtk_widget_set_name(dlg, "boreal-dialog");
+    g_signal_connect(dlg, "realize", G_CALLBACK(on_dialog_realize), NULL);
+    if (GTK_IS_MESSAGE_DIALOG(dlg)) {
+        GtkWidget *area = gtk_message_dialog_get_message_area(GTK_MESSAGE_DIALOG(dlg));
+        if (area) center_dialog_text(area);
+    }
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    GtkWidget *action = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
+    GList *buttons = gtk_container_get_children(GTK_CONTAINER(action));
+    for (GList *l = buttons; l; l = l->next) gtk_widget_set_name(GTK_WIDGET(l->data), "nav-button");
+    g_list_free(buttons);
+    (void)content;
+}
+
 static gboolean err_idle(gpointer data) {
     ErrMsg *m = data;
     GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
         GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s", m->msg);
+    style_dialog(dlg);
     gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
     g_free(m->msg);
@@ -769,6 +807,7 @@ static gboolean validate_page(int idx) {
         if (!app.disk[0]) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Select a target disk.");
+            style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
         }
@@ -779,6 +818,7 @@ static gboolean validate_page(int idx) {
         if (!h[0] || !p1[0] || strcmp(p1, p2)) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Enter a hostname and matching root passwords.");
+            style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
         }
@@ -786,6 +826,7 @@ static gboolean validate_page(int idx) {
         if (!app.timezone[0]) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Select a timezone.");
+            style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
         }
@@ -794,12 +835,14 @@ static gboolean validate_page(int idx) {
         if (!strcmp(app.net_type, "static") && (!app.net_if[0] || !app.net_ip[0] || !app.net_gw[0])) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Fill in interface, IP and gateway for static networking.");
+            style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
         }
         if (!strcmp(app.net_type, "wifi") && (!app.wifi_ssid[0] || !app.wifi_pass[0])) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Select a Wi-Fi network and enter its password.");
+            style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
         }
@@ -821,6 +864,7 @@ static void on_next(GtkButton *btn, gpointer data) {
         GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
             GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO,
             "All data on %s will be permanently erased. Continue?", app.disk);
+        style_dialog(d);
         int r = gtk_dialog_run(GTK_DIALOG(d));
         gtk_widget_destroy(d);
         if (r != GTK_RESPONSE_YES) return;
@@ -1029,6 +1073,7 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     GtkWidget *dlg = gtk_dialog_new_with_buttons("Add user", GTK_WINDOW(app.window),
         GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_OK, NULL);
+    style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
@@ -1036,9 +1081,12 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
 
     GtkWidget *name_e = gtk_entry_new();
+    gtk_widget_set_name(name_e, "dark-entry");
     GtkWidget *pass_e = gtk_entry_new();
+    gtk_widget_set_name(pass_e, "dark-entry");
     gtk_entry_set_visibility(GTK_ENTRY(pass_e), FALSE);
     GtkWidget *pass2_e = gtk_entry_new();
+    gtk_widget_set_name(pass2_e, "dark-entry");
     gtk_entry_set_visibility(GTK_ENTRY(pass2_e), FALSE);
     GtkWidget *sudo_c = gtk_check_button_new_with_label("Grant sudo");
 
@@ -1062,6 +1110,7 @@ static void on_add_user(GtkButton *btn, gpointer data) {
         if (!name[0] || !pass[0] || strcmp(pass, pass2)) {
             GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(dlg), GTK_DIALOG_MODAL,
                 GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Enter a username and matching passwords.");
+            style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d));
             gtk_widget_destroy(d);
             continue;
@@ -1406,6 +1455,7 @@ int main(int argc, char **argv) {
     if (geteuid() != 0) {
         GtkWidget *d = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR,
             GTK_BUTTONS_OK, "The installer must run as root.");
+        g_signal_connect(d, "realize", G_CALLBACK(on_dialog_realize), NULL);
         gtk_dialog_run(GTK_DIALOG(d));
         return 1;
     }
