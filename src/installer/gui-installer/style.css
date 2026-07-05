@@ -78,7 +78,7 @@
 }
 
 #dark-listbox {
-    background-color: rgba(15, 37, 53, 0.82);
+    background-color: rgba(10, 26, 36, 0.82);
     color: #ffffff;
 }
 
@@ -104,12 +104,18 @@
     color: #b2f0e8;
 }
 
+#boreal-progress {
+    min-height: 20px;
+}
+
 #boreal-progress trough {
     background-color: #0f2535;
     border-radius: 6px;
+    min-height: 20px;
 }
 
 #boreal-progress progress {
     background-color: #3dffd2;
     border-radius: 6px;
+    min-height: 20px;
 }

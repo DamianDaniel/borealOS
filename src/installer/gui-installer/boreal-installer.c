@@ -21,6 +21,7 @@ typedef struct {
     GtkWidget *tz_filter_entry, *tz_list;
     GtkWidget *user_list_box;
     GtkWidget *new_user_name, *new_user_pass, *new_user_pass2, *new_user_sudo, *new_user_error;
+    GtkWidget *user_question_box, *user_form_box, *user_question_label;
     GtkWidget *net_dhcp, *net_static, *net_skip, *net_if_combo;
     GtkWidget *net_ip_entry, *net_gw_entry, *net_dns_entry;
     GtkWidget *net_static_box;
@@ -106,7 +107,7 @@ static void set_progress(double frac, const char *label) {
 static int run_cmd(const char *cmd) {
     log_line("$ %s", cmd);
     char full[4096];
-    snprintf(full, sizeof(full), "%s 2>&1", cmd);
+    snprintf(full, sizeof(full), "DEBIAN_FRONTEND=noninteractive %s </dev/null 2>&1", cmd);
     FILE *fp = popen(full, "r");
     if (!fp) { log_line("failed to spawn command"); return -1; }
     char line[1024];
@@ -754,10 +755,6 @@ static void build_summary(void) {
     add_summary_row(grid, 4, "Desktop", app.de_choice);
     add_summary_row(grid, 5, "Network", app.net_type);
     add_summary_row(grid, 6, "Extra users", users);
-    GtkWidget *warn = gtk_label_new("All data on the selected disk will be erased.");
-    gtk_widget_set_name(warn, "warn-label");
-    gtk_widget_set_halign(warn, GTK_ALIGN_START);
-    gtk_grid_attach(grid, warn, 0, 7, 2, 1);
     gtk_widget_show_all(GTK_WIDGET(grid));
 }
 
@@ -810,6 +807,10 @@ static void goto_page(int idx) {
     app.current_page = idx;
     gtk_stack_set_visible_child_name(GTK_STACK(app.stack), PAGE_ORDER[idx]);
     if (!strcmp(PAGE_ORDER[idx], "summary")) build_summary();
+    if (!strcmp(PAGE_ORDER[idx], "extrausers")) {
+        gtk_widget_hide(app.user_form_box);
+        gtk_widget_show(app.user_question_box);
+    }
     update_nav_buttons();
 }
 
@@ -1047,6 +1048,20 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     gtk_entry_set_text(GTK_ENTRY(app.new_user_pass2), "");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.new_user_sudo), FALSE);
     gtk_label_set_text(GTK_LABEL(app.new_user_error), "");
+
+    gtk_widget_hide(app.user_form_box);
+    gtk_widget_show(app.user_question_box);
+}
+
+static void on_user_yes(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    gtk_widget_hide(app.user_question_box);
+    gtk_widget_show(app.user_form_box);
+}
+
+static void on_user_no(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    on_next(NULL, NULL);
 }
 
 static GtkWidget *page_welcome(void) {
@@ -1161,6 +1176,22 @@ static GtkWidget *page_extrausers(void) {
 
     app.user_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
 
+    app.user_question_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    app.user_question_label = gtk_label_new("Create an extra user account?");
+    gtk_widget_set_halign(app.user_question_label, GTK_ALIGN_START);
+    GtkWidget *qbtn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *yes_btn = gtk_button_new_with_label("Yes");
+    gtk_widget_set_name(yes_btn, "nav-button");
+    g_signal_connect(yes_btn, "clicked", G_CALLBACK(on_user_yes), NULL);
+    GtkWidget *no_btn = gtk_button_new_with_label("No");
+    gtk_widget_set_name(no_btn, "primary-button");
+    g_signal_connect(no_btn, "clicked", G_CALLBACK(on_user_no), NULL);
+    gtk_box_pack_start(GTK_BOX(qbtn_box), yes_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(qbtn_box), no_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(app.user_question_box), app.user_question_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(app.user_question_box), qbtn_box, FALSE, FALSE, 0);
+
+    app.user_form_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
@@ -1193,11 +1224,16 @@ static GtkWidget *page_extrausers(void) {
     app.new_user_error = gtk_label_new("");
     gtk_widget_set_name(app.new_user_error, "warn-label");
 
+    gtk_box_pack_start(GTK_BOX(app.user_form_box), grid, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(app.user_form_box), app.new_user_error, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(app.user_form_box), add, FALSE, FALSE, 0);
+    gtk_widget_set_no_show_all(app.user_form_box, TRUE);
+    gtk_widget_hide(app.user_form_box);
+
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.user_list_box, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), app.new_user_error, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), add, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(box), app.user_question_box, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(box), app.user_form_box, FALSE, FALSE, 8);
     return box;
 }
 
@@ -1474,6 +1510,12 @@ int main(int argc, char **argv) {
     gtk_widget_hide(app.net_static_box);
     gtk_widget_hide(app.wifi_box);
     refresh_wifi_list();
+
+    GdkWindow *gdkwin = gtk_widget_get_window(app.window);
+    if (gdkwin) {
+        GdkCursor *cursor = gdk_cursor_new_from_name(gdk_display_get_default(), "default");
+        if (cursor) gdk_window_set_cursor(gdkwin, cursor);
+    }
     gtk_main();
     return 0;
 }
