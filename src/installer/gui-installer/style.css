@@ -15,7 +15,7 @@
 }
 
 #content-panel {
-    background-color: rgba(10, 26, 36, 0.82);
+    background-color: rgba(10, 26, 36, 0.92);
     border-radius: 10px;
 }
 
@@ -78,7 +78,7 @@
 }
 
 #dark-listbox {
-    background-color: rgba(10, 26, 36, 0.82);
+    background-color: rgba(10, 26, 36, 0.92);
     color: #ffffff;
 }
 
@@ -95,12 +95,12 @@
 }
 
 #log-view {
-    background-color: rgba(10, 26, 36, 0.82);
+    background-color: rgba(10, 26, 36, 0.92);
     color: #b2f0e8;
 }
 
 #log-view text {
-    background-color: rgba(10, 26, 36, 0.82);
+    background-color: rgba(10, 26, 36, 0.92);
     color: #b2f0e8;
 }
 

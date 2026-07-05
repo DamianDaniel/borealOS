@@ -39,18 +39,16 @@ echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
 echo "  1) KDE Plasma"
 echo "  2) XFCE"
-echo "  3) Sway (Wayland)"
-echo "  4) Niri (Wayland, built from source)"
-echo "  5) None (TTY only)"
+echo "  3) Niri (Wayland, built from source)"
+echo "  4) None (TTY only)"
 while true; do
     echo -ne "${CYN}Choice${RST}: "
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
         2) DE_PKGS="xfce4 xfce4-goodies"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
-        3) DE_PKGS="sway swaybg swaylock waybar foot wofi"; DM_PKGS=""; DE_NAME="Sway"; DE_START="sway"; break ;;
-        4) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
-        5) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
+        3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
+        4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
     esac
 done
@@ -300,7 +298,6 @@ copy_rice "kitty/kitty.conf"       ".config/kitty/kitty.conf"
 copy_rice "kitty/dark.conf"        ".config/kitty/dark.conf"
 copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
 copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
-copy_rice "sway/config"            ".config/sway/config"
 
 echo "==> Copying XFCE rice configs..."
 XFCE_RICE="$RICE_DIR/xfce4"
