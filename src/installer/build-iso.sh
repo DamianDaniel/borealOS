@@ -788,6 +788,17 @@ chmod +x "$WORK/squashfs-root/usr/sbin/policy-rc.d"
 
 chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation failed"
 set -e
+PYVER=\$(ls /usr/lib/ | grep -oP '^python3\.[0-9]+\$' | sort -V | tail -1)
+if [ -n "\$PYVER" ]; then
+    mkdir -p /etc/python3
+    cat > /etc/python3/debian_defaults <<PYDEFAULTS
+[DEFAULT]
+default-version = \${PYVER}
+supported-versions = \${PYVER}
+unsupported-versions =
+requested-versions = \${PYVER#python}
+PYDEFAULTS
+fi
 apt-get update -qq
 
 echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
@@ -839,17 +850,19 @@ elif [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
-for pkg in fastfetch kitty; do
-    apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
-done
+if [ "$DE_NAME" != "None" ]; then
+    apt-get install -y fastfetch || echo "FAILED: fastfetch install, see error above"
+    apt-get install -y kitty || { echo "FATAL: kitty install failed, see error above"; exit 1; }
+    command -v kitty >/dev/null 2>&1 || { echo "FATAL: kitty binary missing after install"; exit 1; }
 
-if command -v kitty >/dev/null 2>&1; then
-    update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/kitty 50 2>/dev/null || true
-    update-alternatives --set x-terminal-emulator /usr/bin/kitty 2>/dev/null || true
-    mkdir -p /etc/xdg/xfce4
-    cat > /etc/xdg/xfce4/helpers.rc <<HELPERSRC
+    if command -v kitty >/dev/null 2>&1; then
+        update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/kitty 50 2>/dev/null || true
+        update-alternatives --set x-terminal-emulator /usr/bin/kitty 2>/dev/null || true
+        mkdir -p /etc/xdg/xfce4
+        cat > /etc/xdg/xfce4/helpers.rc <<HELPERSRC
 TerminalEmulator=kitty
 HELPERSRC
+    fi
 fi
 
 apt-get install -y --no-install-recommends gcc make pkg-config libgtk-3-dev libgtk-3-0 \

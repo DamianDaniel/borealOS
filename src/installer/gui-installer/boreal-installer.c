@@ -637,7 +637,7 @@ static void *install_thread(void *arg) {
     struct { const char *name; StepFn fn; double frac; } steps[] = {
         {"Partitioning disk", partition_disk, 0.10},
         {"Mounting target", mount_target, 0.15},
-        {"Copying system", rsync_system, 0.45},
+        {"Copying system (can take a while)", rsync_system, 0.45},
         {"Installing display manager", install_bundled_packages, 0.55},
         {"Writing fstab", write_fstab, 0.58},
         {"Writing network config", write_network, 0.60},
@@ -1288,9 +1288,9 @@ static gboolean on_progress_draw(GtkWidget *widget, cairo_t *cr, gpointer data) 
     PangoFontDescription *desc = pango_font_description_from_string("sans bold 11");
     pango_layout_set_font_description(layout, desc);
     pango_font_description_free(desc);
-    int tw, th;
-    pango_layout_get_pixel_size(layout, &tw, &th);
-    double x = (width - tw) / 2.0;
+    int th;
+    pango_layout_get_pixel_size(layout, NULL, &th);
+    double x = 12.0;
     double y = (height - th) / 2.0;
     int split = (int)(width * fraction);
 
