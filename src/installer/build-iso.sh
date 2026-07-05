@@ -647,7 +647,7 @@ BANNER
     echo ""
     echo "  BorealOS 1.0 Live  |  DE: $DE"
     echo ""
-    echo "  1) Graphical Live Environment"
+    echo "  1) Graphical Install"
     echo "  2) Terminal Installer"
     echo "  3) Shell"
     echo ""
@@ -655,8 +655,8 @@ BANNER
     read -r choice
     case "$choice" in
         1)
-            if [ -z "$DE_START" ] || [ "$DE" = "None" ]; then
-                echo "No graphical DE in this ISO."
+            if [ ! -x /usr/local/bin/boreal-installer ]; then
+                echo "Graphical installer not found in this ISO."
                 sleep 2
             else
                 clear
@@ -680,38 +680,20 @@ chmod +x "$WORK/squashfs-root/etc/profile.d/boreal-live.sh"
 
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-start-graphical" <<'GRAPHICAL'
 #!/bin/bash
-# boreal-start-graphical: launches a minimal XFCE installer session.
-#
-# WHY XFCE ALWAYS:
-#   Calamares is a Qt/X11 application. It requires a running X server, a D-Bus
-#   session, and a composited or at least functional WM. Wayland compositors
-#   (Sway, Hyprland, Niri) do not expose DISPLAY, so Qt6/X11 Calamares can't
-#   connect. Bare WMs without a session manager miss the D-Bus plumbing Calamares
-#   needs. XFCE is the lightest DE that provides all of this reliably.
-#
-#   The user's chosen DE (KDE, Sway, etc.) is still installed into the *target*
-#   system by installer.sh — this session is only for the live install environment.
+# Runs the BorealOS graphical installer directly on a bare X server.
+# No window manager, no desktop session - just our installer as the sole
+# X client, drawn fullscreen. The user's chosen DE is installed separately
+# onto the target disk by the installer itself; this session only hosts
+# the installer program.
 
-DE=$(cat /opt/borealOS/de 2>/dev/null || echo "None")
-
-if [ "$DE" = "None" ]; then
-    echo "This ISO was built without a graphical environment (TTY-only mode)."
-    echo "Use option 1 (Terminal Installer) instead."
+if [ ! -x /usr/local/bin/boreal-installer ]; then
+    echo "ERROR: boreal-installer not found. Rebuild the ISO."
     echo "Press Enter to return."
     read -r; exit 0
 fi
 
-# Check XFCE is available (it's always installed as the installer host DE)
-if ! command -v startxfce4 >/dev/null 2>&1; then
-    echo "ERROR: XFCE installer environment not found."
-    echo "The ISO may need to be rebuilt. Press Enter to return."
-    read -r; exit 0
-fi
+echo "Starting BorealOS graphical installer..."
 
-echo "Starting BorealOS graphical installer (XFCE host session)..."
-echo "Your chosen DE ($DE) will be installed to the target disk."
-
-# Diagnose common X startup failures before attempting
 echo "==> Pre-flight checks..."
 XORG_BIN=""
 for p in /usr/lib/xorg/Xorg /usr/bin/Xorg /usr/bin/X; do
@@ -722,11 +704,9 @@ if [ -z "$XORG_BIN" ]; then
     echo "Press Enter to return."; read -r; exit 1
 fi
 echo "  Xorg: $XORG_BIN"
-command -v xinit    >/dev/null || { echo "ERROR: xinit not found"; read -r; exit 1; }
-command -v startxfce4 >/dev/null || { echo "ERROR: startxfce4 not found"; read -r; exit 1; }
-echo "  xinit, startxfce4: OK"
+command -v xinit >/dev/null || { echo "ERROR: xinit not found"; read -r; exit 1; }
+echo "  xinit: OK"
 
-# Find a free VT. Live systems boot on tty1; we want to open X on the next free one.
 VT=7
 for v in 7 8 2 3 4 5 6; do
     fgconsole 2>/dev/null | grep -q "^${v}$" || { VT=$v; break; }
@@ -738,58 +718,12 @@ chmod 1777 /tmp/.X11-unix
 
 cat > /root/.xinitrc <<'XINITRC'
 #!/bin/bash
-export XDG_SESSION_TYPE=x11
-export XDG_CURRENT_DESKTOP=XFCE
 export DISPLAY=:0
-
-# D-Bus session
 eval "$(dbus-launch --sh-syntax --exit-with-session 2>/dev/null)" || true
-
-# Set wallpaper using xrandr to detect actual monitor name, trust desktop icons
-(sleep 5
- WP=/usr/share/boreal-artwork/wallpaper-default.png
- [ -f "$WP" ] || WP=/usr/share/pixmaps/xfce4-logo.png
- apply_wallpaper() {
-   MONITORS=$(DISPLAY=:0 xrandr --query 2>/dev/null | awk '/ connected/ {print $1}')
-   [ -z "$MONITORS" ] && MONITORS="Virtual-1 VGA-1 HDMI-1 eDP-1"
-   for mon in $MONITORS; do
-     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -n -t string -s "$WP" 2>/dev/null || \
-     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/last-image" -s "$WP" 2>/dev/null || true
-     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -n -t int -s 5 2>/dev/null || \
-     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/image-style" -t int -s 5 2>/dev/null || true
-     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -n -t int -s 0 2>/dev/null || \
-     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/${mon}/workspace0/color-style" -t int -s 0 2>/dev/null || true
-   done
-   xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/last-image$' | while read -r prop; do
-     xfconf-query -c xfce4-desktop -p "$prop" -s "$WP" 2>/dev/null || true
-   done
-   xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/image-style$' | while read -r prop; do
-     xfconf-query -c xfce4-desktop -p "$prop" -t int -s 5 2>/dev/null || true
-   done
- }
- apply_wallpaper
- xfdesktop --reload 2>/dev/null || true
- sleep 3
- apply_wallpaper
- xfdesktop --reload 2>/dev/null || true
- # Trust desktop shortcuts
- for f in "$HOME/Desktop/"*.desktop; do
-   [ -f "$f" ] && gio set "$f" metadata::trusted true 2>/dev/null || true
- done
- xfdesktop --reload 2>/dev/null || true
-) &
-
-exec startxfce4
+exec /usr/local/bin/boreal-installer
 XINITRC
 chmod +x /root/.xinitrc
 
-# ── Input device setup ────────────────────────────────────────────────────────
-# In the live env, udev may be running but the `input` group owns /dev/input/*.
-# Root should always have access, but we chmod anyway as belt-and-suspenders.
-# The real issue on many live systems: udevd is running but hasn't processed
-# all add events yet, so libinput can't see the devices.
-
-# 1. Start udevd if not already running
 if ! pgrep -x udevd >/dev/null 2>&1 && ! pgrep -x systemd-udevd >/dev/null 2>&1; then
     echo "==> Starting udev..."
     if [ -x /sbin/udevd ]; then
@@ -802,20 +736,14 @@ if ! pgrep -x udevd >/dev/null 2>&1 && ! pgrep -x systemd-udevd >/dev/null 2>&1;
     sleep 1
 fi
 
-# 2. Re-trigger all input device add events so libinput gets notified
 udevadm trigger --action=add --subsystem-match=input 2>/dev/null || true
 udevadm settle --timeout=3 2>/dev/null || true
-
-# 3. Direct chmod on all input nodes — works even if udev rules are wrong
 chmod a+rw /dev/input/event* /dev/input/mice /dev/input/mouse* 2>/dev/null || true
-
-# 4. Add root to input and plugdev groups (needed on some Debian live configs)
 usermod -aG input,plugdev root 2>/dev/null || true
 
 echo "  Input devices: $(ls /dev/input/event* 2>/dev/null | wc -l) event nodes found"
 
 echo "==> Starting X on display :0 VT${VT}..."
-# Try fbdev first; if Xorg still can't find a screen, retry with vesa
 xinit /root/.xinitrc -- "$XORG_BIN" :0 vt${VT} -nolisten tcp     > /tmp/xorg.log 2>&1
 XRET=$?
 if [ "$XRET" -ne 0 ] && grep -q "no screens found" /tmp/xorg.log 2>/dev/null; then
@@ -835,10 +763,8 @@ if [ "$XRET" -ne 0 ]; then
 fi
 echo "--- Xorg log (last 30 lines) ---"
 tail -30 /tmp/xorg.log
-echo "--- XFCE session log ---"
-cat /tmp/xfce4-session.log 2>/dev/null | tail -20 || true
 echo "--- boreal-installer log ---"
-cat /tmp/boreal-installer.log 2>/dev/null | tail -10 || true
+cat /tmp/boreal-installer.log 2>/dev/null | tail -20 || true
 echo ""
 echo "Press Enter to return to the menu."
 read -r
@@ -908,18 +834,6 @@ apt-get install -y \
 for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
-
-# ── XFCE installer host DE ────────────────────────────────────────────────────
-# Install XFCE with --no-install-recommends to prevent apt from pulling in
-# lightdm/sddm as a recommended dep (xfce4 recommends a DM).
-# We intentionally keep the live env DM-free: the TTY autologin → boreal-live.sh
-# menu → boreal-start-graphical script calls startx directly. Any DM present
-# at boot will register an OpenRC init script and hijack the TTY autologin.
-apt-get install -y --no-install-recommends \
-    xfce4 xfce4-terminal xfwm4 xfdesktop4 xfconf \
-    xfce4-session xfce4-panel xfce4-settings \
-    xfce4-power-manager \
-    || echo "WARN: XFCE installer host install incomplete"
 
 # Install the user's chosen DE (also --no-install-recommends to stay safe)
 if [ -n "$DE_PKGS" ] && [ "$DE_PKGS" != "xfce4 xfce4-goodies" ]; then

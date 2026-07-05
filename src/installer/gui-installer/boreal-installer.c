@@ -20,6 +20,7 @@ typedef struct {
     GtkWidget *hostname_entry, *pass1_entry, *pass2_entry, *locale_entry;
     GtkWidget *tz_filter_entry, *tz_list;
     GtkWidget *user_list_box;
+    GtkWidget *new_user_name, *new_user_pass, *new_user_pass2, *new_user_sudo, *new_user_error;
     GtkWidget *net_dhcp, *net_static, *net_skip, *net_if_combo;
     GtkWidget *net_ip_entry, *net_gw_entry, *net_dns_entry;
     GtkWidget *net_static_box;
@@ -834,6 +835,11 @@ static void on_back(GtkButton *btn, gpointer data) {
     if (app.current_page > 0) goto_page(app.current_page - 1);
 }
 
+static gboolean on_delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
+    (void)widget; (void)event; (void)data;
+    return TRUE;
+}
+
 static void on_cancel(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     gtk_main_quit();
@@ -1020,54 +1026,27 @@ static void refresh_user_list_display(void) {
 
 static void on_add_user(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
-    GtkWidget *dlg = gtk_dialog_new_with_buttons("Add user", GTK_WINDOW(app.window),
-        GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_OK, NULL);
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-    gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
+    const char *name = gtk_entry_get_text(GTK_ENTRY(app.new_user_name));
+    const char *pass = gtk_entry_get_text(GTK_ENTRY(app.new_user_pass));
+    const char *pass2 = gtk_entry_get_text(GTK_ENTRY(app.new_user_pass2));
 
-    GtkWidget *name_e = gtk_entry_new();
-    GtkWidget *pass_e = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(pass_e), FALSE);
-    GtkWidget *pass2_e = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(pass2_e), FALSE);
-    GtkWidget *sudo_c = gtk_check_button_new_with_label("Grant sudo");
-
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Username"), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), name_e, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Password"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), pass_e, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm password"), 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), pass2_e, 1, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), sudo_c, 1, 3, 1, 1);
-    gtk_container_add(GTK_CONTAINER(content), grid);
-    gtk_widget_show_all(dlg);
-
-    gboolean added = FALSE;
-    while (!added) {
-        int resp = gtk_dialog_run(GTK_DIALOG(dlg));
-        if (resp != GTK_RESPONSE_OK) break;
-        const char *name = gtk_entry_get_text(GTK_ENTRY(name_e));
-        const char *pass = gtk_entry_get_text(GTK_ENTRY(pass_e));
-        const char *pass2 = gtk_entry_get_text(GTK_ENTRY(pass2_e));
-        if (!name[0] || !pass[0] || strcmp(pass, pass2)) {
-            GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(dlg), GTK_DIALOG_MODAL,
-                GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Enter a username and matching passwords.");
-            gtk_dialog_run(GTK_DIALOG(d));
-            gtk_widget_destroy(d);
-            continue;
-        }
-        ExtraUser *u = g_new0(ExtraUser, 1);
-        strncpy(u->name, name, sizeof(u->name) - 1);
-        strncpy(u->pass, pass, sizeof(u->pass) - 1);
-        u->sudo = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sudo_c));
-        app.extra_users = g_list_append(app.extra_users, u);
-        refresh_user_list_display();
-        added = TRUE;
+    if (!name[0] || !pass[0] || strcmp(pass, pass2)) {
+        gtk_label_set_text(GTK_LABEL(app.new_user_error), "Enter a username and matching passwords.");
+        return;
     }
-    gtk_widget_destroy(dlg);
+
+    ExtraUser *u = g_new0(ExtraUser, 1);
+    strncpy(u->name, name, sizeof(u->name) - 1);
+    strncpy(u->pass, pass, sizeof(u->pass) - 1);
+    u->sudo = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.new_user_sudo));
+    app.extra_users = g_list_append(app.extra_users, u);
+    refresh_user_list_display();
+
+    gtk_entry_set_text(GTK_ENTRY(app.new_user_name), "");
+    gtk_entry_set_text(GTK_ENTRY(app.new_user_pass), "");
+    gtk_entry_set_text(GTK_ENTRY(app.new_user_pass2), "");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.new_user_sudo), FALSE);
+    gtk_label_set_text(GTK_LABEL(app.new_user_error), "");
 }
 
 static GtkWidget *page_welcome(void) {
@@ -1179,13 +1158,46 @@ static GtkWidget *page_extrausers(void) {
     GtkWidget *title = gtk_label_new("Extra user accounts");
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
+
     app.user_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+
+    app.new_user_name = gtk_entry_new();
+    gtk_widget_set_name(app.new_user_name, "dark-entry");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app.new_user_name), "Username");
+    app.new_user_pass = gtk_entry_new();
+    gtk_widget_set_name(app.new_user_pass, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(app.new_user_pass), FALSE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app.new_user_pass), "Password");
+    app.new_user_pass2 = gtk_entry_new();
+    gtk_widget_set_name(app.new_user_pass2, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(app.new_user_pass2), FALSE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app.new_user_pass2), "Confirm password");
+    app.new_user_sudo = gtk_check_button_new_with_label("Grant sudo");
+
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Username"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app.new_user_name, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Password"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app.new_user_pass, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm"), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app.new_user_pass2, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app.new_user_sudo, 1, 3, 1, 1);
+
     GtkWidget *add = gtk_button_new_with_label("Add user");
     gtk_widget_set_name(add, "nav-button");
     g_signal_connect(add, "clicked", G_CALLBACK(on_add_user), NULL);
+
+    app.new_user_error = gtk_label_new("");
+    gtk_widget_set_name(app.new_user_error, "warn-label");
+
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.user_list_box, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), add, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(box), app.new_user_error, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), add, FALSE, FALSE, 8);
     return box;
 }
 
@@ -1383,12 +1395,15 @@ int main(int argc, char **argv) {
     gtk_window_set_title(GTK_WINDOW(app.window), "BorealOS Installer");
 
     int win_w = 760, win_h = 560;
+    int screen_w = 0, screen_h = 0;
     GdkDisplay *display = gdk_display_get_default();
     if (display) {
         GdkMonitor *mon = gdk_display_get_monitor(display, 0);
         if (mon) {
             GdkRectangle geo;
             gdk_monitor_get_geometry(mon, &geo);
+            screen_w = geo.width;
+            screen_h = geo.height;
             win_w = (int)(geo.width * 0.75);
             win_h = (int)(geo.height * 0.80);
             if (win_w > 900) win_w = 900;
@@ -1399,6 +1414,7 @@ int main(int argc, char **argv) {
     gtk_window_set_position(GTK_WINDOW(app.window), GTK_WIN_POS_CENTER);
     gtk_window_set_icon_from_file(GTK_WINDOW(app.window), "/usr/share/boreal-artwork/logo.png", NULL);
     gtk_widget_set_name(app.window, "boreal-window");
+    g_signal_connect(app.window, "delete-event", G_CALLBACK(on_delete_event), NULL);
     g_signal_connect(app.window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
     GtkWidget *root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1444,8 +1460,17 @@ int main(int argc, char **argv) {
     app.current_page = 0;
     update_nav_buttons();
 
+    if (screen_w > 0 && screen_h > 0) {
+        gtk_window_set_decorated(GTK_WINDOW(app.window), FALSE);
+        gtk_window_set_default_size(GTK_WINDOW(app.window), screen_w, screen_h);
+        gtk_window_move(GTK_WINDOW(app.window), 0, 0);
+    }
     gtk_window_fullscreen(GTK_WINDOW(app.window));
     gtk_widget_show_all(app.window);
+    if (screen_w > 0 && screen_h > 0) {
+        gtk_window_resize(GTK_WINDOW(app.window), screen_w, screen_h);
+        gtk_window_move(GTK_WINDOW(app.window), 0, 0);
+    }
     gtk_widget_hide(app.net_static_box);
     gtk_widget_hide(app.wifi_box);
     refresh_wifi_list();
