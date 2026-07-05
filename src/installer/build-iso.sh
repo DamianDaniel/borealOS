@@ -602,7 +602,7 @@ ok "BorealOS XFCE branding applied."
 echo "==> Applying branding..."
 cat > "$WORK/squashfs-root/etc/os-release" <<OS
 NAME="BorealOS"
-PRETTY_NAME="BorealOS 1.0"
+PRETTY_NAME="BorealOS alpha"
 ID=borealos
 ID_LIKE=
 VERSION="1.0"
@@ -613,10 +613,10 @@ cat > "$WORK/squashfs-root/etc/lsb-release" <<LSB
 DISTRIB_ID=BorealOS
 DISTRIB_RELEASE=1.0
 DISTRIB_CODENAME=boreal
-DISTRIB_DESCRIPTION="BorealOS 1.0"
+DISTRIB_DESCRIPTION="BorealOS alpha"
 LSB
 echo "BorealOS"      > "$WORK/squashfs-root/etc/issue"
-echo "BorealOS 1.0"  > "$WORK/squashfs-root/etc/issue.net"
+echo "BorealOS alpha"  > "$WORK/squashfs-root/etc/issue.net"
 echo "BorealOS"      > "$WORK/squashfs-root/etc/debian_version"
 echo "borealOS-live" > "$WORK/squashfs-root/etc/hostname"
 
@@ -642,7 +642,7 @@ while true; do
 BANNER
     printf '\033[0m'
     echo ""
-    echo "  BorealOS 1.0 Live  |  DE: $DE"
+    echo "  BorealOS alpha |  DE: $DE"
     echo ""
     echo "  1) Graphical Install"
     echo "  2) Terminal Installer"
