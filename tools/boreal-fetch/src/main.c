@@ -724,74 +724,84 @@ static void render_info_panel(double t) {
     /* left column layout: "  " + label(10) + " | " + value */
     const int val_col   = 2 + 10 + 3;              /* column where value text starts */
     const int val_avail = LEFT_W + 2 - val_col;    /* usable width for the value      */
+    /* width available for the right (hardware) column at the current terminal
+     * width — hardware rows are padded out to this so a value that's shorter
+     * than what occupied that row last frame can't leave stale text behind. */
+    int hw_avail = TW - LEFT_W - 4;
+    if (hw_avail < 0) hw_avail = 0;
 
     int nrows = nsw > nhw ? nsw : nhw;
     int hwi = 0;
 
     for (int i = 0; i < nrows; i++) {
-        int wrapped_lines = 0;
-
-        /* --- left column: software row (wraps long values onto extra lines) --- */
+        /* --- left column, first line --- */
         fb_str("  ");
+
+        const char *val = NULL;
+        int vlen = 0, pos = 0, vg = 160;
+
         if (i < nsw) {
             double wv = wave01(t * .35 + i);
-            int lg = (int)(70 + wv * 70), vg = (int)(160 + wv * 70);
+            int lg = (int)(70 + wv * 70);
+            vg = (int)(160 + wv * 70);
 
             char prefix[80];
             snprintf(prefix, sizeof(prefix),
                      "\033[38;2;15;%d;80m%-10s\033[38;2;30;60;45m | \033[0m", lg, sw[i].label);
             fb_str(prefix);
 
-            const char *val = sw[i].value;
-            int vlen = (int)strlen(val);
+            val = sw[i].value;
+            vlen = (int)strlen(val);
 
-            if (vlen <= val_avail) {
-                fb_fg(40, vg, 140);
-                fb_str(val);
-                fb_R();
-                fb_pad(val_avail - vlen);
-            } else {
-                int pos = 0, first = 1;
-                while (pos < vlen) {
-                    int chunk = val_avail;
-                    if (pos + chunk < vlen) {
-                        /* break at the last space/'+' within the chunk, if any */
-                        int bp = chunk;
-                        while (bp > 0 && val[pos + bp] != ' ' && val[pos + bp] != '+') bp--;
-                        if (bp > 0) chunk = bp;
-                    } else {
-                        chunk = vlen - pos;
-                    }
-
-                    if (!first) {
-                        fb_str("\r\n");
-                        fb_pad(val_col);
-                        wrapped_lines++;
-                    }
-                    fb_fg(40, vg, 140);
-                    memcpy(fbuf + fbpos, val + pos, chunk);
-                    fbpos += chunk;
-                    fb_R();
-                    if (first) fb_pad(val_avail - chunk);
-                    first = 0;
-
-                    pos += chunk;
-                    while (pos < vlen && val[pos] == ' ') pos++;
-                }
+            int chunk = vlen;
+            if (chunk > val_avail) {
+                /* break at the last space/'+' within the first chunk, if any */
+                int bp = val_avail;
+                while (bp > 0 && val[bp] != ' ' && val[bp] != '+') bp--;
+                chunk = bp > 0 ? bp : val_avail;
             }
+            fb_fg(40, vg, 140);
+            memcpy(fbuf + fbpos, val, chunk);
+            fbpos += chunk;
+            fb_R();
+            fb_pad(val_avail - chunk);
+
+            pos = chunk;
+            while (pos < vlen && val[pos] == ' ') pos++;
         } else {
             fb_pad(LEFT_W); /* no software row left — keep the right column aligned */
         }
 
-        /* --- right column: hardware row --- */
+        /* --- right column: hardware row, always on this first line --- */
         fb_str("  ");
-        if (hwi < nhw) fb_str(hw[hwi++]);
+        int hw_w = 0;
+        if (hwi < nhw) { fb_str(hw[hwi]); hw_w = visw(hw[hwi]); hwi++; }
+        if (hw_w < hw_avail) fb_pad(hw_avail - hw_w);
         fb_str("\r\n");
 
-        /* continuation lines from wrapping have no right-column content */
-        for (int e = 0; e < wrapped_lines; e++) {
-            fb_pad(val_col + val_avail + 2);
+        /* --- any remaining wrapped chunks of a long value: left column only --- */
+        while (val && pos < vlen) {
+            int chunk = val_avail;
+            if (pos + chunk < vlen) {
+                int bp = chunk;
+                while (bp > 0 && val[pos + bp] != ' ' && val[pos + bp] != '+') bp--;
+                if (bp > 0) chunk = bp;
+            } else {
+                chunk = vlen - pos;
+            }
+
+            fb_pad(val_col);
+            fb_fg(40, vg, 140);
+            memcpy(fbuf + fbpos, val + pos, chunk);
+            fbpos += chunk;
+            fb_R();
+            /* pad the rest of the line (left overflow + right column) so
+             * stale text from a previous, longer frame can't show through */
+            fb_pad(val_avail - chunk + 2 + hw_avail);
             fb_str("\r\n");
+
+            pos += chunk;
+            while (pos < vlen && val[pos] == ' ') pos++;
         }
     }
 }
