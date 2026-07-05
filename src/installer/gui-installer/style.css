@@ -119,3 +119,11 @@
     border-radius: 6px;
     min-height: 20px;
 }
+
+#boreal-dialog {
+    background-color: #0d1f2d;
+}
+
+#boreal-dialog label {
+    color: #e8f7f4;
+}
