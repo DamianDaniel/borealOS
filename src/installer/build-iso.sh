@@ -151,6 +151,8 @@ echo '</channel>'
 } > "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
 cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
+chmod 755 "$WORK/squashfs-root/usr/share/boreal-artwork"
+chmod 644 "$WORK/squashfs-root/usr/share/boreal-artwork/"*.png
 
 echo "==> Creating GRUB theme..."
 GRUB_THEME_DIR="$WORK/squashfs-root/usr/share/grub/themes/boreal"
@@ -293,22 +295,22 @@ copy_rice() {
     mkdir -p "$(dirname "$dst")"
     [ -f "$src" ] && cp "$src" "$dst" && echo "  copied: $2" || warn "  missing: $1"
 }
-copy_rice "fastfetch/config.jsonc" ".config/fastfetch/config.jsonc"
-copy_rice "kitty/kitty.conf"       ".config/kitty/kitty.conf"
-copy_rice "kitty/dark.conf"        ".config/kitty/dark.conf"
-copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
-copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
+if [ "$DE_NAME" != "None" ]; then
+    copy_rice "fastfetch/config.jsonc" ".config/fastfetch/config.jsonc"
+    copy_rice "kitty/kitty.conf"       ".config/kitty/kitty.conf"
+    copy_rice "kitty/dark.conf"        ".config/kitty/dark.conf"
+    copy_rice "kitty/light.conf"       ".config/kitty/light.conf"
+fi
+if [ "$DE_NAME" = "Niri" ]; then
+    copy_rice "niri/config.kdl"        ".config/niri/config.kdl"
+fi
 
+if [ "$DE_NAME" = "XFCE" ]; then
 echo "==> Copying XFCE rice configs..."
 XFCE_RICE="$RICE_DIR/xfce4"
 
 xfce_copy_to() {
-    # xfce_copy_to <destination_skel_root>
-    # Copies the rice into any given skel/home root.
     local DEST="$1"
-
-    # Exact folder names from src/rice/xfce4/:
-    #   desktop/  panel/  xfce4-screenshooter/  xfconf/
 
     # desktop/ → .config/xfce4/desktop/
     if [ -d "$XFCE_RICE/desktop" ]; then
@@ -343,13 +345,7 @@ xfce_copy_to() {
 # 1. Apply to /etc/skel so every new user on the installed system gets the rice
 xfce_copy_to "$SKEL"
 ok "XFCE rice applied to skel."
-
-# 2. Apply to live ISO root's home so the installer session itself looks riced.
-# The live session runs as root, so target /root directly.
-LIVE_ROOT="$WORK/squashfs-root/root"
-mkdir -p "$LIVE_ROOT"
-xfce_copy_to "$LIVE_ROOT"
-ok "XFCE rice applied to live ISO root home."
+fi
 
 echo "==> Applying BorealOS XFCE branding..."
 # Copy logo to pixmaps
@@ -422,43 +418,6 @@ XFDESKTOP_FOOT
 } > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 # Copy to skel too
 cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"    "$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" 2>/dev/null || true
-
-# Desktop shortcuts
-mkdir -p "$WORK/squashfs-root/root/Desktop"
-
-cat > "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" <<'INSTDESK'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Install BorealOS
-Comment=Launch the BorealOS graphical installer
-Exec=bash -c '/usr/local/bin/boreal-installer 2>/tmp/boreal-installer.log'
-Icon=/usr/share/pixmaps/boreal-logo.png
-StartupWMClass=boreal-installer
-Terminal=false
-Categories=System;
-INSTDESK
-
-chmod +x "$WORK/squashfs-root/root/Desktop/"*.desktop
-
-for df in "$WORK/squashfs-root/root/Desktop/"*.desktop; do
-    attr -s "metadata::trusted" -V "true" "$df" 2>/dev/null ||     setfattr -n "user.metadata::trusted" -v "true" "$df" 2>/dev/null || true
-done
-
-attr -s "metadata::xfdesktop-icon-position" -V "0,0" "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" 2>/dev/null ||     setfattr -n "user.metadata::xfdesktop-icon-position" -v "0,0" "$WORK/squashfs-root/root/Desktop/Install BorealOS.desktop" 2>/dev/null || true
-
-mkdir -p "$WORK/squashfs-root/root/.config/autostart"
-cat > "$WORK/squashfs-root/root/.config/autostart/boreal-trust-desktop.desktop" <<'AUTOSTART'
-[Desktop Entry]
-Type=Application
-Name=BorealOS Trust Desktop
-Exec=bash -c 'gio set "$HOME/Desktop/Install BorealOS.desktop" metadata::trusted true 2>/dev/null; gio set "$HOME/Desktop/Install BorealOS.desktop" metadata::xfdesktop-icon-position "0,0" 2>/dev/null; xfdesktop --reload 2>/dev/null'
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-StartupNotify=false
-AUTOSTART
-
 
 # TTY install wrapper — runs the terminal installer
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
@@ -611,7 +570,7 @@ HOME_URL="https://borealos.org"
 OS
 cat > "$WORK/squashfs-root/etc/lsb-release" <<LSB
 DISTRIB_ID=BorealOS
-DISTRIB_RELEASE=1.0
+DISTRIB_RELEASE=alpha
 DISTRIB_CODENAME=boreal
 DISTRIB_DESCRIPTION="BorealOS alpha"
 LSB
@@ -814,6 +773,7 @@ apt-get install -y --no-install-recommends \
     openrc \
     network-manager ifupdown dhcpcd5 \
     parted dosfstools e2fsprogs \
+    cryptsetup cryptsetup-initramfs lvm2 \
     passwd sudo \
     bash bash-completion \
     iproute2 iputils-ping net-tools \
@@ -825,6 +785,7 @@ apt-get install -y --no-install-recommends \
     wpasupplicant \
     $SHELL_PKG
 
+if [ "$DE_NAME" != "None" ]; then
 apt-get install -y \
     xserver-xorg xserver-xorg-core \
     xserver-xorg-input-all \
@@ -843,6 +804,7 @@ apt-get install -y \
 for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
 done
+fi
 
 # Install the user's chosen DE (also --no-install-recommends to stay safe)
 if [ -n "$DE_PKGS" ] && [ "$DE_PKGS" != "xfce4 xfce4-goodies" ]; then
@@ -866,8 +828,10 @@ HELPERSRC
     fi
 fi
 
-apt-get install -y --no-install-recommends gcc make pkg-config libgtk-3-dev libgtk-3-0 \
-    || echo "WARN: GTK3 build deps failed"
+if [ "$DE_NAME" != "None" ]; then
+    apt-get install -y --no-install-recommends gcc make pkg-config libgtk-3-dev libgtk-3-0 \
+        || echo "WARN: GTK3 build deps failed"
+fi
 
 # lightdm is installed by installer.sh directly into the target, not the live env
 
@@ -910,6 +874,7 @@ CHROOT
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
 
+if [ "$DE_NAME" != "None" ]; then
 echo "==> Building and installing BorealOS graphical installer..."
 GUI_SRC="$SCRIPT_DIR/gui-installer"
 if [ ! -f "$GUI_SRC/boreal-installer.c" ]; then
@@ -926,6 +891,7 @@ chmod +x /usr/local/bin/boreal-installer
 rm -f /tmp/boreal-installer.c
 GUIBUILD
 ok "boreal-installer built."
+fi
 
 echo "==> Finalizing system..."
 find "$WORK/squashfs-root/usr/share" \

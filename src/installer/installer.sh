@@ -110,6 +110,26 @@ select_disk() {
     confirm "Continue?" || die "Aborted."
 }
 
+select_partitioning() {
+    banner
+    echo -e "${BLD}Partitioning${RST}"
+    USE_LVM="n"
+    USE_LUKS="n"
+    LUKS_PASS=""
+    if confirm "Use LVM?"; then USE_LVM="y"; fi
+    if confirm "Encrypt root with LUKS?"; then
+        USE_LUKS="y"
+        while true; do
+            echo -ne "${CYN}Encryption passphrase${RST}: "
+            read -rs LUKS_PASS; echo
+            echo -ne "${CYN}Confirm passphrase${RST}: "
+            read -rs LUKS_PASS2; echo
+            [ -n "$LUKS_PASS" ] && [ "$LUKS_PASS" = "$LUKS_PASS2" ] && break
+            echo -e "${RED}Passphrases empty or don't match.${RST}"
+        done
+    fi
+}
+
 select_timezone() {
     banner
     echo -e "${BLD}Timezone${RST} - type to filter (e.g. Europe, Berlin)"
@@ -202,9 +222,34 @@ partition_disk() {
     [ -b "$EFI"  ] || die "EFI partition $EFI not found"
     [ -b "$ROOT" ] || die "Root partition $ROOT not found"
     mkfs.fat -F32 -n EFI "$EFI"      || die "mkfs.fat failed"
-    mkfs.ext4 -F -L borealOS "$ROOT" || die "mkfs.ext4 failed"
+
+    FINAL_ROOT="$ROOT"
+    LUKS_UUID=""
+
+    if [ "$USE_LUKS" = "y" ]; then
+        step "Setting up LUKS encryption..."
+        printf '%s' "$LUKS_PASS" > /tmp/borealkey
+        chmod 600 /tmp/borealkey
+        cryptsetup luksFormat --type luks2 -q "$ROOT" --key-file=/tmp/borealkey || { shred -u /tmp/borealkey; die "luksFormat failed"; }
+        cryptsetup luksOpen "$ROOT" borealcrypt --key-file=/tmp/borealkey || { shred -u /tmp/borealkey; die "luksOpen failed"; }
+        shred -u /tmp/borealkey
+        FINAL_ROOT="/dev/mapper/borealcrypt"
+        LUKS_UUID=$(cryptsetup luksUUID "$ROOT")
+        [ -n "$LUKS_UUID" ] || die "Could not read LUKS UUID"
+    fi
+
+    if [ "$USE_LVM" = "y" ]; then
+        step "Setting up LVM..."
+        pvcreate -f "$FINAL_ROOT"          || die "pvcreate failed"
+        vgcreate borealvg "$FINAL_ROOT"    || die "vgcreate failed"
+        lvcreate -l 100%FREE -n root borealvg || die "lvcreate failed"
+        FINAL_ROOT="/dev/borealvg/root"
+        sleep 1
+    fi
+
+    mkfs.ext4 -F -L borealOS "$FINAL_ROOT" || die "mkfs.ext4 failed"
     sleep 1
-    ROOT_UUID=$(blkid -s UUID -o value "$ROOT") || die "blkid root failed"
+    ROOT_UUID=$(blkid -s UUID -o value "$FINAL_ROOT") || die "blkid root failed"
     EFI_UUID=$(blkid -s UUID -o value "$EFI")   || die "blkid efi failed"
     [ -n "$ROOT_UUID" ] || die "Root UUID empty"
     [ -n "$EFI_UUID"  ] || die "EFI UUID empty"
@@ -213,7 +258,7 @@ partition_disk() {
 
 mount_target() {
     step "Mounting..."
-    mount "$ROOT" /mnt           || die "mount root failed"
+    mount "$FINAL_ROOT" /mnt     || die "mount root failed"
     mkdir -p /mnt/boot/efi
     mount "$EFI" /mnt/boot/efi  || die "mount EFI failed"
     ok "Mounted."
@@ -287,6 +332,11 @@ write_fstab() {
 UUID=${ROOT_UUID}  /         ext4  errors=remount-ro  0  1
 UUID=${EFI_UUID}   /boot/efi vfat  umask=0077         0  2
 FSTAB
+    if [ "$USE_LUKS" = "y" ]; then
+        cat > /mnt/etc/crypttab <<CRYPTTAB
+borealcrypt UUID=${LUKS_UUID} none luks,discard
+CRYPTTAB
+    fi
     ok "fstab written."
 }
 
@@ -360,21 +410,21 @@ locale-gen
 echo "LANG=${LOCALE}" > /etc/locale.conf
 cat > /etc/os-release <<OS
 NAME="BorealOS"
-PRETTY_NAME="BorealOS 1.0"
+PRETTY_NAME="BorealOS alpha"
 ID=borealos
 ID_LIKE=
-VERSION="1.0"
-VERSION_ID="1.0"
+VERSION="alpha"
+VERSION_ID="alpha"
 HOME_URL="https://borealos.org"
 OS
 cat > /etc/lsb-release <<LSB
 DISTRIB_ID=BorealOS
-DISTRIB_RELEASE=1.0
+DISTRIB_RELEASE=alpha
 DISTRIB_CODENAME=boreal
-DISTRIB_DESCRIPTION="BorealOS 1.0"
+DISTRIB_DESCRIPTION="BorealOS alpha"
 LSB
 echo "BorealOS"     > /etc/issue
-echo "BorealOS 1.0" > /etc/issue.net
+echo "BorealOS alpha" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
 CHROOT
 
@@ -560,22 +610,6 @@ X-GNOME-Autostart-enabled=true
 StartupNotify=false
 PANELAUTOSTART
             ;;
-        "Sway")
-            mkdir -p /mnt/etc/sway
-            cat > /mnt/etc/sway/config <<SWAY
-set \$mod Mod4
-output * bg /usr/share/boreal-artwork/wallpaper-default.png fill
-input type:keyboard { xkb_layout us }
-bindsym \$mod+Return exec foot
-bindsym \$mod+d exec wofi --show run
-bindsym \$mod+Shift+q kill
-bindsym \$mod+Shift+e exec swaymsg exit
-bar {
-    statusbar_command while date +'%Y-%m-%d %H:%M'; do sleep 1; done
-    colors { background #0d1b2a; statusline #4dffd2 }
-}
-SWAY
-            ;;
         "Hyprland")
             mkdir -p /mnt/etc/hypr
             cat > /mnt/etc/hypr/hyprland.conf <<HYPR
@@ -659,27 +693,47 @@ GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 GRUB_GFXMODE=auto
 GRUBDEF
+    if [ "$USE_LUKS" = "y" ]; then
+        echo "GRUB_ENABLE_CRYPTODISK=y" >> /mnt/etc/default/grub
+    fi
 
-    chroot /mnt grub-install \
-        --target=i386-pc \
-        "$DISK" \
+    GRUB_MODULES=""
+    if [ "$USE_LUKS" = "y" ] && [ "$USE_LVM" = "y" ]; then
+        GRUB_MODULES='--modules="cryptodisk luks2 luks lvm"'
+    elif [ "$USE_LUKS" = "y" ]; then
+        GRUB_MODULES='--modules="cryptodisk luks2 luks"'
+    elif [ "$USE_LVM" = "y" ]; then
+        GRUB_MODULES='--modules="lvm"'
+    fi
+
+    chroot /mnt bash -c "grub-install --target=i386-pc $GRUB_MODULES '$DISK'" \
         2>&1 || die "BIOS grub-install failed"
 
-    chroot /mnt grub-install \
-        --target=x86_64-efi \
-        --efi-directory=/boot/efi \
-        --bootloader-id=BorealOS \
-        --removable \
-        --recheck \
+    chroot /mnt bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BorealOS --removable --recheck $GRUB_MODULES" \
         2>&1 || warn "EFI grub-install failed (ok if BIOS-only)"
 
     KVER=$(ls /mnt/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|/mnt/boot/vmlinuz-||')
     [ -n "$KVER" ] || die "No kernel found in /mnt/boot"
     [ -f "/mnt/boot/initrd.img-${KVER}" ] || die "No initrd for kernel $KVER"
 
+    UNLOCK=""
+    if [ "$USE_LUKS" = "y" ]; then
+        NODASH=$(echo "$LUKS_UUID" | tr -d '-')
+        UNLOCK="insmod cryptodisk
+insmod luks2
+insmod luks
+cryptomount -u ${NODASH}
+"
+        [ "$USE_LVM" = "y" ] && UNLOCK="${UNLOCK}insmod lvm
+"
+    elif [ "$USE_LVM" = "y" ]; then
+        UNLOCK="insmod lvm
+"
+    fi
+
     mkdir -p /mnt/boot/efi/EFI/BOOT
     cat > /mnt/boot/efi/EFI/BOOT/grub.cfg <<EGCFG
-search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+${UNLOCK}search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
 set prefix=(\$root)/boot/grub
 configfile (\$root)/boot/grub/grub.cfg
 EGCFG
@@ -702,13 +756,13 @@ else
     set menu_color_highlight=black/cyan
 fi
 
-menuentry "BorealOS 1.0" {
-    search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+menuentry "BorealOS alpha" {
+    ${UNLOCK}search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
     linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro quiet
     initrd /boot/initrd.img-${KVER}
 }
-menuentry "BorealOS 1.0 (recovery)" {
-    search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+menuentry "BorealOS alpha (recovery)" {
+    ${UNLOCK}search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
     linux /boot/vmlinuz-${KVER} root=UUID=${ROOT_UUID} ro single
     initrd /boot/initrd.img-${KVER}
 }
@@ -735,6 +789,8 @@ cleanup() {
     unbind_mounts 2>/dev/null || true
     umount /mnt/boot/efi 2>/dev/null || true
     umount /mnt 2>/dev/null || true
+    vgchange -an borealvg 2>/dev/null || true
+    cryptsetup luksClose borealcrypt 2>/dev/null || true
 }
 
 finish() {
@@ -766,6 +822,7 @@ main() {
     confirm "Begin?" || die "Aborted."
 
     select_disk
+    select_partitioning
     get_user_info
     get_extra_users
     configure_network
@@ -801,5 +858,5 @@ main() {
     finish
 }
 
-trap 'unbind_mounts 2>/dev/null; umount /mnt/boot/efi 2>/dev/null; umount /mnt 2>/dev/null' EXIT
+trap 'unbind_mounts 2>/dev/null; umount /mnt/boot/efi 2>/dev/null; umount /mnt 2>/dev/null; vgchange -an borealvg 2>/dev/null; cryptsetup luksClose borealcrypt 2>/dev/null' EXIT
 main

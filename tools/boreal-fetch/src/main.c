@@ -1,11 +1,3 @@
-/* ============================================================================
- * BorealOS fetch — animated terminal system-info screen.
- *
- * Layout: a small generative "aurora over a forest" scene, an ASCII title,
- * and a two-column info panel (software on the left, live hardware stats
- * on the right). Rendered into an off-screen buffer and flushed once per
- * frame to avoid flicker.
- * ========================================================================= */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>

@@ -17,6 +17,7 @@ typedef struct {
     GtkWidget *btn_back, *btn_next, *btn_cancel;
 
     GtkWidget *disk_list;
+    GtkWidget *lvm_check, *luks_check, *luks_pass_entry, *luks_pass2_entry, *luks_box;
     GtkWidget *hostname_entry, *pass1_entry, *pass2_entry, *locale_entry;
     GtkWidget *tz_filter_entry, *tz_list;
     GtkWidget *user_list_box;
@@ -48,6 +49,11 @@ typedef struct {
     char bios_part[64];
     char efi_part[64];
     char root_part[64];
+    char final_root_dev[64];
+    char luks_uuid[64];
+    gboolean use_lvm;
+    gboolean use_luks;
+    char luks_pass[128];
 
     GList *extra_users;
 
@@ -167,12 +173,11 @@ static void style_dialog(GtkWidget *dlg) {
         GtkWidget *area = gtk_message_dialog_get_message_area(GTK_MESSAGE_DIALOG(dlg));
         if (area) center_dialog_text(area);
     }
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    GtkWidget *action = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
-    GList *buttons = gtk_container_get_children(GTK_CONTAINER(action));
-    for (GList *l = buttons; l; l = l->next) gtk_widget_set_name(GTK_WIDGET(l->data), "nav-button");
-    g_list_free(buttons);
-    (void)content;
+    const int responses[] = {GTK_RESPONSE_OK, GTK_RESPONSE_CANCEL, GTK_RESPONSE_YES, GTK_RESPONSE_NO};
+    for (size_t i = 0; i < sizeof(responses) / sizeof(responses[0]); i++) {
+        GtkWidget *btn = gtk_dialog_get_widget_for_response(GTK_DIALOG(dlg), responses[i]);
+        if (btn) gtk_widget_set_name(btn, "nav-button");
+    }
 }
 
 static gboolean err_idle(gpointer data) {
@@ -244,11 +249,46 @@ static gboolean partition_disk(void) {
 
     snprintf(cmd, sizeof(cmd), "mkfs.fat -F32 -n EFI %s", app.efi_part);
     if (run_cmd(cmd) != 0) { fail_install("mkfs.fat failed"); return FALSE; }
-    snprintf(cmd, sizeof(cmd), "mkfs.ext4 -F -L borealOS %s", app.root_part);
+
+    strncpy(app.final_root_dev, app.root_part, sizeof(app.final_root_dev) - 1);
+
+    if (app.use_luks) {
+        STEP("Setting up LUKS encryption");
+        write_file("/tmp/borealkey", app.luks_pass);
+        run_cmd("chmod 600 /tmp/borealkey");
+        snprintf(cmd, sizeof(cmd),
+            "cryptsetup luksFormat --type luks2 -q %s --key-file=/tmp/borealkey", app.root_part);
+        int fmt_rc = run_cmd(cmd);
+        if (fmt_rc != 0) { run_cmd("shred -u /tmp/borealkey"); fail_install("luksFormat failed"); return FALSE; }
+        snprintf(cmd, sizeof(cmd),
+            "cryptsetup luksOpen %s borealcrypt --key-file=/tmp/borealkey", app.root_part);
+        int open_rc = run_cmd(cmd);
+        run_cmd("shred -u /tmp/borealkey");
+        if (open_rc != 0) { fail_install("luksOpen failed"); return FALSE; }
+        strncpy(app.final_root_dev, "/dev/mapper/borealcrypt", sizeof(app.final_root_dev) - 1);
+
+        snprintf(cmd, sizeof(cmd), "cryptsetup luksUUID %s", app.root_part);
+        char *lu = run_capture(cmd);
+        if (lu) { g_strstrip(lu); strncpy(app.luks_uuid, lu, sizeof(app.luks_uuid) - 1); g_free(lu); }
+        if (!app.luks_uuid[0]) { fail_install("Could not read LUKS UUID"); return FALSE; }
+    }
+
+    if (app.use_lvm) {
+        STEP("Setting up LVM");
+        snprintf(cmd, sizeof(cmd), "pvcreate -f %s", app.final_root_dev);
+        if (run_cmd(cmd) != 0) { fail_install("pvcreate failed"); return FALSE; }
+        snprintf(cmd, sizeof(cmd), "vgcreate borealvg %s", app.final_root_dev);
+        if (run_cmd(cmd) != 0) { fail_install("vgcreate failed"); return FALSE; }
+        if (run_cmd("lvcreate -l 100%FREE -n root borealvg") != 0) { fail_install("lvcreate failed"); return FALSE; }
+        strncpy(app.final_root_dev, "/dev/borealvg/root", sizeof(app.final_root_dev) - 1);
+        sleep(1);
+    }
+
+    snprintf(cmd, sizeof(cmd), "mkfs.ext4 -F -L borealOS %s", app.final_root_dev);
     if (run_cmd(cmd) != 0) { fail_install("mkfs.ext4 failed"); return FALSE; }
     sleep(1);
 
-    snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", app.root_part);
+    snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", app.final_root_dev);
     char *u = run_capture(cmd);
     if (u) { g_strstrip(u); strncpy(app.root_uuid, u, sizeof(app.root_uuid) - 1); g_free(u); }
     snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", app.efi_part);
@@ -263,7 +303,7 @@ static gboolean partition_disk(void) {
 static gboolean mount_target(void) {
     STEP("Mounting target");
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "mount %s /mnt", app.root_part);
+    snprintf(cmd, sizeof(cmd), "mount %s /mnt", app.final_root_dev);
     if (run_cmd(cmd) != 0) { fail_install("mount root failed"); return FALSE; }
     run_cmd("mkdir -p /mnt/boot/efi");
     snprintf(cmd, sizeof(cmd), "mount %s /mnt/boot/efi", app.efi_part);
@@ -322,6 +362,11 @@ static gboolean write_fstab(void) {
         "UUID=%s   /boot/efi vfat  umask=0077         0  2\n",
         app.root_uuid, app.efi_uuid);
     write_file("/mnt/etc/fstab", buf);
+
+    if (app.use_luks) {
+        snprintf(buf, sizeof(buf), "borealcrypt UUID=%s none luks,discard\n", app.luks_uuid);
+        write_file("/mnt/etc/crypttab", buf);
+    }
     return TRUE;
 }
 
@@ -398,9 +443,9 @@ static gboolean configure_system(void) {
         "grep -q '^%s' /etc/locale.gen 2>/dev/null || echo '%s UTF-8' >> /etc/locale.gen\n"
         "locale-gen\n"
         "echo 'LANG=%s' > /etc/locale.conf\n"
-        "cat > /etc/os-release <<OS\nNAME=\"BorealOS\"\nPRETTY_NAME=\"BorealOS 1.0\"\nID=borealos\nID_LIKE=\nVERSION=\"1.0\"\nVERSION_ID=\"1.0\"\nHOME_URL=\"https://borealos.org\"\nOS\n"
-        "cat > /etc/lsb-release <<LSB\nDISTRIB_ID=BorealOS\nDISTRIB_RELEASE=1.0\nDISTRIB_CODENAME=boreal\nDISTRIB_DESCRIPTION=\"BorealOS 1.0\"\nLSB\n"
-        "echo 'BorealOS' > /etc/issue\necho 'BorealOS 1.0' > /etc/issue.net\necho 'BorealOS' > /etc/debian_version\n",
+        "cat > /etc/os-release <<OS\nNAME=\"BorealOS\"\nPRETTY_NAME=\"BorealOS alpha\"\nID=borealos\nID_LIKE=\nVERSION=\"alpha\"\nVERSION_ID=\"alpha\"\nHOME_URL=\"https://borealos.org\"\nOS\n"
+        "cat > /etc/lsb-release <<LSB\nDISTRIB_ID=BorealOS\nDISTRIB_RELEASE=alpha\nDISTRIB_CODENAME=boreal\nDISTRIB_DESCRIPTION=\"BorealOS alpha\"\nLSB\n"
+        "echo 'BorealOS' > /etc/issue\necho 'BorealOS alpha' > /etc/issue.net\necho 'BorealOS' > /etc/debian_version\n",
         app.hostname, app.hostname, app.timezone, app.timezone,
         app.locale, app.locale, app.locale, app.locale, app.locale);
     write_file("/mnt/tmp/boreal-configure.sh", script);
@@ -419,6 +464,8 @@ static gboolean configure_system(void) {
     run_cmd("cp /opt/borealOS/background_one.png  /mnt/usr/share/boreal-artwork/wallpaper-alt.png");
     run_cmd("cp /opt/borealOS/logo.png            /mnt/usr/share/boreal-artwork/logo.png");
     run_cmd("cp /opt/borealOS/banner.png /mnt/usr/share/boreal-artwork/banner.png 2>/dev/null || true");
+    run_cmd("chmod 755 /mnt/usr/share/boreal-artwork");
+    run_cmd("chmod 644 /mnt/usr/share/boreal-artwork/*.png");
     return TRUE;
 }
 
@@ -505,6 +552,11 @@ static gboolean setup_de(void) {
         write_file("/mnt/etc/sddm.conf.d/borealos.conf",
             "[General]\nDisplayServer=x11\n[Theme]\nBackground=/usr/share/boreal-artwork/wallpaper-default.png\n");
     } else if (strcmp(app.de_choice, "XFCE") == 0) {
+        run_cmd("mkdir -p /mnt/etc/xdg/xfce4");
+        write_file("/mnt/etc/xdg/xfce4/helpers.rc", "TerminalEmulator=kitty\nFileManager=Thunar\n");
+        run_cmd("mkdir -p /mnt/etc/xdg");
+        write_file("/mnt/etc/xdg/mimeapps.list",
+            "[Default Applications]\ninode/directory=thunar.desktop\n");
         run_cmd("ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm");
         run_cmd("ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm");
         run_cmd("mkdir -p /mnt/etc/lightdm");
@@ -583,16 +635,24 @@ static gboolean install_grub(void) {
 
     STEP("Installing GRUB");
     run_cmd("rm -rf /mnt/boot/efi/EFI");
-    write_file("/mnt/etc/default/grub",
+    char grubdefault[256];
+    snprintf(grubdefault, sizeof(grubdefault),
         "GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\nGRUB_DISTRIBUTOR=BorealOS\n"
         "GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\nGRUB_CMDLINE_LINUX=\"\"\n"
-        "GRUB_DISABLE_OS_PROBER=true\nGRUB_GFXMODE=auto\n");
+        "GRUB_DISABLE_OS_PROBER=true\nGRUB_GFXMODE=auto\n%s",
+        app.use_luks ? "GRUB_ENABLE_CRYPTODISK=y\n" : "");
+    write_file("/mnt/etc/default/grub", grubdefault);
 
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "chroot /mnt grub-install --target=i386-pc %s", app.disk);
+    const char *grub_modules = (app.use_luks && app.use_lvm) ? "--modules=\"cryptodisk luks2 luks lvm\" " :
+                               app.use_luks ? "--modules=\"cryptodisk luks2 luks\" " :
+                               app.use_lvm ? "--modules=\"lvm\" " : "";
+    snprintf(cmd, sizeof(cmd), "chroot /mnt grub-install --target=i386-pc %s%s", grub_modules, app.disk);
     if (run_cmd(cmd) != 0) { fail_install("BIOS grub-install failed"); return FALSE; }
-    if (run_cmd("chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi "
-                "--bootloader-id=BorealOS --removable --recheck") != 0)
+    snprintf(cmd, sizeof(cmd),
+        "chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi "
+        "--bootloader-id=BorealOS --removable --recheck %s", grub_modules);
+    if (run_cmd(cmd) != 0)
         log_line("WARN: EFI grub-install failed (ok if BIOS-only)");
 
     char *kver_raw = run_capture("ls /mnt/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1");
@@ -607,10 +667,23 @@ static gboolean install_grub(void) {
     if (access(initrd_path, F_OK) != 0) { fail_install("No matching initrd for kernel"); g_free(kver); return FALSE; }
 
     run_cmd("mkdir -p /mnt/boot/efi/EFI/BOOT");
-    char buf[1024];
+    char unlock[256] = "";
+    if (app.use_luks) {
+        char nodash[64]; int j = 0;
+        for (int i = 0; app.luks_uuid[i] && j < (int)sizeof(nodash) - 1; i++)
+            if (app.luks_uuid[i] != '-') nodash[j++] = app.luks_uuid[i];
+        nodash[j] = 0;
+        snprintf(unlock, sizeof(unlock),
+            "insmod cryptodisk\ninsmod luks2\ninsmod luks\ncryptomount -u %s\n%s",
+            nodash, app.use_lvm ? "insmod lvm\n" : "");
+    } else if (app.use_lvm) {
+        strcpy(unlock, "insmod lvm\n");
+    }
+
+    char buf[1536];
     snprintf(buf, sizeof(buf),
-        "search --no-floppy --fs-uuid --set=root %s\nset prefix=($root)/boot/grub\nconfigfile ($root)/boot/grub/grub.cfg\n",
-        app.root_uuid);
+        "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)/boot/grub\nconfigfile ($root)/boot/grub/grub.cfg\n",
+        unlock, app.root_uuid);
     write_file("/mnt/boot/efi/EFI/BOOT/grub.cfg", buf);
 
     run_cmd("mkdir -p /mnt/boot/grub");
@@ -619,12 +692,12 @@ static gboolean install_grub(void) {
         "set default=0\nset timeout=5\n\n"
         "if [ -f /boot/grub/themes/boreal/theme.txt ]; then\n    set theme=/boot/grub/themes/boreal/theme.txt\n"
         "else\n    set menu_color_normal=cyan/black\n    set menu_color_highlight=black/cyan\nfi\n\n"
-        "menuentry \"BorealOS 1.0\" {\n    search --no-floppy --fs-uuid --set=root %s\n"
+        "menuentry \"BorealOS alpha\" {\n    %ssearch --no-floppy --fs-uuid --set=root %s\n"
         "    linux /boot/vmlinuz-%s root=UUID=%s ro quiet\n    initrd /boot/initrd.img-%s\n}\n"
-        "menuentry \"BorealOS 1.0 (recovery)\" {\n    search --no-floppy --fs-uuid --set=root %s\n"
+        "menuentry \"BorealOS alpha (recovery)\" {\n    %ssearch --no-floppy --fs-uuid --set=root %s\n"
         "    linux /boot/vmlinuz-%s root=UUID=%s ro single\n    initrd /boot/initrd.img-%s\n}\n",
-        app.root_uuid, kver, app.root_uuid, kver,
-        app.root_uuid, kver, app.root_uuid, kver);
+        unlock, app.root_uuid, kver, app.root_uuid, kver,
+        unlock, app.root_uuid, kver, app.root_uuid, kver);
     write_file("/mnt/boot/grub/grub.cfg", buf);
     log_line("GRUB installed. Kernel: %s", kver);
     g_free(kver);
@@ -651,6 +724,8 @@ static gboolean verify_install(void) {
 static void cleanup_mounts(void) {
     unbind_mounts();
     run_cmd("umount /mnt/boot/efi 2>/dev/null; umount /mnt 2>/dev/null");
+    run_cmd("vgchange -an borealvg 2>/dev/null || true");
+    run_cmd("cryptsetup luksClose borealcrypt 2>/dev/null || true");
 }
 
 static gboolean show_finish_idle(gpointer data) {
@@ -710,6 +785,9 @@ static gboolean sync_selected_disk(void);
 
 static void collect_state_from_ui(void) {
     sync_selected_disk();
+    app.use_lvm = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.lvm_check));
+    app.use_luks = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check));
+    strncpy(app.luks_pass, gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry)), sizeof(app.luks_pass) - 1);
     strncpy(app.hostname, gtk_entry_get_text(GTK_ENTRY(app.hostname_entry)), sizeof(app.hostname) - 1);
     strncpy(app.root_pass, gtk_entry_get_text(GTK_ENTRY(app.pass1_entry)), sizeof(app.root_pass) - 1);
     strncpy(app.locale, gtk_entry_get_text(GTK_ENTRY(app.locale_entry)), sizeof(app.locale) - 1);
@@ -749,7 +827,7 @@ static void on_start_install(GtkButton *btn, gpointer data) {
 }
 
 static const char *PAGE_ORDER[] = {
-    "welcome", "disk", "user", "timezone", "extrausers", "network", "summary", "progress", "finish"
+    "welcome", "disk", "partitioning", "user", "timezone", "extrausers", "network", "summary", "progress", "finish"
 };
 #define N_PAGES (sizeof(PAGE_ORDER) / sizeof(PAGE_ORDER[0]))
 
@@ -797,6 +875,8 @@ static void build_summary(void) {
     add_summary_row(grid, 4, "Desktop", app.de_choice);
     add_summary_row(grid, 5, "Network", app.net_type);
     add_summary_row(grid, 6, "Extra users", users);
+    add_summary_row(grid, 7, "LVM", app.use_lvm ? "yes" : "no");
+    add_summary_row(grid, 8, "Encryption", app.use_luks ? "LUKS" : "none");
     gtk_widget_show_all(GTK_WIDGET(grid));
 }
 
@@ -810,6 +890,18 @@ static gboolean validate_page(int idx) {
             style_dialog(d);
             gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
             return FALSE;
+        }
+    } else if (!strcmp(name, "partitioning")) {
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check))) {
+            const char *p1 = gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry));
+            const char *p2 = gtk_entry_get_text(GTK_ENTRY(app.luks_pass2_entry));
+            if (!p1[0] || strcmp(p1, p2)) {
+                GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app.window), GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Enter a matching encryption passphrase.");
+                style_dialog(d);
+                gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
+                return FALSE;
+            }
         }
     } else if (!strcmp(name, "user")) {
         const char *h = gtk_entry_get_text(GTK_ENTRY(app.hostname_entry));
@@ -1167,6 +1259,48 @@ static GtkWidget *page_disk(void) {
     return box;
 }
 
+static void on_luks_toggled(GtkToggleButton *btn, gpointer data) {
+    (void)data;
+    gtk_widget_set_visible(app.luks_box, gtk_toggle_button_get_active(btn));
+}
+
+static GtkWidget *page_partitioning(void) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 24);
+    GtkWidget *title = gtk_label_new("Partitioning");
+    gtk_widget_set_name(title, "title-label");
+    gtk_widget_set_halign(title, GTK_ALIGN_START);
+    GtkWidget *info = gtk_label_new("Automatic partitioning: BIOS boot + EFI system partition + root.");
+    gtk_widget_set_halign(info, GTK_ALIGN_START);
+
+    app.lvm_check = gtk_check_button_new_with_label("Use LVM");
+    app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
+    g_signal_connect(app.luks_check, "toggled", G_CALLBACK(on_luks_toggled), NULL);
+
+    app.luks_box = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(app.luks_box), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(app.luks_box), 12);
+    app.luks_pass_entry = gtk_entry_new();
+    gtk_widget_set_name(app.luks_pass_entry, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass_entry), FALSE);
+    app.luks_pass2_entry = gtk_entry_new();
+    gtk_widget_set_name(app.luks_pass2_entry, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass2_entry), FALSE);
+    gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Passphrase"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass_entry, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Confirm"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass2_entry, 1, 1, 1, 1);
+    gtk_widget_set_no_show_all(app.luks_box, TRUE);
+    gtk_widget_hide(app.luks_box);
+
+    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), info, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.lvm_check, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(box), app.luks_check, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.luks_box, FALSE, FALSE, 8);
+    return box;
+}
+
 static GtkWidget *page_user(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(box), 24);
@@ -1514,6 +1648,7 @@ int main(int argc, char **argv) {
 
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_welcome()), "welcome");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_disk()), "disk");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_partitioning()), "partitioning");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_user()), "user");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_timezone()), "timezone");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_extrausers()), "extrausers");
