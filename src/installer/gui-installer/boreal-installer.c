@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <ctype.h>
 
 typedef struct {
     char name[64];
@@ -59,6 +60,11 @@ typedef struct {
     gboolean advanced_part;
     int efi_size_mib;
     int swap_size_mib;
+
+    char profile_path[256];
+    char apt_pkgs[4096];
+    char flatpak_pkgs[4096];
+    gboolean automated;
 
     GList *extra_users;
 
@@ -366,9 +372,28 @@ static gboolean install_bundled_packages(void) {
 
     const char *dm = "lightdm lightdm-gtk-greeter";
     if (strcmp(app.de_choice, "KDE Plasma") == 0) dm = "sddm";
-    char cmd[256];
+    char cmd[512];
     snprintf(cmd, sizeof(cmd), "chroot /mnt apt-get install -y %s", dm);
     if (run_cmd(cmd) != 0) log_line("WARN: display manager install failed, target may boot to TTY");
+
+    if (app.apt_pkgs[0]) {
+        log_line("Installing additional APT packages from profile...");
+        run_cmd("chroot /mnt apt-get update");
+        snprintf(cmd, sizeof(cmd), "chroot /mnt apt-get install -y %s", app.apt_pkgs);
+        run_cmd(cmd);
+    }
+
+    if (app.flatpak_pkgs[0]) {
+        log_line("Installing Flatpak packages from profile...");
+        char *copy = strdup(app.flatpak_pkgs);
+        char *p = strtok(copy, " ");
+        while (p) {
+            snprintf(cmd, sizeof(cmd), "chroot /mnt flatpak install -y flathub %s", p);
+            run_cmd(cmd);
+            p = strtok(NULL, " ");
+        }
+        free(copy);
+    }
 
     unbind_mounts();
     return TRUE;
@@ -837,6 +862,7 @@ static gboolean sync_selected_disk(void);
 
 static void collect_state_from_ui(void) {
     sync_selected_disk();
+    if (app.automated) return;
     app.use_lvm = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.lvm_check));
     app.use_luks = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check));
     strncpy(app.luks_pass, gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry)), sizeof(app.luks_pass) - 1);
@@ -886,6 +912,11 @@ static const char *PAGE_ORDER[] = {
 };
 #define N_PAGES (sizeof(PAGE_ORDER) / sizeof(PAGE_ORDER[0]))
 
+static void refresh_disk_list(void);
+static void wire_disk_radios(void);
+static void refresh_iface_list(void);
+static void refresh_tz_list(void);
+
 static int page_index(const char *name) {
     for (size_t i = 0; i < N_PAGES; i++) if (!strcmp(PAGE_ORDER[i], name)) return (int)i;
     return -1;
@@ -893,7 +924,7 @@ static int page_index(const char *name) {
 
 static void update_nav_buttons(void) {
     int idx = app.current_page;
-    gtk_widget_set_sensitive(app.btn_back, idx > 0);
+    gtk_widget_set_sensitive(app.btn_back, idx > 0 && !app.automated);
     if (idx == page_index("summary")) {
         gtk_button_set_label(GTK_BUTTON(app.btn_next), "Install");
     } else {
@@ -921,21 +952,26 @@ static void build_summary(void) {
     g_list_free(children);
 
     GtkGrid *grid = GTK_GRID(app.summary_label);
+    int r = 0;
+    if (app.automated) {
+        add_summary_row(grid, r++, "Profile", app.profile_path);
+    }
     char users[16];
     snprintf(users, sizeof(users), "%d", g_list_length(app.extra_users));
-    add_summary_row(grid, 0, "Disk", app.disk);
-    add_summary_row(grid, 1, "Hostname", app.hostname);
-    add_summary_row(grid, 2, "Locale", app.locale);
-    add_summary_row(grid, 3, "Timezone", app.timezone);
-    add_summary_row(grid, 4, "Desktop", app.de_choice);
-    add_summary_row(grid, 5, "Network", app.net_type);
-    add_summary_row(grid, 6, "Extra users", users);
-    add_summary_row(grid, 7, "LVM", app.use_lvm ? "yes" : "no");
-    add_summary_row(grid, 8, "Encryption", app.use_luks ? "LUKS" : "none");
+    add_summary_row(grid, r++, "Disk", app.disk);
+    add_summary_row(grid, r++, "Hostname", app.hostname);
+    add_summary_row(grid, r++, "Locale", app.locale);
+    add_summary_row(grid, r++, "Timezone", app.timezone);
+    add_summary_row(grid, r++, "Desktop", app.de_choice);
+    add_summary_row(grid, r++, "Network", app.net_type);
+    add_summary_row(grid, r++, "Extra users", users);
+    add_summary_row(grid, r++, "LVM", app.use_lvm ? "yes" : "no");
+    add_summary_row(grid, r++, "Encryption", app.use_luks ? "LUKS" : "none");
     gtk_widget_show_all(GTK_WIDGET(grid));
 }
 
 static gboolean validate_page(int idx) {
+    if (app.automated) return TRUE;
     const char *name = PAGE_ORDER[idx];
     if (!strcmp(name, "disk")) {
         sync_selected_disk();
@@ -1697,11 +1733,62 @@ static void load_css(void) {
     g_object_unref(provider);
 }
 
+static void load_profile(const char *path) {
+    if (access(path, F_OK) != 0) return;
+    strncpy(app.profile_path, path, sizeof(app.profile_path) - 1);
+    app.automated = TRUE;
+
+    char cmd[512];
+    auto void get_val(const char *filter, char *dest, size_t size) {
+        snprintf(cmd, sizeof(cmd), "jq -r '%s // empty' '%s'", filter, path);
+        FILE *fp = popen(cmd, "r");
+        if (fp) {
+            if (fgets(dest, size, fp)) {
+                size_t len = strlen(dest);
+                if (len > 0 && dest[len-1] == '\n') dest[len-1] = '\0';
+            }
+            pclose(fp);
+        }
+    }
+
+    get_val(".system.hostname", app.hostname, sizeof(app.hostname));
+    get_val(".system.timezone", app.timezone, sizeof(app.timezone));
+    get_val(".system.locale", app.locale, sizeof(app.locale));
+
+    // For packages, we want them space-separated
+    snprintf(cmd, sizeof(cmd), "jq -r '.packages.apt[]' '%s' | tr '\\n' ' '", path);
+    FILE *fp = popen(cmd, "r");
+    if (fp) {
+        if (fgets(app.apt_pkgs, sizeof(app.apt_pkgs), fp)) {
+            size_t len = strlen(app.apt_pkgs);
+            if (len > 0 && app.apt_pkgs[len-1] == ' ') app.apt_pkgs[len-1] = '\0';
+        }
+        pclose(fp);
+    }
+
+    snprintf(cmd, sizeof(cmd), "jq -r '.packages.flatpak[]' '%s' | tr '\\n' ' '", path);
+    fp = popen(cmd, "r");
+    if (fp) {
+        if (fgets(app.flatpak_pkgs, sizeof(app.flatpak_pkgs), fp)) {
+            size_t len = strlen(app.flatpak_pkgs);
+            if (len > 0 && app.flatpak_pkgs[len-1] == ' ') app.flatpak_pkgs[len-1] = '\0';
+        }
+        pclose(fp);
+    }
+}
+
 int main(int argc, char **argv) {
     g_set_prgname("boreal-installer");
     gtk_init(&argc, &argv);
     memset(&app, 0, sizeof(app));
     strcpy(app.net_type, "dhcp");
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--profile") == 0 && i + 1 < argc) {
+            load_profile(argv[i+1]);
+            i++;
+        }
+    }
 
     if (geteuid() != 0) {
         GtkWidget *d = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR,
@@ -1801,6 +1888,10 @@ int main(int argc, char **argv) {
     refresh_iface_list();
     refresh_tz_list();
     app.current_page = 0;
+    if (app.automated) {
+        app.current_page = page_index("summary");
+        gtk_stack_set_visible_child_name(GTK_STACK(app.stack), "summary");
+    }
     update_nav_buttons();
 
     if (screen_w > 0 && screen_h > 0) {
