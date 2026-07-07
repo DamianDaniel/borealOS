@@ -122,8 +122,24 @@
 
 #boreal-dialog {
     background-color: #0d1f2d;
+    border: 2px solid #2a6060;
+}
+
+#boreal-dialog.csd {
+    border: 2px solid #2a6060;
 }
 
 #boreal-dialog label {
     color: #e8f7f4;
+}
+
+#boreal-dialog button#nav-button,
+#boreal-dialog button {
+    background-color: #dfe6e6;
+    border: 1px solid #9fb3b3;
+    color: #000000;
+}
+
+#boreal-dialog button label {
+    color: #000000;
 }

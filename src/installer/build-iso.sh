@@ -46,7 +46,7 @@ while true; do
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
-        2) DE_PKGS="xfce4 xfce4-goodies"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
+        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
         3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
         4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
@@ -750,15 +750,20 @@ chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation fai
 set -e
 PYVER=\$(ls /usr/lib/ | grep -oP '^python3\.[0-9]+\$' | sort -V | tail -1)
 if [ -n "\$PYVER" ]; then
-    mkdir -p /etc/python3
-    cat > /etc/python3/debian_defaults <<PYDEFAULTS
+    mkdir -p /usr/share/python3
+    if [ ! -s /usr/share/python3/debian_defaults ]; then
+        cat > /usr/share/python3/debian_defaults <<PYDEFAULTS
 [DEFAULT]
 default-version = \${PYVER}
 supported-versions = \${PYVER}
 unsupported-versions =
 requested-versions = \${PYVER#python}
 PYDEFAULTS
+    fi
 fi
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall python3-minimal || true
+dpkg --configure -a || true
 apt-get update -qq
 
 echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
@@ -806,10 +811,8 @@ for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
 done
 fi
 
-# Install the user's chosen DE (also --no-install-recommends to stay safe)
-if [ -n "$DE_PKGS" ] && [ "$DE_PKGS" != "xfce4 xfce4-goodies" ]; then
-    apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
-elif [ -n "$DE_PKGS" ]; then
+# Install the user's chosen DE
+if [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
 fi
 
