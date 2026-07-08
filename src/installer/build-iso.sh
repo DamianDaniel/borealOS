@@ -167,7 +167,7 @@ convert "$BANNER" -trim -resize 520x -background none \
 # Selection-highlight bar. GRUB's pixmap_style only requires the "_c" (center)
 # slice to be present — missing edge slices are silently skipped, so a single
 # flat image is a stable, supported highlight box (not a 9-slice gimmick).
-SELECT_IMG="$SCRIPT_DIR/select.png"
+SELECT_IMG="$SCRIPT_DIR/select_c.png"
 if [ -f "$SELECT_IMG" ]; then
     cp "$SELECT_IMG" "$GRUB_THEME_DIR/select_c.png"
 fi
