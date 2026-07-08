@@ -113,6 +113,21 @@ select_disk() {
 select_partitioning() {
     banner
     echo -e "${BLD}Partitioning${RST}"
+    EFI_SIZE=512
+    SWAP_SIZE=0
+    if confirm "Advanced partitioning (custom EFI/swap size)?"; then
+        while true; do
+            ask "EFI size in MiB" EFI_SIZE
+            [[ "$EFI_SIZE" =~ ^[0-9]+$ ]] && [ "$EFI_SIZE" -ge 100 ] && break
+            echo -e "${RED}Enter a number >= 100.${RST}"
+        done
+        while true; do
+            ask "Swap size in MiB (0 for none)" SWAP_SIZE
+            [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]] && break
+            echo -e "${RED}Enter a number >= 0.${RST}"
+        done
+    fi
+
     USE_LVM="n"
     USE_LUKS="n"
     LUKS_PASS=""
@@ -206,22 +221,36 @@ configure_network() {
 
 partition_disk() {
     step "Partitioning $DISK..."
-    parted -s "$DISK" mklabel gpt                      || die "mklabel failed"
-    parted -s "$DISK" mkpart bios_boot 1MiB 2MiB       || die "BIOS boot partition failed"
-    parted -s "$DISK" set 1 bios_grub on               || die "bios_grub flag failed"
-    parted -s "$DISK" mkpart ESP fat32 2MiB 514MiB     || die "EFI partition failed"
-    parted -s "$DISK" set 2 esp on                     || die "esp flag failed"
-    parted -s "$DISK" mkpart primary ext4 514MiB 100%  || die "root partition failed"
+    EFI_END=$((2 + EFI_SIZE))
+    SWAP_END=$((EFI_END + SWAP_SIZE))
+    parted -s "$DISK" mklabel gpt                                || die "mklabel failed"
+    parted -s "$DISK" mkpart bios_boot 1MiB 2MiB                || die "BIOS boot partition failed"
+    parted -s "$DISK" set 1 bios_grub on                        || die "bios_grub flag failed"
+    parted -s "$DISK" mkpart ESP fat32 2MiB "${EFI_END}MiB"     || die "EFI partition failed"
+    parted -s "$DISK" set 2 esp on                              || die "esp flag failed"
+    NEXT_PART=3
+    if [ "$SWAP_SIZE" -gt 0 ]; then
+        parted -s "$DISK" mkpart swap linux-swap "${EFI_END}MiB" "${SWAP_END}MiB" || die "swap partition failed"
+        NEXT_PART=4
+    fi
+    ROOT_START=$([ "$SWAP_SIZE" -gt 0 ] && echo "${SWAP_END}MiB" || echo "${EFI_END}MiB")
+    parted -s "$DISK" mkpart primary ext4 "$ROOT_START" 100%    || die "root partition failed"
     partprobe "$DISK" 2>/dev/null; sleep 2
     if [[ "$DISK" == *nvme* ]]; then
-        BIOS="${DISK}p1"; EFI="${DISK}p2"; ROOT="${DISK}p3"
+        SEP="p"
     else
-        BIOS="${DISK}1";  EFI="${DISK}2";  ROOT="${DISK}3"
+        SEP=""
     fi
+    BIOS="${DISK}${SEP}1"; EFI="${DISK}${SEP}2"
+    if [ "$SWAP_SIZE" -gt 0 ]; then SWAP="${DISK}${SEP}3"; else SWAP=""; fi
+    ROOT="${DISK}${SEP}${NEXT_PART}"
     [ -b "$BIOS" ] || die "BIOS partition $BIOS not found"
     [ -b "$EFI"  ] || die "EFI partition $EFI not found"
     [ -b "$ROOT" ] || die "Root partition $ROOT not found"
     mkfs.fat -F32 -n EFI "$EFI"      || die "mkfs.fat failed"
+    if [ -n "$SWAP" ]; then
+        mkswap -L borealswap "$SWAP" || die "mkswap failed"
+    fi
 
     FINAL_ROOT="$ROOT"
     LUKS_UUID=""
@@ -351,6 +380,12 @@ write_fstab() {
 UUID=${ROOT_UUID}  /         ext4  errors=remount-ro  0  1
 UUID=${EFI_UUID}   /boot/efi vfat  umask=0077         0  2
 FSTAB
+    if [ -n "$SWAP" ]; then
+        SWAP_UUID=$(blkid -s UUID -o value "$SWAP")
+        if [ -n "$SWAP_UUID" ]; then
+            echo "UUID=${SWAP_UUID}   none      swap  sw                 0  0" >> /mnt/etc/fstab
+        fi
+    fi
     if [ "$USE_LUKS" = "y" ]; then
         cat > /mnt/etc/crypttab <<CRYPTTAB
 borealcrypt UUID=${LUKS_UUID} none luks,discard
@@ -449,10 +484,24 @@ CHROOT
 
     step "Finalizing system branding..."
     find /mnt/usr/share \
-        \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" \) \
+        \( -name "*debian*" -not -path "*/dpkg/*" -not -path "*/apt/*" -not -path "*/python3/*" \) \
         -delete 2>/dev/null || true
     rm -rf /mnt/usr/share/images/desktop-base 2>/dev/null || true
     rm -rf /mnt/usr/share/images/vendor-logos 2>/dev/null || true
+
+    if [ ! -s /mnt/usr/share/python3/debian_defaults ]; then
+        PYVER=$(ls /mnt/usr/lib/ | grep -oP '^python3\.[0-9]+$' | sort -V | tail -1)
+        if [ -n "$PYVER" ]; then
+            mkdir -p /mnt/usr/share/python3
+            cat > /mnt/usr/share/python3/debian_defaults <<PYDEFAULTS
+[DEFAULT]
+default-version = ${PYVER}
+supported-versions = ${PYVER}
+unsupported-versions =
+requested-versions = 3.${PYVER#python3.}
+PYDEFAULTS
+        fi
+    fi
 
     step "Installing artwork..."
     mkdir -p /mnt/usr/share/boreal-artwork
@@ -808,6 +857,7 @@ cleanup() {
     unbind_mounts 2>/dev/null || true
     umount /mnt/boot/efi 2>/dev/null || true
     umount /mnt 2>/dev/null || true
+    [ -n "$SWAP" ] && swapoff "$SWAP" 2>/dev/null || true
     vgchange -an borealvg 2>/dev/null || true
     cryptsetup luksClose borealcrypt 2>/dev/null || true
 }
