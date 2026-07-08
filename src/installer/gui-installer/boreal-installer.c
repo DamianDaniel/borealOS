@@ -544,7 +544,7 @@ static gboolean configure_system(void) {
 static gboolean set_passwords(void) {
     STEP("Setting passwords");
     char cmd[256];
-    FILE *p = popen("chroot /mnt chpasswd", "w");
+    FILE *p = popen("chroot /mnt /usr/sbin/chpasswd", "w");
     if (!p) { fail_install("chpasswd spawn failed"); return FALSE; }
     fprintf(p, "root:%s\n", app.root_pass);
     if (pclose(p) != 0) { fail_install("root password failed"); return FALSE; }
@@ -557,7 +557,7 @@ static gboolean set_passwords(void) {
             snprintf(cmd, sizeof(cmd), "chroot /mnt useradd -m -G audio,video -s %s %s", app.shell_bin, u->name);
             if (run_cmd(cmd) != 0) { fail_install("useradd failed"); return FALSE; }
         }
-        p = popen("chroot /mnt chpasswd", "w");
+        p = popen("chroot /mnt /usr/sbin/chpasswd", "w");
         if (p) { fprintf(p, "%s:%s\n", u->name, u->pass); pclose(p); }
     }
     return TRUE;

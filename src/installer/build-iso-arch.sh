@@ -846,7 +846,7 @@ if [ -n "$DM_PKGS" ]; then
 fi
 cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
 
-echo 'root:borealOS' | chpasswd
+echo 'root:borealOS' | /usr/sbin/chpasswd
 
 # ── Nuclear DM purge ──────────────────────────────────────────────────────────
 # Belt-and-suspenders: purge every known DM even if none were installed.
