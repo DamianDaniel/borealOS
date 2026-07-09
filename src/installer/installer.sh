@@ -495,7 +495,7 @@ PYDEFAULTS
 
 set_passwords() {
     step "Setting passwords..."
-    printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt chpasswd || die "root password failed"
+    printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt /usr/sbin/chpasswd || die "root password failed"
     for entry in "${EXTRA_USERS[@]}"; do
         local uname="${entry%%|*}"
         local rest="${entry#*|}"
@@ -506,7 +506,7 @@ set_passwords() {
         chroot /mnt useradd -m -G "$groups" -s "$SHELL_BIN" "$uname" 2>/dev/null || \
         chroot /mnt useradd -m -G "audio,video" -s "$SHELL_BIN" "$uname" || \
         die "useradd failed for $uname"
-        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
+        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt /usr/sbin/chpasswd || die "password failed for $uname"
     done
     ok "Passwords set."
 }

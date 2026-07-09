@@ -15,7 +15,6 @@ WALLPAPER_ALT="$SCRIPT_DIR/background_one.png"
 WALLPAPER_MAIN="$SCRIPT_DIR/background_main.png"
 WALLPAPER_BG2="$SCRIPT_DIR/background_2.png"
 LOGO="$SCRIPT_DIR/logo.png"
-GHOST_LOGO="$SCRIPT_DIR/borealos-ghost-logo.png"
 BANNER="$SCRIPT_DIR/borealOS-text-and-logo-transparent.png"
 BRANDING_ZIP="$SCRIPT_DIR/borealOS-branding.zip"
 RICE_DIR="$SCRIPT_DIR/../rice"
@@ -30,11 +29,12 @@ for f in "$ROOTFS_TAR" "$INSTALLER_SH" "$WALLPAPER_DEFAULT" "$WALLPAPER_BG2" "$L
 done
 [ "$EUID" -eq 0 ] || die "Run as root."
 
-command -v xorriso       >/dev/null || apt-get install -y xorriso        || die "Failed to install xorriso"
-command -v convert       >/dev/null || apt-get install -y imagemagick    || die "Failed to install imagemagick"
-command -v grub-mkrescue >/dev/null || apt-get install -y grub-efi-amd64-bin grub-pc-bin mtools || die "Failed to install grub"
-command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools  || die "Failed to install squashfs-tools"
-command -v unzip         >/dev/null || apt-get install -y unzip           || die "Failed to install unzip"
+command -v xorriso       >/dev/null || pacman -S --noconfirm xorriso        || die "Failed to install xorriso"
+command -v convert       >/dev/null || pacman -S --noconfirm imagemagick    || die "Failed to install imagemagick"
+command -v grub-mkrescue >/dev/null || pacman -S --noconfirm grub mtools     || die "Failed to install grub"
+command -v mksquashfs    >/dev/null || pacman -S --noconfirm squashfs-tools || die "Failed to install squashfs-tools"
+command -v unzip         >/dev/null || pacman -S --noconfirm unzip          || die "Failed to install unzip"
+
 
 echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
@@ -102,7 +102,6 @@ cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/opt/borealOS/background_main.png"
 cp "$WALLPAPER_BG2"     "$WORK/squashfs-root/opt/borealOS/background_2.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/opt/borealOS/background_one.png"
 cp "$LOGO"              "$WORK/squashfs-root/opt/borealOS/logo.png"
-[ -f "$GHOST_LOGO" ] && cp "$GHOST_LOGO" "$WORK/squashfs-root/opt/borealOS/logo-ghost.png"
 cp "$BANNER"            "$WORK/squashfs-root/opt/borealOS/banner.png"
 cp "$INSTALLER_SH"      "$WORK/squashfs-root/usr/local/bin/borealOS-install"
 chmod +x                "$WORK/squashfs-root/usr/local/bin/borealOS-install"
@@ -152,7 +151,6 @@ echo '  </property>'
 echo '</channel>'
 } > "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
-[ -f "$GHOST_LOGO" ] && cp "$GHOST_LOGO" "$WORK/squashfs-root/usr/share/boreal-artwork/logo-ghost.png"
 cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
 chmod 755 "$WORK/squashfs-root/usr/share/boreal-artwork"
 chmod 644 "$WORK/squashfs-root/usr/share/boreal-artwork/"*.png
@@ -170,7 +168,7 @@ convert "$BANNER" -trim -resize 520x -background none \
 # Selection-highlight bar. GRUB's pixmap_style only requires the "_c" (center)
 # slice to be present — missing edge slices are silently skipped, so a single
 # flat image is a stable, supported highlight box (not a 9-slice gimmick).
-SELECT_IMG="$SCRIPT_DIR/select.png"
+SELECT_IMG="$SCRIPT_DIR/select_c.png"
 if [ -f "$SELECT_IMG" ]; then
     cp "$SELECT_IMG" "$GRUB_THEME_DIR/select_c.png"
 fi
@@ -354,11 +352,6 @@ echo "==> Applying BorealOS XFCE branding..."
 # Copy logo to pixmaps
 mkdir -p "$WORK/squashfs-root/usr/share/pixmaps"
 cp "$LOGO" "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo.png"
-if [ -f "$GHOST_LOGO" ]; then
-    cp "$GHOST_LOGO" "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-ghost.png"
-else
-    cp "$LOGO" "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-ghost.png"
-fi
 convert "$LOGO" -resize 24x24 -background none     "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-24.png" 2>/dev/null || true
 convert "$LOGO" -resize 48x48 -background none     "$WORK/squashfs-root/usr/share/pixmaps/boreal-logo-48.png" 2>/dev/null || true
 
@@ -522,10 +515,11 @@ IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-
 for id in $IDS; do
     val=$(xfconf-query -c xfce4-panel -p "/plugins/$id" 2>/dev/null)
     if [ "$val" = "applicationsmenu" ] || [ "$val" = "whiskermenu" ]; then
-        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -n -t string -s /usr/share/pixmaps/boreal-logo-ghost.png 2>/dev/null || \
-        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -t string -s /usr/share/pixmaps/boreal-logo-ghost.png 2>/dev/null
+        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -n -t string -s /usr/share/pixmaps/boreal-logo.png 2>/dev/null || \
+        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -t string -s /usr/share/pixmaps/boreal-logo.png 2>/dev/null
     fi
 done
+xfce4-panel -r 2>/dev/null || true
 PANELICON
 chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-panel-icon.sh"
 

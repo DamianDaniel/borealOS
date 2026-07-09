@@ -30,3 +30,6 @@ __pycache__/
 .idea/
 *.swp
 *.swo
+
+# ISO Script Artifacts
+src/installer/iso-work
