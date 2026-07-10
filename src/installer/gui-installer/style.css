@@ -59,30 +59,29 @@ viewport {
     border-color: #3dffd2;
 }
 
-#dark-combo,
-#dark-combo button {
+combobox,
+combobox button,
+combobox box,
+combobox arrow {
     background-color: #0f2535;
     color: #ffffff;
     border: 1px solid #2a6060;
     border-radius: 6px;
     min-width: 200px;
-    min-height: 20px;
 }
 
-#dark-combo label,
-#dark-combo arrow {
-    color: #ffffff;
-}
-
-#dark-combo:hover,
-#dark-combo button:hover {
+combobox:hover,
+combobox button:hover {
     border-color: #3dffd2;
 }
 
 /* combo box popup list */
-#dark-combo window,
-#dark-combo popover {
+combobox window,
+combobox popover,
+combobox list,
+combobox row {
     background-color: #0d1f2d;
+    color: #ffffff;
 }
 
 #nav-button {

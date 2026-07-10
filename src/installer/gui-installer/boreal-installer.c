@@ -175,6 +175,10 @@ static void on_dialog_realize(GtkWidget *widget, gpointer data) {
 
 static void style_dialog(GtkWidget *dlg) {
     gtk_widget_set_name(dlg, "boreal-dialog");
+    gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
+    GdkScreen *screen = gtk_widget_get_screen(dlg);
+    GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
+    if (visual) gtk_widget_set_visual(dlg, visual);
     g_signal_connect(dlg, "realize", G_CALLBACK(on_dialog_realize), NULL);
 }
 
@@ -356,6 +360,16 @@ static void build_automatic_plan(void) {
         add_planned_part(sysspec, app.root_fs, "/sys", TRUE, TRUE);
         add_planned_part("100%", app.root_fs, "/home", TRUE, TRUE);
     }
+}
+
+static gboolean fs_tool_available(const char *fs) {
+    if (!fs || !fs[0] || !strcmp(fs, "fat32") || !strcmp(fs, "swap")) return TRUE;
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "command -v mkfs.%s >/dev/null 2>&1 && echo yes", fs);
+    char *out = shell_get(cmd);
+    gboolean ok = out && strstr(out, "yes") != NULL;
+    g_free(out);
+    return ok;
 }
 
 static gboolean guided_plan_fits_disk(char *reason, size_t reason_len) {
@@ -1272,6 +1286,15 @@ static gboolean validate_page(int idx) {
                 return FALSE;
             }
         }
+        for (GList *l = app.planned_parts; l; l = l->next) {
+            PlannedPart *p = l->data;
+            if (p->is_new && !fs_tool_available(p->fs_type)) {
+                char reason[128];
+                snprintf(reason, sizeof(reason), "mkfs.%s is not available on this system. Pick a different filesystem for %s.", p->fs_type, p->mountpoint);
+                show_message("Warning", reason, FALSE);
+                return FALSE;
+            }
+        }
     } else if (!strcmp(name, "user")) {
         const char *h = gtk_entry_get_text(GTK_ENTRY(app.hostname_entry));
         const char *p1 = gtk_entry_get_text(GTK_ENTRY(app.pass1_entry));
@@ -2002,6 +2025,8 @@ static GtkWidget *page_partitioning(void) {
 
     app.lvm_check = gtk_check_button_new_with_label("Use LVM");
     app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.lvm_check), FALSE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.luks_check), FALSE);
     g_signal_connect(app.luks_check, "toggled", G_CALLBACK(on_luks_toggled), NULL);
 
     app.luks_box = gtk_grid_new();
@@ -2020,6 +2045,7 @@ static GtkWidget *page_partitioning(void) {
     gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass2_entry, 1, 1, 1, 1);
     gtk_widget_set_no_show_all(app.luks_box, TRUE);
     gtk_widget_hide(app.luks_box);
+    on_luks_toggled(GTK_TOGGLE_BUTTON(app.luks_check), NULL);
 
     gtk_box_pack_start(GTK_BOX(crypt_group), app.lvm_check, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_check, FALSE, FALSE, 0);
