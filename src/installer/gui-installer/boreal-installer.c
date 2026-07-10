@@ -34,7 +34,7 @@ typedef struct {
     GtkWidget *hostname_entry, *pass1_entry, *pass2_entry, *locale_entry;
     GtkWidget *tz_filter_entry, *tz_list;
     GtkWidget *user_list_box;
-    GtkWidget *net_dhcp, *net_static, *net_skip, *net_if_combo;
+    GtkWidget *net_dhcp, *net_static, *net_skip_btn, *net_if_combo;
     GtkWidget *net_ip_entry, *net_gw_entry, *net_dns_entry;
     GtkWidget *net_static_box;
     GtkWidget *net_wifi, *wifi_box, *wifi_ssid_combo, *wifi_pass_entry;
@@ -72,6 +72,8 @@ typedef struct {
     int layout_mode;
     char root_fs[16];
     GList *planned_parts;
+    gboolean net_skipped;
+    GtkWidget *steps_popover;
 
     GList *extra_users;
 
@@ -198,11 +200,12 @@ static int show_message(const char *title, const char *message, gboolean yes_no)
     gtk_window_set_title(GTK_WINDOW(dlg), title);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_widget_set_size_request(dlg, 420, -1);
     style_dialog(dlg);
 
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    gtk_container_set_border_width(GTK_CONTAINER(content), 20);
-    gtk_box_set_spacing(GTK_BOX(content), 16);
+    gtk_container_set_border_width(GTK_CONTAINER(content), 24);
+    gtk_box_set_spacing(GTK_BOX(content), 18);
 
     GtkWidget *label = gtk_label_new(message);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
@@ -337,10 +340,45 @@ static void build_automatic_plan(void) {
         add_planned_part(rootspec, app.root_fs, "/", TRUE, TRUE);
         add_planned_part("100%", app.root_fs, "/home", TRUE, TRUE);
     } else {
-        add_planned_part("20480MiB", app.root_fs, "/", TRUE, TRUE);
-        add_planned_part("8192MiB", app.root_fs, "/var", TRUE, TRUE);
+        /* Sized as a share of the disk so this also fits on small disks. */
+        double root_mib = disk_mib > 0 && disk_mib * 0.35 < 20480 ? disk_mib * 0.35 : 20480;
+        double var_mib  = disk_mib > 0 && disk_mib * 0.15 < 8192  ? disk_mib * 0.15  : 8192;
+        double sys_mib  = disk_mib > 0 && disk_mib * 0.03 < 2048  ? disk_mib * 0.03  : 2048;
+        if (root_mib < 4096) root_mib = 4096;
+        if (var_mib < 1024) var_mib = 1024;
+        if (sys_mib < 256) sys_mib = 256;
+        char rootspec[32], varspec[32], sysspec[32];
+        snprintf(rootspec, sizeof(rootspec), "%.0fMiB", root_mib);
+        snprintf(varspec, sizeof(varspec), "%.0fMiB", var_mib);
+        snprintf(sysspec, sizeof(sysspec), "%.0fMiB", sys_mib);
+        add_planned_part(rootspec, app.root_fs, "/", TRUE, TRUE);
+        add_planned_part(varspec, app.root_fs, "/var", TRUE, TRUE);
+        add_planned_part(sysspec, app.root_fs, "/sys", TRUE, TRUE);
         add_planned_part("100%", app.root_fs, "/home", TRUE, TRUE);
     }
+}
+
+static gboolean guided_plan_fits_disk(char *reason, size_t reason_len) {
+    double disk_mib = 0;
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "blockdev --getsize64 %s", app.disk);
+    char *bytes = shell_get(cmd);
+    if (bytes) { disk_mib = g_ascii_strtod(bytes, NULL) / (1024.0 * 1024.0); g_free(bytes); }
+    if (disk_mib <= 0) return TRUE;
+    double needed = 512; /* EFI */
+    for (GList *l = app.planned_parts; l; l = l->next) {
+        PlannedPart *p = l->data;
+        if (!p->is_new || strchr(p->size_spec, '%')) continue;
+        needed += g_ascii_strtod(p->size_spec, NULL);
+    }
+    needed += 1024; /* leave room for /home */
+    if (needed > disk_mib) {
+        snprintf(reason, reason_len,
+            "The selected disk is too small for this layout (needs at least %.0f MiB, disk has %.0f MiB).",
+            needed, disk_mib);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 static int mountpoint_depth(const char *mp) {
@@ -1033,10 +1071,14 @@ static gboolean show_finish_idle(gpointer data) {
 
 typedef gboolean (*StepFn)(void);
 
+static void on_cancel(GtkButton *btn, gpointer data);
+
 static gboolean show_failed_idle(gpointer data) {
     (void)data;
     gtk_widget_show(app.btn_cancel);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(app.btn_cancel), NULL);
     gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Quit");
+    g_signal_connect(app.btn_cancel, "clicked", G_CALLBACK(on_cancel), NULL);
     return FALSE;
 }
 
@@ -1093,10 +1135,11 @@ static void collect_state_from_ui(void) {
     strncpy(app.root_pass, gtk_entry_get_text(GTK_ENTRY(app.pass1_entry)), sizeof(app.root_pass) - 1);
     strncpy(app.locale, gtk_entry_get_text(GTK_ENTRY(app.locale_entry)), sizeof(app.locale) - 1);
 
-    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_dhcp))) strcpy(app.net_type, "dhcp");
-    else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_wifi))) strcpy(app.net_type, "wifi");
-    else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_static))) strcpy(app.net_type, "static");
-    else strcpy(app.net_type, "skip");
+    if (!app.net_skipped) {
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_dhcp))) strcpy(app.net_type, "dhcp");
+        else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_wifi))) strcpy(app.net_type, "wifi");
+        else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.net_static))) strcpy(app.net_type, "static");
+    }
 
     gchar *ssid_active = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(app.wifi_ssid_combo));
     if (ssid_active) { strncpy(app.wifi_ssid, ssid_active, sizeof(app.wifi_ssid) - 1); g_free(ssid_active); }
@@ -1128,7 +1171,7 @@ static void on_start_install(GtkButton *btn, gpointer data) {
 }
 
 static const char *PAGE_ORDER[] = {
-    "welcome", "disk", "partitioning", "user", "timezone", "extrausers", "network", "wifi", "summary", "progress", "finish"
+    "welcome", "user", "timezone", "extrausers", "network", "wifi", "disk", "partitioning", "summary", "progress", "finish"
 };
 #define N_PAGES (sizeof(PAGE_ORDER) / sizeof(PAGE_ORDER[0]))
 
@@ -1190,6 +1233,17 @@ static gboolean validate_page(int idx) {
             return FALSE;
         }
     } else if (!strcmp(name, "partitioning")) {
+        if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.part_advanced))) {
+            app.layout_mode = gtk_combo_box_get_active(GTK_COMBO_BOX(app.layout_combo));
+            gchar *rfs = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(app.rootfs_combo));
+            if (rfs) { strncpy(app.root_fs, rfs, sizeof(app.root_fs) - 1); g_free(rfs); }
+            build_automatic_plan();
+            char reason[192];
+            if (!guided_plan_fits_disk(reason, sizeof(reason))) {
+                show_message("Warning", reason, FALSE);
+                return FALSE;
+            }
+        }
         if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.part_advanced))) {
             gboolean has_root = FALSE;
             for (GList *l = app.planned_parts; l; l = l->next) {
@@ -1252,6 +1306,80 @@ static void refresh_wifi_list(void);
 static gboolean page_should_skip(int idx) {
     if (!strcmp(PAGE_ORDER[idx], "wifi") && strcmp(app.net_type, "wifi") != 0) return TRUE;
     return FALSE;
+}
+
+static void goto_page(int idx);
+
+static const char *page_display_name(const char *name) {
+    if (!strcmp(name, "welcome")) return "Welcome";
+    if (!strcmp(name, "user")) return "System settings";
+    if (!strcmp(name, "timezone")) return "Timezone";
+    if (!strcmp(name, "extrausers")) return "Extra users";
+    if (!strcmp(name, "network")) return "Network";
+    if (!strcmp(name, "wifi")) return "Wi-Fi";
+    if (!strcmp(name, "disk")) return "Disk";
+    if (!strcmp(name, "partitioning")) return "Partitioning";
+    if (!strcmp(name, "summary")) return "Summary";
+    return name;
+}
+
+static void on_steps_row_activated(GtkListBox *lb, GtkListBoxRow *row, gpointer data) {
+    (void)lb; (void)data;
+    if (!row) return;
+    gpointer p = g_object_get_data(G_OBJECT(row), "pageidx");
+    int idx = GPOINTER_TO_INT(p);
+    gtk_widget_hide(app.steps_popover);
+    if (idx == -1) {
+        int r = show_message("Cancel installation", "Quit the installer? Nothing has been written to disk yet unless you already clicked Install.", TRUE);
+        if (r == GTK_RESPONSE_YES) gtk_main_quit();
+        return;
+    }
+    goto_page(idx);
+}
+
+static GtkWidget *build_steps_popover(GtkWidget *relative_to) {
+    GtkWidget *pop = gtk_popover_new(relative_to);
+    gtk_widget_set_name(pop, "boreal-dialog");
+    GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_set_border_width(GTK_CONTAINER(inner), 6);
+    GtkWidget *list = gtk_list_box_new();
+    gtk_widget_set_name(list, "dark-listbox");
+    gtk_widget_set_size_request(list, 220, -1);
+    g_signal_connect(list, "row-activated", G_CALLBACK(on_steps_row_activated), NULL);
+
+    for (size_t i = 0; i < N_PAGES; i++) {
+        const char *name = PAGE_ORDER[i];
+        if (!strcmp(name, "progress") || !strcmp(name, "finish")) continue;
+        GtkWidget *lbl = gtk_label_new(page_display_name(name));
+        gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+        gtk_widget_set_margin_top(lbl, 4);
+        gtk_widget_set_margin_bottom(lbl, 4);
+        gtk_widget_set_margin_start(lbl, 6);
+        gtk_widget_set_margin_end(lbl, 6);
+        GtkWidget *row = gtk_list_box_row_new();
+        gtk_container_add(GTK_CONTAINER(row), lbl);
+        g_object_set_data(G_OBJECT(row), "pageidx", GINT_TO_POINTER((int)i));
+        gtk_list_box_insert(GTK_LIST_BOX(list), row, -1);
+    }
+    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep, 4);
+    gtk_widget_set_margin_bottom(sep, 4);
+    GtkWidget *cancel_lbl = gtk_label_new("Cancel installation");
+    gtk_widget_set_name(cancel_lbl, "warn-label");
+    gtk_widget_set_halign(cancel_lbl, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(cancel_lbl, 4);
+    gtk_widget_set_margin_bottom(cancel_lbl, 4);
+    gtk_widget_set_margin_start(cancel_lbl, 6);
+    gtk_widget_set_margin_end(cancel_lbl, 6);
+    GtkWidget *cancel_row = gtk_list_box_row_new();
+    gtk_container_add(GTK_CONTAINER(cancel_row), cancel_lbl);
+    g_object_set_data(G_OBJECT(cancel_row), "pageidx", GINT_TO_POINTER(-1));
+    gtk_list_box_insert(GTK_LIST_BOX(list), cancel_row, -1);
+
+    gtk_box_pack_start(GTK_BOX(inner), list, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(pop), inner);
+    gtk_widget_show_all(inner);
+    return pop;
 }
 
 static void goto_page(int idx) {
@@ -1407,6 +1535,20 @@ static void on_net_static_toggled(GtkToggleButton *btn, gpointer data) {
     }
 }
 
+static void on_net_radio_activated(GtkToggleButton *btn, gpointer data) {
+    (void)data;
+    if (gtk_toggle_button_get_active(btn)) app.net_skipped = FALSE;
+}
+
+static void on_network_skip(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    app.net_skipped = TRUE;
+    strcpy(app.net_type, "skip");
+    int next = app.current_page + 1;
+    while (next < (int)N_PAGES - 1 && page_should_skip(next)) next++;
+    if (next < (int)N_PAGES - 1) goto_page(next);
+}
+
 static void on_tz_row_selected(GtkListBox *box, GtkListBoxRow *row, gpointer data) {
     (void)box; (void)data;
     if (!row) return;
@@ -1482,13 +1624,14 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     gtk_window_set_title(GTK_WINDOW(dlg), "Add user");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_widget_set_size_request(dlg, 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    gtk_container_set_border_width(GTK_CONTAINER(content), 16);
-    gtk_box_set_spacing(GTK_BOX(content), 12);
+    gtk_container_set_border_width(GTK_CONTAINER(content), 20);
+    gtk_box_set_spacing(GTK_BOX(content), 14);
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
 
     GtkWidget *name_e = gtk_entry_new();
     gtk_widget_set_name(name_e, "dark-entry");
@@ -1636,9 +1779,14 @@ static void rescan_existing_partitions(void) {
 static void on_part_advanced_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
     gboolean advanced = gtk_toggle_button_get_active(btn);
-    gtk_widget_set_visible(app.auto_box, !advanced);
-    gtk_widget_set_visible(app.custom_box, advanced);
-    if (advanced) rescan_existing_partitions();
+    if (advanced) {
+        gtk_widget_hide(app.auto_box);
+        gtk_widget_show_all(app.custom_box);
+        rescan_existing_partitions();
+    } else {
+        gtk_widget_hide(app.custom_box);
+        gtk_widget_show_all(app.auto_box);
+    }
 }
 
 static void on_add_custom_partition(GtkButton *btn, gpointer data) {
@@ -1648,17 +1796,20 @@ static void on_add_custom_partition(GtkButton *btn, gpointer data) {
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_widget_set_size_request(dlg, 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    gtk_container_set_border_width(GTK_CONTAINER(content), 16);
+    gtk_container_set_border_width(GTK_CONTAINER(content), 20);
+    gtk_box_set_spacing(GTK_BOX(content), 14);
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
 
     GtkWidget *size_e = gtk_entry_new();
     gtk_widget_set_name(size_e, "dark-entry");
     gtk_entry_set_placeholder_text(GTK_ENTRY(size_e), "e.g. 20480MiB or 100%");
     GtkWidget *fs_combo = gtk_combo_box_text_new();
+    gtk_widget_set_name(fs_combo, "dark-combo");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(fs_combo), "ext4");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(fs_combo), "xfs");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(fs_combo), "btrfs");
@@ -1732,44 +1883,68 @@ static void on_part_mountpoint_edited(GtkCellRendererText *cell, gchar *path_str
 }
 
 static GtkWidget *page_partitioning(void) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request(outer, 700, 620);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(box), 24);
     GtkWidget *title = gtk_label_new("Partitioning");
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
 
-    app.part_auto = gtk_radio_button_new_with_label(NULL, "Automatic");
+    app.part_auto = gtk_radio_button_new_with_label(NULL, "Guided partitioning");
     app.part_advanced = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.part_auto), "Advanced (custom partitions)");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.part_auto), TRUE);
     g_signal_connect(app.part_advanced, "toggled", G_CALLBACK(on_part_advanced_toggled), NULL);
 
-    app.auto_box = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(app.auto_box), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(app.auto_box), 12);
+    /* --- Guided partitioning group --- */
+    app.auto_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_name(app.auto_box, "part-group");
+    gtk_widget_set_margin_start(app.auto_box, 20);
 
+    GtkWidget *wipe_hdr = gtk_label_new("Where to install");
+    gtk_widget_set_name(wipe_hdr, "group-label");
+    gtk_widget_set_halign(wipe_hdr, GTK_ALIGN_START);
     app.wipe_erase = gtk_radio_button_new_with_label(NULL, "Erase entire disk");
     app.wipe_freespace = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.wipe_erase), "Use largest free space");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.wipe_erase), TRUE);
-    gtk_grid_attach(GTK_GRID(app.auto_box), app.wipe_erase, 0, 0, 2, 1);
-    gtk_grid_attach(GTK_GRID(app.auto_box), app.wipe_freespace, 0, 1, 2, 1);
+    GtkWidget *wipe_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_box_pack_start(GTK_BOX(wipe_box), app.wipe_erase, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(wipe_box), app.wipe_freespace, FALSE, FALSE, 0);
+
+    GtkWidget *layout_hdr = gtk_label_new("Disk layout");
+    gtk_widget_set_name(layout_hdr, "group-label");
+    gtk_widget_set_halign(layout_hdr, GTK_ALIGN_START);
+    GtkWidget *layout_grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(layout_grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(layout_grid), 14);
 
     app.layout_combo = gtk_combo_box_text_new();
+    gtk_widget_set_name(app.layout_combo, "dark-combo");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.layout_combo), "Everything on one partition");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.layout_combo), "Separate /home");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.layout_combo), "Separate /home and /var");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.layout_combo), "Separate /home, /var and /sys");
     gtk_combo_box_set_active(GTK_COMBO_BOX(app.layout_combo), 0);
-    gtk_grid_attach(GTK_GRID(app.auto_box), gtk_label_new("Layout"), 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.auto_box), app.layout_combo, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(layout_grid), gtk_label_new("Layout"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(layout_grid), app.layout_combo, 1, 0, 1, 1);
 
     app.rootfs_combo = gtk_combo_box_text_new();
+    gtk_widget_set_name(app.rootfs_combo, "dark-combo");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.rootfs_combo), "ext4");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.rootfs_combo), "xfs");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.rootfs_combo), "btrfs");
     gtk_combo_box_set_active(GTK_COMBO_BOX(app.rootfs_combo), 0);
-    gtk_grid_attach(GTK_GRID(app.auto_box), gtk_label_new("Root filesystem"), 0, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.auto_box), app.rootfs_combo, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(layout_grid), gtk_label_new("Root filesystem"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(layout_grid), app.rootfs_combo, 1, 1, 1, 1);
 
+    gtk_box_pack_start(GTK_BOX(app.auto_box), wipe_hdr, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(app.auto_box), wipe_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(app.auto_box), layout_hdr, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(app.auto_box), layout_grid, FALSE, FALSE, 0);
+
+    /* --- Advanced partitioning group --- */
     app.custom_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_name(app.custom_box, "part-group");
+    gtk_widget_set_margin_start(app.custom_box, 20);
     app.part_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     app.part_tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(app.part_store));
     gtk_widget_set_name(app.part_tree_view, "dark-listbox");
@@ -1789,7 +1964,7 @@ static GtkWidget *page_partitioning(void) {
     gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Format", r4, "active", 4, NULL);
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_size_request(scroll, 500, 200);
+    gtk_widget_set_size_request(scroll, 640, 240);
     gtk_container_add(GTK_CONTAINER(scroll), app.part_tree_view);
 
     GtkWidget *part_btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -1819,7 +1994,11 @@ static GtkWidget *page_partitioning(void) {
     GtkWidget *sep = gtk_label_new("Encryption & LVM");
     gtk_widget_set_name(sep, "title-label");
     gtk_widget_set_halign(sep, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(sep, 16);
+    gtk_widget_set_margin_top(sep, 12);
+
+    GtkWidget *crypt_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_name(crypt_group, "part-group");
+    gtk_widget_set_margin_start(crypt_group, 20);
 
     app.lvm_check = gtk_check_button_new_with_label("Use LVM");
     app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
@@ -1828,6 +2007,7 @@ static GtkWidget *page_partitioning(void) {
     app.luks_box = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(app.luks_box), 6);
     gtk_grid_set_column_spacing(GTK_GRID(app.luks_box), 12);
+    gtk_widget_set_margin_top(app.luks_box, 4);
     app.luks_pass_entry = gtk_entry_new();
     gtk_widget_set_name(app.luks_pass_entry, "dark-entry");
     gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass_entry), FALSE);
@@ -1841,16 +2021,23 @@ static GtkWidget *page_partitioning(void) {
     gtk_widget_set_no_show_all(app.luks_box, TRUE);
     gtk_widget_hide(app.luks_box);
 
+    gtk_box_pack_start(GTK_BOX(crypt_group), app.lvm_check, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_check, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_box, FALSE, FALSE, 0);
+
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.part_auto, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.auto_box, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), app.custom_box, TRUE, TRUE, 8);
+    gtk_box_pack_start(GTK_BOX(box), app.part_auto, FALSE, FALSE, 6);
+    gtk_box_pack_start(GTK_BOX(box), app.auto_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 6);
+    gtk_box_pack_start(GTK_BOX(box), app.custom_box, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), sep, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.lvm_check, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), app.luks_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.luks_box, FALSE, FALSE, 8);
-    return box;
+    gtk_box_pack_start(GTK_BOX(box), crypt_group, FALSE, FALSE, 0);
+
+    GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(scroller), box);
+    gtk_box_pack_start(GTK_BOX(outer), scroller, TRUE, TRUE, 0);
+    return outer;
 }
 
 static GtkWidget *page_user(void) {
@@ -1941,13 +2128,17 @@ static GtkWidget *page_network(void) {
     app.net_dhcp = gtk_radio_button_new_with_label(NULL, "DHCP (automatic)");
     app.net_wifi = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.net_dhcp), "Wi-Fi");
     app.net_static = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.net_dhcp), "Static IP");
-    app.net_skip = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(app.net_dhcp), "Skip");
     g_signal_connect(app.net_static, "toggled", G_CALLBACK(on_net_static_toggled), NULL);
+    g_signal_connect(app.net_dhcp, "toggled", G_CALLBACK(on_net_radio_activated), NULL);
+    g_signal_connect(app.net_wifi, "toggled", G_CALLBACK(on_net_radio_activated), NULL);
+    g_signal_connect(app.net_static, "toggled", G_CALLBACK(on_net_radio_activated), NULL);
 
     app.net_static_box = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(app.net_static_box), 6);
     gtk_grid_set_column_spacing(GTK_GRID(app.net_static_box), 12);
+    gtk_widget_set_margin_start(app.net_static_box, 20);
     app.net_if_combo = gtk_combo_box_text_new();
+    gtk_widget_set_name(app.net_if_combo, "dark-combo");
     app.net_ip_entry = gtk_entry_new();
     gtk_widget_set_name(app.net_ip_entry, "dark-entry");
     gtk_entry_set_placeholder_text(GTK_ENTRY(app.net_ip_entry), "192.168.1.100/24");
@@ -1967,39 +2158,64 @@ static GtkWidget *page_network(void) {
     gtk_grid_attach(GTK_GRID(app.net_static_box), app.net_dns_entry, 1, 3, 1, 1);
     gtk_widget_set_no_show_all(app.net_static_box, TRUE);
 
+    app.net_skip_btn = gtk_button_new_with_label("Skip network setup");
+    gtk_widget_set_name(app.net_skip_btn, "nav-button");
+    gtk_widget_set_halign(app.net_skip_btn, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(app.net_skip_btn, 16);
+    g_signal_connect(app.net_skip_btn, "clicked", G_CALLBACK(on_network_skip), NULL);
+
+    GtkWidget *radio_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_pack_start(GTK_BOX(radio_box), app.net_dhcp, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(radio_box), app.net_wifi, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(radio_box), app.net_static, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(radio_box), app.net_static_box, FALSE, FALSE, 4);
+
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.net_dhcp, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.net_wifi, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.net_static, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), app.net_static_box, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(box), app.net_skip, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), radio_box, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(box), app.net_skip_btn, FALSE, FALSE, 0);
     return box;
 }
 
 static GtkWidget *page_wifi(void) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_container_set_border_width(GTK_CONTAINER(box), 24);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 28);
+    gtk_widget_set_size_request(box, 460, -1);
     GtkWidget *title = gtk_label_new("Wi-Fi");
     gtk_widget_set_name(title, "title-label");
     gtk_widget_set_halign(title, GTK_ALIGN_START);
+    GtkWidget *sub = gtk_label_new("Pick a network and enter its password.");
+    gtk_widget_set_halign(sub, GTK_ALIGN_START);
+    gtk_widget_set_margin_bottom(sub, 6);
 
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+
     app.wifi_ssid_combo = gtk_combo_box_text_new();
+    gtk_widget_set_name(app.wifi_ssid_combo, "dark-combo");
+    gtk_widget_set_hexpand(app.wifi_ssid_combo, TRUE);
     app.wifi_pass_entry = gtk_entry_new();
     gtk_widget_set_name(app.wifi_pass_entry, "dark-entry");
     gtk_entry_set_visibility(GTK_ENTRY(app.wifi_pass_entry), FALSE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app.wifi_pass_entry), "Network password");
+    gtk_widget_set_hexpand(app.wifi_pass_entry, TRUE);
     GtkWidget *wifi_refresh = gtk_button_new_with_label("Scan");
     gtk_widget_set_name(wifi_refresh, "nav-button");
     g_signal_connect(wifi_refresh, "clicked", G_CALLBACK(on_wifi_scan), NULL);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Network"), 0, 0, 1, 1);
+
+    GtkWidget *net_lbl = gtk_label_new("Network");
+    gtk_widget_set_halign(net_lbl, GTK_ALIGN_START);
+    GtkWidget *pass_lbl = gtk_label_new("Password");
+    gtk_widget_set_halign(pass_lbl, GTK_ALIGN_START);
+
+    gtk_grid_attach(GTK_GRID(grid), net_lbl, 0, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), app.wifi_ssid_combo, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), wifi_refresh, 2, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Password"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), pass_lbl, 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), app.wifi_pass_entry, 1, 1, 2, 1);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), sub, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 8);
     return box;
 }
@@ -2032,10 +2248,10 @@ static gboolean on_progress_draw(GtkWidget *widget, cairo_t *cr, gpointer data) 
     PangoFontDescription *desc = pango_font_description_from_string("sans bold 11");
     pango_layout_set_font_description(layout, desc);
     pango_font_description_free(desc);
-    int th;
-    pango_layout_get_pixel_size(layout, NULL, &th);
+    PangoRectangle logical;
+    pango_layout_get_pixel_extents(layout, NULL, &logical);
     double x = 12.0;
-    double y = (height - th) / 2.0;
+    double y = (height - logical.height) / 2.0 - logical.y;
     int split = (int)(width * fraction);
 
     cairo_save(cr);
@@ -2069,7 +2285,7 @@ static GtkWidget *page_progress(void) {
     gtk_widget_hide(app.progress_label);
     app.progress_bar = gtk_progress_bar_new();
     gtk_widget_set_name(app.progress_bar, "boreal-progress");
-    gtk_widget_set_size_request(app.progress_bar, -1, 28);
+    gtk_widget_set_size_request(app.progress_bar, -1, 34);
     g_signal_connect_after(app.progress_bar, "draw", G_CALLBACK(on_progress_draw), NULL);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, 760, 480);
@@ -2208,22 +2424,24 @@ int main(int argc, char **argv) {
     gtk_stack_set_transition_type(GTK_STACK(app.stack), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
 
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_welcome()), "welcome");
-    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_disk()), "disk");
-    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_partitioning()), "partitioning");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_user()), "user");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_timezone()), "timezone");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_extrausers()), "extrausers");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_network()), "network");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_wifi()), "wifi");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_disk()), "disk");
+    gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_partitioning()), "partitioning");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_summary()), "summary");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_progress()), "progress");
     gtk_stack_add_named(GTK_STACK(app.stack), wrap_page(page_finish()), "finish");
 
     GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(nav), 12);
-    app.btn_cancel = gtk_button_new_with_label("Cancel");
+    app.btn_cancel = gtk_menu_button_new();
+    gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Steps \xE2\x96\xBE");
     gtk_widget_set_name(app.btn_cancel, "nav-button");
-    g_signal_connect(app.btn_cancel, "clicked", G_CALLBACK(on_cancel), NULL);
+    app.steps_popover = build_steps_popover(app.btn_cancel);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(app.btn_cancel), app.steps_popover);
     app.btn_back = gtk_button_new_with_label("Back");
     gtk_widget_set_name(app.btn_back, "nav-button");
     g_signal_connect(app.btn_back, "clicked", G_CALLBACK(on_back), NULL);
@@ -2260,7 +2478,6 @@ int main(int argc, char **argv) {
         gtk_window_move(GTK_WINDOW(app.window), 0, 0);
     }
     gtk_widget_hide(app.net_static_box);
-    gtk_widget_hide(app.wifi_box);
     refresh_wifi_list();
 
     GdkWindow *gdkwin = gtk_widget_get_window(app.window);

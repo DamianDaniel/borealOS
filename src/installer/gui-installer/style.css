@@ -10,6 +10,13 @@
     color: #3dffd2;
 }
 
+#group-label {
+    font-size: 13px;
+    font-weight: bold;
+    color: #8fd9c9;
+    opacity: 0.9;
+}
+
 #warn-label {
     color: #ff6b6b;
 }
@@ -23,17 +30,59 @@
     color: #e8f7f4;
 }
 
+/* Prevent GtkScrolledWindow/viewport default light background from
+   showing through nested dark widgets (listboxes, tree views, log). */
+scrolledwindow,
+scrolledwindow viewport,
+viewport {
+    background-color: transparent;
+}
+
+#part-group {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(61, 255, 210, 0.18);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
 #dark-entry {
     background-color: #0f2535;
     color: #ffffff;
     caret-color: #ffffff;
     border: 1px solid #2a6060;
     border-radius: 6px;
-    padding: 6px;
+    padding: 6px 8px;
+    min-width: 200px;
 }
 
 #dark-entry:focus {
     border-color: #3dffd2;
+}
+
+#dark-combo,
+#dark-combo button {
+    background-color: #0f2535;
+    color: #ffffff;
+    border: 1px solid #2a6060;
+    border-radius: 6px;
+    min-width: 200px;
+    min-height: 20px;
+}
+
+#dark-combo label,
+#dark-combo arrow {
+    color: #ffffff;
+}
+
+#dark-combo:hover,
+#dark-combo button:hover {
+    border-color: #3dffd2;
+}
+
+/* combo box popup list */
+#dark-combo window,
+#dark-combo popover {
+    background-color: #0d1f2d;
 }
 
 #nav-button {
@@ -57,6 +106,10 @@
     color: #8a9494;
 }
 
+#nav-button:hover {
+    background-color: #eef3f3;
+}
+
 #primary-button {
     background-color: #3dffd2;
     border: none;
@@ -69,6 +122,10 @@
     font-weight: bold;
 }
 
+#primary-button:hover {
+    background-color: #6fffdf;
+}
+
 #primary-button:disabled {
     background-color: #7fa8a0;
 }
@@ -78,12 +135,17 @@
 }
 
 #dark-listbox {
-    background-color: rgba(10, 26, 36, 0.92);
+    background-color: transparent;
     color: #ffffff;
+}
+
+#dark-listbox row {
+    padding: 4px 6px;
 }
 
 #dark-listbox row:selected {
     background-color: #3dffd2;
+    border-radius: 4px;
 }
 
 #dark-listbox row:selected label {
@@ -95,7 +157,7 @@
 }
 
 #log-view {
-    background-color: rgba(10, 26, 36, 0.92);
+    background-color: transparent;
     color: #b2f0e8;
 }
 
@@ -105,24 +167,26 @@
 }
 
 #boreal-progress {
-    min-height: 20px;
+    min-height: 34px;
 }
 
 #boreal-progress trough {
     background-color: #0f2535;
     border-radius: 6px;
-    min-height: 20px;
+    min-height: 34px;
 }
 
 #boreal-progress progress {
     background-color: #3dffd2;
     border-radius: 6px;
-    min-height: 20px;
+    min-height: 34px;
 }
 
 #boreal-dialog {
     background-color: #0d1f2d;
     border: 2px solid #2a6060;
+    border-radius: 8px;
+    min-width: 360px;
 }
 
 #boreal-dialog.csd {
@@ -142,4 +206,25 @@
 
 #boreal-dialog button label {
     color: #000000;
+}
+
+#boreal-dialog list {
+    background-color: transparent;
+}
+
+#boreal-dialog row {
+    padding: 8px 10px;
+    border-radius: 6px;
+}
+
+#boreal-dialog row:hover {
+    background-color: rgba(61, 255, 210, 0.12);
+}
+
+#boreal-dialog row:selected {
+    background-color: rgba(61, 255, 210, 0.22);
+}
+
+#boreal-dialog #warn-label {
+    color: #ff6b6b;
 }
