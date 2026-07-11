@@ -58,6 +58,7 @@ typedef struct {
     char wifi_ssid[128];
     char wifi_pass[128];
     char root_uuid[64];
+    char boot_uuid[64];
     char efi_uuid[64];
     char bios_part[64];
     char efi_part[64];
@@ -76,6 +77,8 @@ typedef struct {
     GtkWidget *steps_popover;
     GtkWidget *auto_revealer, *custom_revealer, *luks_revealer;
     GtkWidget *log_scroll;
+    GtkWidget *catchup_btn;
+    gboolean log_autoscroll;
 
     GList *extra_users;
 
@@ -118,17 +121,7 @@ static gboolean log_idle(gpointer data) {
     gtk_text_buffer_insert(app.log_buffer, &end, m->text, -1);
     gtk_text_buffer_insert(app.log_buffer, &end, "\n", -1);
 
-    gboolean at_bottom = TRUE;
-    if (app.log_scroll) {
-        GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app.log_scroll));
-        if (vadj) {
-            double value = gtk_adjustment_get_value(vadj);
-            double page = gtk_adjustment_get_page_size(vadj);
-            double upper = gtk_adjustment_get_upper(vadj);
-            at_bottom = (value + page >= upper - 24.0);
-        }
-    }
-    if (at_bottom) {
+    if (app.log_autoscroll) {
         gtk_text_buffer_get_end_iter(app.log_buffer, &end);
         gtk_text_buffer_place_cursor(app.log_buffer, &end);
         GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
@@ -227,6 +220,30 @@ static void write_file(const char *path, const char *content) {
 }
 
 typedef struct { gboolean *result; char *msg; } ErrMsg;
+
+static void on_catchup_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    app.log_autoscroll = TRUE;
+    gtk_widget_hide(app.catchup_btn);
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+    gtk_text_buffer_place_cursor(app.log_buffer, &end);
+    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
+}
+
+static void on_log_vadj_changed(GtkAdjustment *adj, gpointer data) {
+    (void)data;
+    double value = gtk_adjustment_get_value(adj);
+    double page = gtk_adjustment_get_page_size(adj);
+    double upper = gtk_adjustment_get_upper(adj);
+    gboolean at_bottom = (value + page >= upper - 24.0);
+    app.log_autoscroll = at_bottom;
+    if (app.catchup_btn) {
+        if (at_bottom) gtk_widget_hide(app.catchup_btn);
+        else gtk_widget_show(app.catchup_btn);
+    }
+}
 
 static void on_dialog_realize(GtkWidget *widget, gpointer data) {
     (void)data;
@@ -421,6 +438,14 @@ static PlannedPart *add_planned_part(const char *size_spec, const char *fs_type,
 static void build_automatic_plan(void) {
     free_planned_parts();
     add_planned_part("512MiB", "fat32", "/boot/efi", TRUE, TRUE);
+    if (app.use_luks) {
+        /* GRUB has to be able to read the kernel/initramfs without going
+           through cryptomount - otherwise it prompts for the passphrase
+           itself (slow, GRUB's own crypto is not hardware-accelerated),
+           and then the kernel/initramfs prompts again to actually mount
+           root. A small unencrypted /boot avoids the double prompt. */
+        add_planned_part("1024MiB", "ext4", "/boot", TRUE, TRUE);
+    }
 
     double disk_mib = 0;
     {
@@ -666,6 +691,18 @@ static gboolean partition_disk(void) {
     if (u) { g_strstrip(u); strncpy(app.efi_uuid, u, sizeof(app.efi_uuid) - 1); g_free(u); }
 
     if (!app.root_uuid[0] || !app.efi_uuid[0]) { fail_install("Could not read partition UUIDs"); return FALSE; }
+
+    app.boot_uuid[0] = 0;
+    for (GList *l = app.planned_parts; l; l = l->next) {
+        PlannedPart *p = l->data;
+        if (!strcmp(p->mountpoint, "/boot") && p->device[0]) {
+            snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", p->device);
+            char *bu = run_capture(cmd);
+            if (bu) { g_strstrip(bu); strncpy(app.boot_uuid, bu, sizeof(app.boot_uuid) - 1); g_free(bu); }
+            break;
+        }
+    }
+
     log_line("Root UUID: %s  EFI UUID: %s", app.root_uuid, app.efi_uuid);
     return TRUE;
 }
@@ -763,7 +800,9 @@ static gboolean install_bundled_packages(void) {
 static gboolean write_fstab(void) {
     STEP("Writing fstab");
     GString *buf = g_string_new(NULL);
-    g_string_append_printf(buf, "UUID=%s  /         ext4  errors=remount-ro  0  1\n", app.root_uuid);
+    const char *root_fstype = !strcmp(app.root_fs, "fat32") ? "vfat" : app.root_fs;
+    const char *root_opts = !strcmp(root_fstype, "ext4") ? "errors=remount-ro" : "defaults";
+    g_string_append_printf(buf, "UUID=%s  /         %s  %s  0  1\n", app.root_uuid, root_fstype, root_opts);
     g_string_append_printf(buf, "UUID=%s   /boot/efi vfat  umask=0077         0  2\n", app.efi_uuid);
 
     for (GList *l = app.planned_parts; l; l = l->next) {
@@ -855,6 +894,16 @@ static gboolean configure_system(void) {
         "deb http://deb.debian.org/debian-security trixie-security main contrib non-free non-free-firmware\n"
         "deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\n");
     run_cmd("rm -f /mnt/etc/apt/sources.list.d/*.list");
+
+    /* The live ISO strips /var/lib/apt/lists to save space, and that empty
+       state gets rsynced onto the target - so apt has no package index at
+       all until we actually update it here. Best-effort: don't fail the
+       install if there's no network yet, just warn. */
+    bind_mounts();
+    run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
+    if (run_cmd("chroot /mnt apt-get update") != 0)
+        log_line("WARN: apt-get update failed (no network at install time?); run it manually after connecting.");
+    unbind_mounts();
 
     char script[4096];
     snprintf(script, sizeof(script),
@@ -1111,9 +1160,13 @@ static gboolean install_grub(void) {
     snprintf(initrd_path, sizeof(initrd_path), "/mnt/boot/initrd.img-%s", kver);
     if (access(initrd_path, F_OK) != 0) { fail_install("No matching initrd for kernel"); g_free(kver); return FALSE; }
 
+    gboolean separate_boot = app.boot_uuid[0] != 0;
+    const char *boot_path_prefix = separate_boot ? "" : "/boot";
+    const char *search_uuid = separate_boot ? app.boot_uuid : app.root_uuid;
+
     run_cmd("mkdir -p /mnt/boot/efi/EFI/BOOT");
     char unlock[256] = "";
-    if (app.use_luks) {
+    if (app.use_luks && !separate_boot) {
         char nodash[64]; int j = 0;
         for (int i = 0; app.luks_uuid[i] && j < (int)sizeof(nodash) - 1; i++)
             if (app.luks_uuid[i] != '-') nodash[j++] = app.luks_uuid[i];
@@ -1121,28 +1174,29 @@ static gboolean install_grub(void) {
         snprintf(unlock, sizeof(unlock),
             "insmod cryptodisk\ninsmod luks2\ninsmod luks\ncryptomount -u %s\n%s",
             nodash, app.use_lvm ? "insmod lvm\n" : "");
-    } else if (app.use_lvm) {
+    } else if (app.use_lvm && !separate_boot) {
         strcpy(unlock, "insmod lvm\n");
     }
 
     char buf[1536];
     snprintf(buf, sizeof(buf),
-        "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)/boot/grub\nconfigfile ($root)/boot/grub/grub.cfg\n",
-        unlock, app.root_uuid);
+        "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)%s/grub\nconfigfile ($root)%s/grub/grub.cfg\n",
+        unlock, search_uuid, boot_path_prefix, boot_path_prefix);
     write_file("/mnt/boot/efi/EFI/BOOT/grub.cfg", buf);
 
     run_cmd("mkdir -p /mnt/boot/grub");
     snprintf(buf, sizeof(buf),
         "insmod all_video\ninsmod gfxterm\ninsmod png\nset gfxmode=auto\nterminal_output gfxterm\n\n"
         "set default=0\nset timeout=5\n\n"
-        "if [ -f /boot/grub/themes/boreal/theme.txt ]; then\n    set theme=/boot/grub/themes/boreal/theme.txt\n"
+        "if [ -f %s/grub/themes/boreal/theme.txt ]; then\n    set theme=%s/grub/themes/boreal/theme.txt\n"
         "else\n    set menu_color_normal=cyan/black\n    set menu_color_highlight=black/cyan\nfi\n\n"
         "menuentry \"BorealOS alpha\" {\n    %ssearch --no-floppy --fs-uuid --set=root %s\n"
-        "    linux /boot/vmlinuz-%s root=UUID=%s ro quiet\n    initrd /boot/initrd.img-%s\n}\n"
+        "    linux %s/vmlinuz-%s root=UUID=%s ro quiet\n    initrd %s/initrd.img-%s\n}\n"
         "menuentry \"BorealOS alpha (recovery)\" {\n    %ssearch --no-floppy --fs-uuid --set=root %s\n"
-        "    linux /boot/vmlinuz-%s root=UUID=%s ro single\n    initrd /boot/initrd.img-%s\n}\n",
-        unlock, app.root_uuid, kver, app.root_uuid, kver,
-        unlock, app.root_uuid, kver, app.root_uuid, kver);
+        "    linux %s/vmlinuz-%s root=UUID=%s ro single\n    initrd %s/initrd.img-%s\n}\n",
+        boot_path_prefix, boot_path_prefix,
+        unlock, search_uuid, boot_path_prefix, kver, app.root_uuid, boot_path_prefix, kver,
+        unlock, search_uuid, boot_path_prefix, kver, app.root_uuid, boot_path_prefix, kver);
     write_file("/mnt/boot/grub/grub.cfg", buf);
     log_line("GRUB installed. Kernel: %s", kver);
     g_free(kver);
@@ -2286,7 +2340,7 @@ static GtkWidget *page_partitioning(void) {
     gtk_box_pack_start(GTK_BOX(box), app.part_auto, FALSE, FALSE, 6);
     gtk_box_pack_start(GTK_BOX(box), app.auto_revealer, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 6);
-    gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, FALSE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), crypt_row, FALSE, FALSE, 0);
 
     GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
@@ -2547,6 +2601,7 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_name(scroll, "log-scroll");
     gtk_widget_set_size_request(scroll, 700, 400);
     app.log_scroll = scroll;
+    app.log_autoscroll = TRUE;
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
@@ -2554,9 +2609,27 @@ static GtkWidget *page_progress(void) {
     app.log_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app.log_view));
     gtk_container_add(GTK_CONTAINER(scroll), app.log_view);
 
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+    g_signal_connect(vadj, "value-changed", G_CALLBACK(on_log_vadj_changed), NULL);
+    g_signal_connect(vadj, "changed", G_CALLBACK(on_log_vadj_changed), NULL);
+
+    app.catchup_btn = gtk_button_new_with_label("Catch up");
+    gtk_widget_set_name(app.catchup_btn, "primary-button");
+    gtk_widget_set_halign(app.catchup_btn, GTK_ALIGN_END);
+    gtk_widget_set_valign(app.catchup_btn, GTK_ALIGN_END);
+    gtk_widget_set_margin_end(app.catchup_btn, 16);
+    gtk_widget_set_margin_bottom(app.catchup_btn, 16);
+    gtk_widget_set_no_show_all(app.catchup_btn, TRUE);
+    gtk_widget_hide(app.catchup_btn);
+    g_signal_connect(app.catchup_btn, "clicked", G_CALLBACK(on_catchup_clicked), NULL);
+
+    GtkWidget *log_overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(log_overlay), scroll);
+    gtk_overlay_add_overlay(GTK_OVERLAY(log_overlay), app.catchup_btn);
+
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.progress_bar, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 8);
+    gtk_box_pack_start(GTK_BOX(box), log_overlay, TRUE, TRUE, 8);
     return box;
 }
 
