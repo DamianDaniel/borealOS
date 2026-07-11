@@ -341,25 +341,6 @@ DPKG
 
     unbind_mounts
     ok "Display manager installed."
-
-    if [ -n "$APT_PKGS" ]; then
-        step "Installing additional APT packages from profile..."
-        bind_mounts
-        chroot /mnt apt-get update
-        chroot /mnt apt-get install -y $APT_PKGS
-        unbind_mounts
-        ok "Additional APT packages installed."
-    fi
-
-    if [ -n "$FLATPAK_PKGS" ]; then
-        step "Installing Flatpak packages from profile..."
-        bind_mounts
-        for pkg in $FLATPAK_PKGS; do
-            chroot /mnt flatpak install -y flathub "$pkg" || warn "Failed to install flatpak: $pkg"
-        done
-        unbind_mounts
-        ok "Flatpak packages installed."
-    fi
 }
 
 bind_mounts() {
@@ -514,7 +495,7 @@ PYDEFAULTS
 
 set_passwords() {
     step "Setting passwords..."
-    printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt chpasswd || die "root password failed"
+    printf 'root:%s\n' "$ROOT_PASS" | chroot /mnt /usr/sbin/chpasswd || die "root password failed"
     for entry in "${EXTRA_USERS[@]}"; do
         local uname="${entry%%|*}"
         local rest="${entry#*|}"
@@ -525,7 +506,7 @@ set_passwords() {
         chroot /mnt useradd -m -G "$groups" -s "$SHELL_BIN" "$uname" 2>/dev/null || \
         chroot /mnt useradd -m -G "audio,video" -s "$SHELL_BIN" "$uname" || \
         die "useradd failed for $uname"
-        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt chpasswd || die "password failed for $uname"
+        printf '%s:%s\n' "$uname" "$upass" | chroot /mnt /usr/sbin/chpasswd || die "password failed for $uname"
     done
     ok "Passwords set."
 }
@@ -882,34 +863,18 @@ finish() {
 }
 
 main() {
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --profile) PROFILE_PATH="$2"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
     check_root
     check_assets
     banner
     echo -e "${BLD}BorealOS Installer${RST}"
     echo -e "  DE: ${DE_CHOICE}  |  Shell: ${SHELL_BIN}"
     echo
-    [ -z "$PROFILE_PATH" ] && confirm "Begin?" || ok "Automated install via profile: $PROFILE_PATH"
-
-    if [ -n "$PROFILE_PATH" ] && [ -f "$PROFILE_PATH" ]; then
-        step "Loading profile..."
-        HOSTNAME=$(jq -r '.system.hostname // empty' "$PROFILE_PATH")
-        TIMEZONE=$(jq -r '.system.timezone // empty' "$PROFILE_PATH")
-        LOCALE=$(jq -r '.system.locale // empty' "$PROFILE_PATH")
-        APT_PKGS=$(jq -r '.packages.apt[]' "$PROFILE_PATH" 2>/dev/null | tr '\n' ' ')
-        FLATPAK_PKGS=$(jq -r '.packages.flatpak[]' "$PROFILE_PATH" 2>/dev/null | tr '\n' ' ')
-        ok "Profile loaded."
-    fi
+    confirm "Begin?" || die "Aborted."
 
     select_disk
     select_partitioning
-    [ -z "$HOSTNAME" ] && get_user_info
-    [ -z "$APT_PKGS" ] && get_extra_users
+    get_user_info
+    get_extra_users
     configure_network
 
     banner

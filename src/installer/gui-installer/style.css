@@ -10,6 +10,13 @@
     color: #3dffd2;
 }
 
+#group-label {
+    font-size: 13px;
+    font-weight: bold;
+    color: #8fd9c9;
+    opacity: 0.9;
+}
+
 #warn-label {
     color: #ff6b6b;
 }
@@ -23,17 +30,95 @@
     color: #e8f7f4;
 }
 
+/* Prevent GtkScrolledWindow/viewport default light background from
+   showing through nested dark widgets (listboxes, tree views, log). */
+scrolledwindow,
+scrolledwindow viewport,
+viewport {
+    background-color: transparent;
+}
+
+#part-group {
+    background-color: #eef3f2;
+    border: 1px solid #9fb3b3;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
+#part-group label,
+#part-group #group-label {
+    color: #10201c;
+}
+
+#part-group check,
+#part-group radio {
+    color: #10201c;
+}
+
 #dark-entry {
     background-color: #0f2535;
     color: #ffffff;
     caret-color: #ffffff;
     border: 1px solid #2a6060;
     border-radius: 6px;
-    padding: 6px;
+    padding: 6px 8px;
+    min-width: 200px;
 }
 
 #dark-entry:focus {
     border-color: #3dffd2;
+}
+
+combobox,
+combobox button,
+combobox box,
+combobox arrow,
+combobox entry {
+    background-color: #0f2535 !important;
+    color: #ffffff !important;
+    border: 1px solid #2a6060;
+    border-radius: 6px;
+    min-width: 200px;
+}
+
+combobox:hover,
+combobox button:hover {
+    border-color: #3dffd2;
+}
+
+/* The combo box popup list is a separate top-level popup surface, not a
+   descendant of "combobox" in the widget tree, so it must be targeted
+   generically rather than scoped under combobox. This app is entirely
+   dark-themed, so styling all popups/menus dark is safe app-wide. */
+window.background.popup,
+menu,
+.popup,
+combobox window,
+combobox popover {
+    background-color: #0d1f2d !important;
+    color: #ffffff !important;
+    border: 1px solid #2a6060;
+}
+
+window.background.popup list,
+window.background.popup row,
+menu menuitem,
+.popup list,
+.popup row {
+    background-color: transparent;
+    color: #ffffff;
+}
+
+window.background.popup row:hover,
+menu menuitem:hover,
+.popup row:hover {
+    background-color: rgba(61, 255, 210, 0.18);
+}
+
+window.background.popup row:selected,
+.popup row:selected {
+    background-color: #3dffd2;
+    color: #0d1f2d;
 }
 
 #nav-button {
@@ -57,6 +142,10 @@
     color: #8a9494;
 }
 
+#nav-button:hover {
+    background-color: #eef3f3;
+}
+
 #primary-button {
     background-color: #3dffd2;
     border: none;
@@ -69,6 +158,10 @@
     font-weight: bold;
 }
 
+#primary-button:hover {
+    background-color: #6fffdf;
+}
+
 #primary-button:disabled {
     background-color: #7fa8a0;
 }
@@ -78,12 +171,17 @@
 }
 
 #dark-listbox {
-    background-color: rgba(10, 26, 36, 0.92);
+    background-color: transparent;
     color: #ffffff;
+}
+
+#dark-listbox row {
+    padding: 4px 6px;
 }
 
 #dark-listbox row:selected {
     background-color: #3dffd2;
+    border-radius: 4px;
 }
 
 #dark-listbox row:selected label {
@@ -95,7 +193,7 @@
 }
 
 #log-view {
-    background-color: rgba(10, 26, 36, 0.92);
+    background-color: transparent;
     color: #b2f0e8;
 }
 
@@ -105,24 +203,26 @@
 }
 
 #boreal-progress {
-    min-height: 20px;
+    min-height: 34px;
 }
 
 #boreal-progress trough {
     background-color: #0f2535;
     border-radius: 6px;
-    min-height: 20px;
+    min-height: 34px;
 }
 
 #boreal-progress progress {
     background-color: #3dffd2;
     border-radius: 6px;
-    min-height: 20px;
+    min-height: 34px;
 }
 
 #boreal-dialog {
     background-color: #0d1f2d;
     border: 2px solid #2a6060;
+    border-radius: 8px;
+    min-width: 360px;
 }
 
 #boreal-dialog.csd {
@@ -142,4 +242,25 @@
 
 #boreal-dialog button label {
     color: #000000;
+}
+
+#boreal-dialog list {
+    background-color: transparent;
+}
+
+#boreal-dialog row {
+    padding: 8px 10px;
+    border-radius: 6px;
+}
+
+#boreal-dialog row:hover {
+    background-color: rgba(61, 255, 210, 0.12);
+}
+
+#boreal-dialog row:selected {
+    background-color: rgba(61, 255, 210, 0.22);
+}
+
+#boreal-dialog #warn-label {
+    color: #ff6b6b;
 }
