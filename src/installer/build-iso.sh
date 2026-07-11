@@ -790,7 +790,7 @@ apt-get install -y --no-install-recommends \
     bash bash-completion \
     iproute2 iputils-ping net-tools \
     curl wget nano less \
-    tzdata locales \
+    tzdata locales console-setup \
     openssl libdevmapper1.02.1 libefivar1 libefiboot1 \
     os-prober python3 rsync \
     fonts-dejavu-core \
@@ -799,7 +799,7 @@ apt-get install -y --no-install-recommends \
 
 if [ "$DE_NAME" != "None" ]; then
 apt-get install -y \
-    xserver-xorg xserver-xorg-core \
+    xserver-xorg xserver-xorg-core xserver-xorg-legacy \
     xserver-xorg-input-all \
     xserver-xorg-input-libinput \
     xserver-xorg-input-evdev \
@@ -812,6 +812,19 @@ apt-get install -y \
     dbus dbus-x11 at-spi2-core \
     libinput10 libinput-dev \
     udev
+
+# This live/installed environment has no systemd-logind/elogind seat manager,
+# so Xorg needs the classic setuid wrapper to be allowed to open /dev/tty*
+# and the DRM/input devices for a non-root user (otherwise: "parse_vt_settings:
+# Cannot open /dev/tty0 (Permission denied)" when running startx/startxfce4).
+mkdir -p /etc/X11
+cat > /etc/X11/Xwrapper.config <<'XWRAP'
+allowed_users=anybody
+needs_root_rights=yes
+XWRAP
+for xorgbin in /usr/lib/xorg/Xorg /usr/lib/xorg/Xorg.wrap; do
+    [ -f "$xorgbin" ] && chmod u+s "$xorgbin"
+done
 
 for pkg in virtualbox-guest-x11 virtualbox-guest-utils xf86-video-vmware; do
     apt-get install -y "$pkg" 2>/dev/null || echo "SKIP: $pkg"
@@ -1011,6 +1024,16 @@ mkdir -p "$WORK/squashfs-root/usr/share/backgrounds/xfce"
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-shapes.png" 2>/dev/null || true
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-verticals.png" 2>/dev/null || true
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-stripes.png" 2>/dev/null || true
+
+echo "==> Slimming down image (apt cache, docs, man pages)..."
+chroot "$WORK/squashfs-root" apt-get clean 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/var/lib/apt/lists/"* 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/usr/share/doc/"* 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/usr/share/man/"* 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/usr/share/info/"* 2>/dev/null || true
+rm -rf "$WORK/squashfs-root/usr/share/lintian/"* 2>/dev/null || true
+find "$WORK/squashfs-root/var/log" -type f -delete 2>/dev/null || true
+find "$WORK/squashfs-root/var/cache" -maxdepth 1 -type d -not -name apt -exec rm -rf {} + 2>/dev/null || true
 
 echo "==> Building SquashFS..."
 mksquashfs "$WORK/squashfs-root" "$WORK/iso/live/filesystem.squashfs" \

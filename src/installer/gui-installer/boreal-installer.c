@@ -74,6 +74,7 @@ typedef struct {
     GList *planned_parts;
     gboolean net_skipped;
     GtkWidget *steps_popover;
+    GtkWidget *auto_revealer, *custom_revealer, *luks_revealer;
 
     GList *extra_users;
 
@@ -641,11 +642,22 @@ static gboolean install_bundled_packages(void) {
     bind_mounts();
     run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
 
-    const char *dm = "lightdm lightdm-gtk-greeter";
-    if (strcmp(app.de_choice, "KDE Plasma") == 0) dm = "sddm";
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "chroot /mnt apt-get install -y %s", dm);
-    if (run_cmd(cmd) != 0) log_line("WARN: display manager install failed, target may boot to TTY");
+    /* Prefer the .debs cached at ISO build time (fully offline, no network
+       needed on the target). Falls back to a live network install only if
+       no cached debs are present. */
+    if (run_cmd("ls /opt/borealOS/debs/*.deb >/dev/null 2>&1") == 0) {
+        run_cmd("mkdir -p /mnt/var/cache/boreal-debs");
+        run_cmd("cp /opt/borealOS/debs/*.deb /mnt/var/cache/boreal-debs/");
+        if (run_cmd("chroot /mnt bash -c 'dpkg -i /var/cache/boreal-debs/*.deb; apt-get install -f -y'") != 0)
+            log_line("WARN: offline display manager install had errors, see log");
+        run_cmd("rm -rf /mnt/var/cache/boreal-debs");
+    } else {
+        const char *dm = "lightdm lightdm-gtk-greeter";
+        if (strcmp(app.de_choice, "KDE Plasma") == 0) dm = "sddm";
+        char cmd[256];
+        snprintf(cmd, sizeof(cmd), "chroot /mnt apt-get install -y %s", dm);
+        if (run_cmd(cmd) != 0) log_line("WARN: display manager install failed, target may boot to TTY");
+    }
 
     unbind_mounts();
     return TRUE;
@@ -812,10 +824,10 @@ static gboolean set_passwords(void) {
 
     for (GList *l = app.extra_users; l; l = l->next) {
         ExtraUser *u = l->data;
-        const char *groups = u->sudo ? "sudo,audio,video,netdev" : "audio,video,netdev";
+        const char *groups = u->sudo ? "sudo,audio,video,netdev,tty,input" : "audio,video,netdev,tty,input";
         snprintf(cmd, sizeof(cmd), "chroot /mnt useradd -m -G %s -s %s %s", groups, app.shell_bin, u->name);
         if (run_cmd(cmd) != 0) {
-            snprintf(cmd, sizeof(cmd), "chroot /mnt useradd -m -G audio,video -s %s %s", app.shell_bin, u->name);
+            snprintf(cmd, sizeof(cmd), "chroot /mnt useradd -m -G audio,video,tty,input -s %s %s", app.shell_bin, u->name);
             if (run_cmd(cmd) != 0) { fail_install("useradd failed"); return FALSE; }
         }
         p = popen("chroot /mnt /usr/sbin/chpasswd", "w");
@@ -1754,11 +1766,7 @@ static GtkWidget *page_disk(void) {
 
 static void on_luks_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
-    if (gtk_toggle_button_get_active(btn)) {
-        gtk_widget_show_all(app.luks_box);
-    } else {
-        gtk_widget_hide(app.luks_box);
-    }
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), gtk_toggle_button_get_active(btn));
 }
 
 static void refresh_part_list_view(void) {
@@ -1802,14 +1810,9 @@ static void rescan_existing_partitions(void) {
 static void on_part_advanced_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
     gboolean advanced = gtk_toggle_button_get_active(btn);
-    if (advanced) {
-        gtk_widget_hide(app.auto_box);
-        gtk_widget_show_all(app.custom_box);
-        rescan_existing_partitions();
-    } else {
-        gtk_widget_hide(app.custom_box);
-        gtk_widget_show_all(app.auto_box);
-    }
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app.custom_revealer), advanced);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app.auto_revealer), !advanced);
+    if (advanced) rescan_existing_partitions();
 }
 
 static void on_add_custom_partition(GtkButton *btn, gpointer data) {
@@ -1964,6 +1967,11 @@ static GtkWidget *page_partitioning(void) {
     gtk_box_pack_start(GTK_BOX(app.auto_box), layout_hdr, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(app.auto_box), layout_grid, FALSE, FALSE, 0);
 
+    app.auto_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(app.auto_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    gtk_container_add(GTK_CONTAINER(app.auto_revealer), app.auto_box);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app.auto_revealer), TRUE);
+
     /* --- Advanced partitioning group --- */
     app.custom_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_name(app.custom_box, "part-group");
@@ -2011,8 +2019,11 @@ static GtkWidget *page_partitioning(void) {
     gtk_box_pack_start(GTK_BOX(app.custom_box), custom_info, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(app.custom_box), scroll, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(app.custom_box), part_btn_row, FALSE, FALSE, 0);
-    gtk_widget_set_no_show_all(app.custom_box, TRUE);
-    gtk_widget_hide(app.custom_box);
+
+    app.custom_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(app.custom_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    gtk_container_add(GTK_CONTAINER(app.custom_revealer), app.custom_box);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app.custom_revealer), FALSE);
 
     GtkWidget *sep = gtk_label_new("Encryption & LVM");
     gtk_widget_set_name(sep, "title-label");
@@ -2043,19 +2054,21 @@ static GtkWidget *page_partitioning(void) {
     gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass_entry, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Confirm"), 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass2_entry, 1, 1, 1, 1);
-    gtk_widget_set_no_show_all(app.luks_box, TRUE);
-    gtk_widget_hide(app.luks_box);
-    on_luks_toggled(GTK_TOGGLE_BUTTON(app.luks_check), NULL);
+
+    app.luks_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(app.luks_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    gtk_container_add(GTK_CONTAINER(app.luks_revealer), app.luks_box);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), FALSE);
 
     gtk_box_pack_start(GTK_BOX(crypt_group), app.lvm_check, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_revealer, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_auto, FALSE, FALSE, 6);
-    gtk_box_pack_start(GTK_BOX(box), app.auto_box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.auto_revealer, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 6);
-    gtk_box_pack_start(GTK_BOX(box), app.custom_box, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), sep, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), crypt_group, FALSE, FALSE, 0);
 
@@ -2314,7 +2327,7 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_size_request(app.progress_bar, -1, 34);
     g_signal_connect_after(app.progress_bar, "draw", G_CALLBACK(on_progress_draw), NULL);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_size_request(scroll, 760, 480);
+    gtk_widget_set_size_request(scroll, 700, 400);
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);

@@ -39,10 +39,20 @@ viewport {
 }
 
 #part-group {
-    background-color: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(61, 255, 210, 0.18);
+    background-color: #eef3f2;
+    border: 1px solid #9fb3b3;
     border-radius: 8px;
     padding: 12px 14px;
+}
+
+#part-group label,
+#part-group #group-label {
+    color: #10201c;
+}
+
+#part-group check,
+#part-group radio {
+    color: #10201c;
 }
 
 #dark-entry {
@@ -62,9 +72,10 @@ viewport {
 combobox,
 combobox button,
 combobox box,
-combobox arrow {
-    background-color: #0f2535;
-    color: #ffffff;
+combobox arrow,
+combobox entry {
+    background-color: #0f2535 !important;
+    color: #ffffff !important;
     border: 1px solid #2a6060;
     border-radius: 6px;
     min-width: 200px;
@@ -75,13 +86,39 @@ combobox button:hover {
     border-color: #3dffd2;
 }
 
-/* combo box popup list */
+/* The combo box popup list is a separate top-level popup surface, not a
+   descendant of "combobox" in the widget tree, so it must be targeted
+   generically rather than scoped under combobox. This app is entirely
+   dark-themed, so styling all popups/menus dark is safe app-wide. */
+window.background.popup,
+menu,
+.popup,
 combobox window,
-combobox popover,
-combobox list,
-combobox row {
-    background-color: #0d1f2d;
+combobox popover {
+    background-color: #0d1f2d !important;
+    color: #ffffff !important;
+    border: 1px solid #2a6060;
+}
+
+window.background.popup list,
+window.background.popup row,
+menu menuitem,
+.popup list,
+.popup row {
+    background-color: transparent;
     color: #ffffff;
+}
+
+window.background.popup row:hover,
+menu menuitem:hover,
+.popup row:hover {
+    background-color: rgba(61, 255, 210, 0.18);
+}
+
+window.background.popup row:selected,
+.popup row:selected {
+    background-color: #3dffd2;
+    color: #0d1f2d;
 }
 
 #nav-button {
