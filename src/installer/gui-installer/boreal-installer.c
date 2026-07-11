@@ -75,6 +75,7 @@ typedef struct {
     gboolean net_skipped;
     GtkWidget *steps_popover;
     GtkWidget *auto_revealer, *custom_revealer, *luks_revealer;
+    GtkWidget *log_scroll;
 
     GList *extra_users;
 
@@ -116,10 +117,23 @@ static gboolean log_idle(gpointer data) {
     gtk_text_buffer_get_end_iter(app.log_buffer, &end);
     gtk_text_buffer_insert(app.log_buffer, &end, m->text, -1);
     gtk_text_buffer_insert(app.log_buffer, &end, "\n", -1);
-    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
-    gtk_text_buffer_place_cursor(app.log_buffer, &end);
-    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
-    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
+
+    gboolean at_bottom = TRUE;
+    if (app.log_scroll) {
+        GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app.log_scroll));
+        if (vadj) {
+            double value = gtk_adjustment_get_value(vadj);
+            double page = gtk_adjustment_get_page_size(vadj);
+            double upper = gtk_adjustment_get_upper(vadj);
+            at_bottom = (value + page >= upper - 24.0);
+        }
+    }
+    if (at_bottom) {
+        gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+        gtk_text_buffer_place_cursor(app.log_buffer, &end);
+        GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
+        gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
+    }
     g_free(m->text);
     g_free(m);
     return FALSE;
@@ -249,9 +263,17 @@ static gboolean on_dialog_size_allocate(GtkWidget *widget, GdkRectangle *alloc, 
 static void style_dialog(GtkWidget *dlg) {
     gtk_widget_set_name(dlg, "boreal-dialog");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     GdkScreen *screen = gtk_widget_get_screen(dlg);
     GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
     if (visual) gtk_widget_set_visual(dlg, visual);
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    GtkWidget *action_area = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
+    if (action_area) {
+        gtk_widget_hide(action_area);
+        gtk_widget_set_no_show_all(action_area, TRUE);
+    }
+    G_GNUC_END_IGNORE_DEPRECATIONS
     g_signal_connect(dlg, "realize", G_CALLBACK(on_dialog_realize), NULL);
     g_signal_connect(dlg, "size-allocate", G_CALLBACK(on_dialog_size_allocate), NULL);
 }
@@ -912,7 +934,7 @@ static gboolean set_passwords(void) {
 }
 
 static gboolean remove_live_boot(void) {
-    STEP("Removing live-boot components");
+    STEP("Finalizing system");
     run_cmd("chroot /mnt dpkg -r --force-depends live-boot live-boot-initramfs-tools live-config live-config-systemd");
     run_cmd("find /mnt/usr/share/initramfs-tools /mnt/etc/initramfs-tools /mnt/etc/grub.d -name '*live*' -delete");
     run_cmd("rm -rf /mnt/lib/live /mnt/usr/lib/live");
@@ -1194,7 +1216,7 @@ static void *install_thread(void *arg) {
         {"Writing network config", write_network, 0.60},
         {"Configuring system", configure_system, 0.68},
         {"Setting passwords", set_passwords, 0.72},
-        {"Removing live-boot", remove_live_boot, 0.85},
+        {"Finalizing system", remove_live_boot, 0.85},
         {"Restoring inittab", restore_inittab, 0.87},
         {"Configuring desktop", setup_de, 0.90},
         {"Installing GRUB", install_grub, 0.97},
@@ -1223,7 +1245,6 @@ static void collect_state_from_ui(void) {
     sync_selected_disk();
     app.use_lvm = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.lvm_check));
     app.use_luks = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check));
-    strncpy(app.luks_pass, gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry)), sizeof(app.luks_pass) - 1);
     app.advanced_part = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.part_advanced));
     app.wipe_disk = app.advanced_part ? FALSE : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.wipe_erase));
     app.layout_mode = gtk_combo_box_get_active(GTK_COMBO_BOX(app.layout_combo));
@@ -1363,13 +1384,9 @@ static gboolean validate_page(int idx) {
                 return FALSE;
             }
         }
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check))) {
-            const char *p1 = gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry));
-            const char *p2 = gtk_entry_get_text(GTK_ENTRY(app.luks_pass2_entry));
-            if (!p1[0] || strcmp(p1, p2)) {
-                show_message("Warning", "Enter a matching encryption passphrase.", FALSE);
-                return FALSE;
-            }
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check)) && !app.luks_pass[0]) {
+            show_message("Warning", "Enter an encryption passphrase.", FALSE);
+            return FALSE;
         }
         for (GList *l = app.planned_parts; l; l = l->next) {
             PlannedPart *p = l->data;
@@ -1414,6 +1431,80 @@ static void refresh_wifi_list(void);
 static gboolean page_should_skip(int idx) {
     if (!strcmp(PAGE_ORDER[idx], "wifi") && strcmp(app.net_type, "wifi") != 0) return TRUE;
     return FALSE;
+}
+
+static GtkCssProvider *g_a11y_provider = NULL;
+
+static void apply_a11y_css(int font_pct, gboolean high_contrast) {
+    if (g_a11y_provider) {
+        gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(g_a11y_provider));
+        g_object_unref(g_a11y_provider);
+        g_a11y_provider = NULL;
+    }
+    GString *css = g_string_new(NULL);
+    g_string_append_printf(css,
+        "window, label, button, entry, checkbutton, radiobutton, combobox { font-size: %d%%; }\n",
+        font_pct);
+    if (high_contrast) {
+        g_string_append(css,
+            "#content-panel { background-color: #000000; }\n"
+            "#content-panel label { color: #ffffff; }\n"
+            "#part-group { background-color: #000000; border: 2px solid #ffffff; }\n"
+            "#part-group label, #part-group #group-label { color: #ffffff; }\n"
+            "#title-label { color: #ffff00; }\n"
+            "#nav-button { background-color: #ffffff; border: 2px solid #000000; }\n"
+            "#nav-button label { color: #000000; }\n"
+            "#primary-button { background-color: #ffff00; border: 2px solid #000000; }\n"
+            "#primary-button label { color: #000000; }\n"
+            "#dark-entry { background-color: #000000; color: #ffffff; border: 2px solid #ffffff; }\n"
+            "combobox { background-color: #ffffff; border: 2px solid #000000; }\n");
+    }
+    g_a11y_provider = gtk_css_provider_new();
+    GError *err = NULL;
+    gtk_css_provider_load_from_data(g_a11y_provider, css->str, (gint)css->len, &err);
+    if (err) g_error_free(err);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(g_a11y_provider), GTK_STYLE_PROVIDER_PRIORITY_USER + 10);
+    g_string_free(css, TRUE);
+}
+
+typedef struct { GtkWidget *scale; GtkWidget *contrast_check; } A11yState;
+
+static void on_a11y_changed(GtkWidget *w, gpointer data) {
+    (void)w;
+    A11yState *s = data;
+    int pct = (int)gtk_range_get_value(GTK_RANGE(s->scale));
+    gboolean hc = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(s->contrast_check));
+    apply_a11y_css(pct, hc);
+}
+
+static GtkWidget *build_a11y_popover(GtkWidget *relative_to) {
+    GtkWidget *pop = gtk_popover_new(relative_to);
+    gtk_widget_set_name(pop, "boreal-dialog");
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 14);
+    gtk_widget_set_size_request(box, 240, -1);
+
+    GtkWidget *lbl = gtk_label_new("Text size");
+    gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+    GtkWidget *scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 80, 160, 10);
+    gtk_range_set_value(GTK_RANGE(scale), 100);
+    gtk_scale_set_value_pos(GTK_SCALE(scale), GTK_POS_RIGHT);
+
+    GtkWidget *contrast_check = gtk_check_button_new_with_label("High contrast mode");
+
+    A11yState *s = g_new0(A11yState, 1);
+    s->scale = scale;
+    s->contrast_check = contrast_check;
+    g_signal_connect(scale, "value-changed", G_CALLBACK(on_a11y_changed), s);
+    g_signal_connect(contrast_check, "toggled", G_CALLBACK(on_a11y_changed), s);
+
+    gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), scale, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), contrast_check, FALSE, FALSE, 4);
+    gtk_container_add(GTK_CONTAINER(pop), box);
+    gtk_widget_show_all(box);
+    return pop;
 }
 
 static void goto_page(int idx);
@@ -1838,7 +1929,70 @@ static GtkWidget *page_disk(void) {
 
 static void on_luks_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), gtk_toggle_button_get_active(btn));
+    if (!gtk_toggle_button_get_active(btn)) {
+        app.luks_pass[0] = 0;
+        return;
+    }
+
+    GtkWidget *dlg = gtk_dialog_new();
+    gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(app.window));
+    gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
+    gtk_window_set_title(GTK_WINDOW(dlg), "Encryption passphrase");
+    gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
+    style_dialog(dlg);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    gtk_container_set_border_width(GTK_CONTAINER(content), 18);
+    gtk_box_set_spacing(GTK_BOX(content), 12);
+
+    GtkWidget *title = gtk_label_new("Encrypt root with LUKS");
+    gtk_widget_set_name(title, "title-label");
+    gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    GtkWidget *e1 = gtk_entry_new();
+    gtk_widget_set_name(e1, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(e1), FALSE);
+    GtkWidget *e2 = gtk_entry_new();
+    gtk_widget_set_name(e2, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(e2), FALSE);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Passphrase"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), e1, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), e2, 1, 1, 1, 1);
+    gtk_box_pack_start(GTK_BOX(content), grid, FALSE, FALSE, 0);
+
+    GtkWidget *btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_row, GTK_ALIGN_CENTER);
+    GtkWidget *cancel = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_name(cancel, "nav-button");
+    g_signal_connect(cancel, "clicked", G_CALLBACK(on_msg_response_no), dlg);
+    GtkWidget *ok = gtk_button_new_with_label("OK");
+    gtk_widget_set_name(ok, "primary-button");
+    g_signal_connect(ok, "clicked", G_CALLBACK(on_msg_response_yes), dlg);
+    gtk_box_pack_start(GTK_BOX(btn_row), cancel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(btn_row), ok, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), btn_row, FALSE, FALSE, 0);
+
+    gtk_widget_show_all(dlg);
+    gboolean confirmed = FALSE;
+    while (TRUE) {
+        int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        if (resp != GTK_RESPONSE_YES) break;
+        const char *p1 = gtk_entry_get_text(GTK_ENTRY(e1));
+        const char *p2 = gtk_entry_get_text(GTK_ENTRY(e2));
+        if (!p1[0] || strcmp(p1, p2)) {
+            show_message("Warning", "Passphrases are empty or don't match.", FALSE);
+            continue;
+        }
+        strncpy(app.luks_pass, p1, sizeof(app.luks_pass) - 1);
+        confirmed = TRUE;
+        break;
+    }
+    gtk_widget_destroy(dlg);
+    if (!confirmed) gtk_toggle_button_set_active(btn, FALSE);
 }
 
 static void refresh_part_list_view(void) {
@@ -2050,6 +2204,7 @@ static GtkWidget *page_partitioning(void) {
     app.part_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     app.part_tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(app.part_store));
     gtk_widget_set_name(app.part_tree_view, "dark-listbox");
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(app.part_tree_view), FALSE);
 
     GtkCellRenderer *r0 = gtk_cell_renderer_text_new();
     gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Device", r0, "text", 0, NULL);
@@ -2113,6 +2268,7 @@ static GtkWidget *page_partitioning(void) {
 
     GtkWidget *crypt_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_widget_set_name(crypt_card, "part-group");
+    gtk_widget_set_valign(crypt_card, GTK_ALIGN_START);
     GtkWidget *crypt_hdr = gtk_label_new("Encryption");
     gtk_widget_set_name(crypt_hdr, "group-label");
     gtk_widget_set_halign(crypt_hdr, GTK_ALIGN_START);
@@ -2120,29 +2276,8 @@ static GtkWidget *page_partitioning(void) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.luks_check), FALSE);
     g_signal_connect(app.luks_check, "toggled", G_CALLBACK(on_luks_toggled), NULL);
 
-    app.luks_box = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(app.luks_box), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(app.luks_box), 12);
-    gtk_widget_set_margin_top(app.luks_box, 4);
-    app.luks_pass_entry = gtk_entry_new();
-    gtk_widget_set_name(app.luks_pass_entry, "dark-entry");
-    gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass_entry), FALSE);
-    app.luks_pass2_entry = gtk_entry_new();
-    gtk_widget_set_name(app.luks_pass2_entry, "dark-entry");
-    gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass2_entry), FALSE);
-    gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Passphrase"), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass_entry, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Confirm"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass2_entry, 1, 1, 1, 1);
-
-    app.luks_revealer = gtk_revealer_new();
-    gtk_revealer_set_transition_type(GTK_REVEALER(app.luks_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    gtk_container_add(GTK_CONTAINER(app.luks_revealer), app.luks_box);
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), FALSE);
-
     gtk_box_pack_start(GTK_BOX(crypt_card), crypt_hdr, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(crypt_card), app.luks_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypt_card), app.luks_revealer, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(crypt_row), lvm_card, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(crypt_row), crypt_card, TRUE, TRUE, 0);
@@ -2409,7 +2544,9 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_size_request(app.progress_bar, -1, 34);
     g_signal_connect_after(app.progress_bar, "draw", G_CALLBACK(on_progress_draw), NULL);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_name(scroll, "log-scroll");
     gtk_widget_set_size_request(scroll, 700, 400);
+    app.log_scroll = scroll;
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
@@ -2559,10 +2696,17 @@ int main(int argc, char **argv) {
     GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(nav), 12);
     app.btn_cancel = gtk_menu_button_new();
-    gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Steps \xE2\x96\xBE");
+    gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Steps");
     gtk_widget_set_name(app.btn_cancel, "nav-button");
     app.steps_popover = build_steps_popover(app.btn_cancel);
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(app.btn_cancel), app.steps_popover);
+
+    GtkWidget *btn_a11y = gtk_menu_button_new();
+    gtk_button_set_label(GTK_BUTTON(btn_a11y), "Accessibility");
+    gtk_widget_set_name(btn_a11y, "nav-button");
+    GtkWidget *a11y_popover = build_a11y_popover(btn_a11y);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(btn_a11y), a11y_popover);
+
     app.btn_back = gtk_button_new_with_label("Back");
     gtk_widget_set_name(app.btn_back, "nav-button");
     g_signal_connect(app.btn_back, "clicked", G_CALLBACK(on_back), NULL);
@@ -2571,6 +2715,7 @@ int main(int argc, char **argv) {
     g_signal_connect(app.btn_next, "clicked", G_CALLBACK(on_next), NULL);
 
     gtk_box_pack_start(GTK_BOX(nav), app.btn_cancel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(nav), btn_a11y, FALSE, FALSE, 0);
     GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_pack_start(GTK_BOX(nav), spacer, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(nav), app.btn_back, FALSE, FALSE, 0);

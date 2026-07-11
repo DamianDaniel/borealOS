@@ -192,11 +192,14 @@ combobox row:selected {
     color: #ffffff;
 }
 
+#log-scroll {
+    border: 1px solid #2a6060;
+    border-radius: 6px;
+}
+
 #log-view {
     background-color: transparent;
     color: #b2f0e8;
-    border: 1px solid #2a6060;
-    border-radius: 6px;
 }
 
 #log-view text {
