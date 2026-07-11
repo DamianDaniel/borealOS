@@ -74,30 +74,34 @@ combobox button,
 combobox box,
 combobox arrow,
 combobox entry {
-    background-color: #0f2535 !important;
-    color: #ffffff !important;
-    border: 1px solid #2a6060;
+    background-color: #dfe6e6 !important;
+    color: #000000 !important;
+    border: 1px solid #9fb3b3;
     border-radius: 6px;
     min-width: 200px;
 }
 
+combobox label {
+    color: #000000 !important;
+}
+
 combobox:hover,
 combobox button:hover {
+    background-color: #eef3f3 !important;
     border-color: #3dffd2;
 }
 
 /* The combo box popup list is a separate top-level popup surface, not a
    descendant of "combobox" in the widget tree, so it must be targeted
-   generically rather than scoped under combobox. This app is entirely
-   dark-themed, so styling all popups/menus dark is safe app-wide. */
+   generically rather than scoped under combobox. */
 window.background.popup,
 menu,
 .popup,
 combobox window,
 combobox popover {
-    background-color: #0d1f2d !important;
-    color: #ffffff !important;
-    border: 1px solid #2a6060;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid #9fb3b3;
 }
 
 window.background.popup list,
@@ -106,13 +110,13 @@ menu menuitem,
 .popup list,
 .popup row {
     background-color: transparent;
-    color: #ffffff;
+    color: #000000;
 }
 
 window.background.popup row:hover,
 menu menuitem:hover,
 .popup row:hover {
-    background-color: rgba(61, 255, 210, 0.18);
+    background-color: #eef3f3;
 }
 
 window.background.popup row:selected,
