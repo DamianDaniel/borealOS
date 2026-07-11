@@ -798,7 +798,7 @@ apt-get install -y --no-install-recommends \
     $SHELL_PKG
 
 if [ "$DE_NAME" != "None" ]; then
-apt-get install -y \
+apt-get install -y --no-install-recommends \
     xserver-xorg xserver-xorg-core xserver-xorg-legacy \
     xserver-xorg-input-all \
     xserver-xorg-input-libinput \
@@ -837,8 +837,8 @@ if [ -n "$DE_PKGS" ]; then
 fi
 
 if [ "$DE_NAME" != "None" ]; then
-    apt-get install -y fastfetch || echo "FAILED: fastfetch install, see error above"
-    apt-get install -y kitty || { echo "FATAL: kitty install failed, see error above"; exit 1; }
+    apt-get install -y --no-install-recommends fastfetch || echo "FAILED: fastfetch install, see error above"
+    apt-get install -y --no-install-recommends kitty || { echo "FATAL: kitty install failed, see error above"; exit 1; }
     command -v kitty >/dev/null 2>&1 || { echo "FATAL: kitty binary missing after install"; exit 1; }
 
     if command -v kitty >/dev/null 2>&1; then
@@ -861,8 +861,9 @@ fi
 # Also cache the user's chosen DM debs (sddm for KDE etc.) if different
 mkdir -p /opt/borealOS/debs
 if [ -n "$DM_PKGS" ]; then
-    apt-get install -y --download-only $DM_PKGS 2>/dev/null || true
+    apt-get install -y --no-install-recommends --download-only $DM_PKGS 2>/dev/null || true
 fi
+rm -f /var/cache/apt/archives/plymouth*.deb /var/cache/apt/archives/libplymouth*.deb 2>/dev/null || true
 cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
 
 echo 'root:borealOS' | /usr/sbin/chpasswd

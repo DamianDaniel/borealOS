@@ -159,6 +159,12 @@ static void set_progress(double frac, const char *label) {
     g_idle_add(prog_idle, m);
 }
 
+static void run_cmd_quiet(const char *cmd) {
+    char full[4096];
+    snprintf(full, sizeof(full), "%s </dev/null >/dev/null 2>&1", cmd);
+    system(full);
+}
+
 static int run_cmd(const char *cmd) {
     log_line("$ %s", cmd);
     char full[4096];
@@ -272,16 +278,15 @@ static int show_message(const char *title, const char *message, gboolean yes_no)
     gtk_window_set_title(GTK_WINDOW(dlg), title);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 420, -1);
     style_dialog(dlg);
 
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    gtk_container_set_border_width(GTK_CONTAINER(content), 24);
-    gtk_box_set_spacing(GTK_BOX(content), 18);
+    gtk_container_set_border_width(GTK_CONTAINER(content), 18);
+    gtk_box_set_spacing(GTK_BOX(content), 14);
 
     GtkWidget *label = gtk_label_new(message);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(label), 50);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 40);
     gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
     gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
     gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
@@ -593,7 +598,7 @@ static gboolean partition_disk(void) {
         write_file("/tmp/borealkey", app.luks_pass);
         run_cmd("chmod 600 /tmp/borealkey");
         snprintf(cmd, sizeof(cmd),
-            "cryptsetup luksFormat --type luks2 -q %s --key-file=/tmp/borealkey", app.root_part);
+            "cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 -q %s --key-file=/tmp/borealkey", app.root_part);
         int fmt_rc = run_cmd(cmd);
         if (fmt_rc != 0) { run_cmd("shred -u /tmp/borealkey"); fail_install("luksFormat failed"); return FALSE; }
         snprintf(cmd, sizeof(cmd),
@@ -694,6 +699,7 @@ static gboolean rsync_system(void) {
 }
 
 static void bind_mounts(void) {
+    run_cmd("mkdir -p /mnt/dev /mnt/proc /mnt/sys /mnt/run");
     run_cmd("mount --bind /dev /mnt/dev");
     run_cmd("mount --bind /proc /mnt/proc");
     run_cmd("mount --bind /sys /mnt/sys");
@@ -706,7 +712,7 @@ static void unbind_mounts(void) {
 }
 
 static gboolean install_bundled_packages(void) {
-    STEP("Installing display manager into target");
+    STEP("Installing packages");
     bind_mounts();
     run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
 
@@ -716,6 +722,7 @@ static gboolean install_bundled_packages(void) {
     if (run_cmd("ls /opt/borealOS/debs/*.deb >/dev/null 2>&1") == 0) {
         run_cmd("mkdir -p /mnt/var/cache/boreal-debs");
         run_cmd("cp /opt/borealOS/debs/*.deb /mnt/var/cache/boreal-debs/");
+        run_cmd("rm -f /mnt/var/cache/boreal-debs/plymouth*.deb /mnt/var/cache/boreal-debs/libplymouth*.deb");
         if (run_cmd("chroot /mnt bash -c 'dpkg -i /var/cache/boreal-debs/*.deb; apt-get install -f -y'") != 0)
             log_line("WARN: offline display manager install had errors, see log");
         run_cmd("rm -rf /mnt/var/cache/boreal-debs");
@@ -1182,7 +1189,7 @@ static void *install_thread(void *arg) {
         {"Partitioning disk", partition_disk, 0.10},
         {"Mounting target", mount_target, 0.15},
         {"Copying system (can take a while)", rsync_system, 0.45},
-        {"Installing display manager", install_bundled_packages, 0.55},
+        {"Installing packages", install_bundled_packages, 0.55},
         {"Writing fstab", write_fstab, 0.58},
         {"Writing network config", write_network, 0.60},
         {"Configuring system", configure_system, 0.68},
@@ -1193,8 +1200,6 @@ static void *install_thread(void *arg) {
         {"Installing GRUB", install_grub, 0.97},
         {"Verifying", verify_install, 1.00},
     };
-    bind_mounts();
-    unbind_mounts();
     for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
         set_progress(steps[i].frac - 0.02, steps[i].name);
         gboolean use_bind = (steps[i].fn == configure_system || steps[i].fn == set_passwords ||
@@ -1609,7 +1614,7 @@ static void refresh_iface_list(void) {
 
 static void refresh_wifi_list(void) {
     gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(app.wifi_ssid_combo));
-    run_cmd("nmcli device wifi rescan 2>/dev/null");
+    run_cmd_quiet("nmcli device wifi rescan 2>/dev/null");
     char *out = run_capture("nmcli -t -f SSID device wifi list 2>/dev/null | awk 'NF && !seen[$0]++'");
     if (!out) return;
     gchar **lines = g_strsplit(out, "\n", -1);
@@ -1727,7 +1732,6 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     gtk_window_set_title(GTK_WINDOW(dlg), "Add user");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_container_set_border_width(GTK_CONTAINER(content), 20);
@@ -1890,7 +1894,6 @@ static void on_add_custom_partition(GtkButton *btn, gpointer data) {
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_container_set_border_width(GTK_CONTAINER(content), 20);
@@ -2093,16 +2096,13 @@ static GtkWidget *page_partitioning(void) {
     gtk_container_add(GTK_CONTAINER(app.custom_revealer), app.custom_box);
     gtk_revealer_set_reveal_child(GTK_REVEALER(app.custom_revealer), FALSE);
 
-    GtkWidget *sep = gtk_label_new("Encryption & LVM");
-    gtk_widget_set_name(sep, "title-label");
-    gtk_widget_set_halign(sep, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(sep, 12);
-
     GtkWidget *crypt_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_set_margin_start(crypt_row, 20);
+    gtk_widget_set_margin_top(crypt_row, 12);
 
     GtkWidget *lvm_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_widget_set_name(lvm_card, "part-group");
+    gtk_widget_set_valign(lvm_card, GTK_ALIGN_START);
     GtkWidget *lvm_hdr = gtk_label_new("LVM");
     gtk_widget_set_name(lvm_hdr, "group-label");
     gtk_widget_set_halign(lvm_hdr, GTK_ALIGN_START);
@@ -2152,7 +2152,6 @@ static GtkWidget *page_partitioning(void) {
     gtk_box_pack_start(GTK_BOX(box), app.auto_revealer, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 6);
     gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(box), sep, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), crypt_row, FALSE, FALSE, 0);
 
     GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
@@ -2600,7 +2599,6 @@ int main(int argc, char **argv) {
         gtk_window_move(GTK_WINDOW(app.window), 0, 0);
     }
     gtk_widget_hide(app.net_static_box);
-    refresh_wifi_list();
 
     GdkWindow *gdkwin = gtk_widget_get_window(app.window);
     if (gdkwin) {

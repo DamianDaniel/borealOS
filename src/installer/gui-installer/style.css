@@ -164,6 +164,17 @@ combobox row:selected {
     color: #ffffff;
 }
 
+#dark-listbox button {
+    background-color: #0f2535;
+    color: #ffffff;
+    border: 1px solid #2a6060;
+    padding: 6px 8px;
+}
+
+#dark-listbox button:hover {
+    background-color: #123047;
+}
+
 #dark-listbox row {
     padding: 4px 6px;
 }
@@ -184,6 +195,8 @@ combobox row:selected {
 #log-view {
     background-color: transparent;
     color: #b2f0e8;
+    border: 1px solid #2a6060;
+    border-radius: 6px;
 }
 
 #log-view text {
@@ -213,7 +226,6 @@ combobox row:selected {
     background-color: #0d1f2d;
     border: 2px solid #2a6060;
     border-radius: 8px;
-    min-width: 360px;
 }
 
 #boreal-dialog.csd {
