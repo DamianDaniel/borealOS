@@ -39,20 +39,15 @@ viewport {
 }
 
 #part-group {
-    background-color: #eef3f2;
-    border: 1px solid #9fb3b3;
+    background-color: rgba(61, 255, 210, 0.07);
+    border: 1px solid rgba(61, 255, 210, 0.28);
     border-radius: 8px;
     padding: 12px 14px;
 }
 
 #part-group label,
 #part-group #group-label {
-    color: #10201c;
-}
-
-#part-group check,
-#part-group radio {
-    color: #10201c;
+    color: #e8f7f4;
 }
 
 #dark-entry {
@@ -69,9 +64,7 @@ viewport {
     border-color: #3dffd2;
 }
 
-combobox,
-combobox button,
-combobox box {
+combobox {
     background-color: #dfe6e6;
     color: #000000;
     border: 1px solid #9fb3b3;
@@ -79,12 +72,20 @@ combobox box {
     min-width: 200px;
 }
 
+combobox button,
+combobox box,
+combobox arrow {
+    background-color: transparent;
+    color: #000000;
+    border: none;
+    box-shadow: none;
+}
+
 combobox label {
     color: #000000;
 }
 
-combobox:hover,
-combobox button:hover {
+combobox:hover {
     background-color: #eef3f3;
     border-color: #3dffd2;
 }
@@ -186,7 +187,7 @@ combobox row:selected {
 }
 
 #log-view text {
-    background-color: rgba(10, 26, 36, 0.92);
+    background-color: transparent;
     color: #b2f0e8;
 }
 
@@ -196,12 +197,14 @@ combobox row:selected {
 
 #boreal-progress trough {
     background-color: #0f2535;
+    border: 1px solid #2a6060;
     border-radius: 6px;
     min-height: 34px;
 }
 
 #boreal-progress progress {
     background-color: #3dffd2;
+    border: none;
     border-radius: 6px;
     min-height: 34px;
 }

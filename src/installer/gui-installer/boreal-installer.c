@@ -87,6 +87,29 @@ static App app;
 typedef struct { char *text; } LogMsg;
 typedef struct { double frac; char *label; } ProgMsg;
 
+static FILE *g_install_log_fp = NULL;
+static gboolean g_log_relocated = FALSE;
+
+static void ensure_log_file(void) {
+    if (g_install_log_fp) return;
+    g_install_log_fp = fopen("/tmp/boreal-install.log", "a");
+}
+
+/* The log starts on the live system (target disk isn't mounted yet at
+   startup). Once /mnt is mounted, move logging onto the installed system
+   itself so the log ends up on disk, not just in the live/RAM environment. */
+static void relocate_log_to_target(void) {
+    if (g_log_relocated) return;
+    g_log_relocated = TRUE;
+    if (system("mkdir -p /mnt/logs") != 0) return;
+    if (g_install_log_fp) {
+        fflush(g_install_log_fp);
+        system("cp /tmp/boreal-install.log /mnt/logs/system-install 2>/dev/null");
+        fclose(g_install_log_fp);
+    }
+    g_install_log_fp = fopen("/mnt/logs/system-install", "a");
+}
+
 static gboolean log_idle(gpointer data) {
     LogMsg *m = data;
     GtkTextIter end;
@@ -108,6 +131,12 @@ static void log_line(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+    ensure_log_file();
+    if (g_install_log_fp) {
+        fputs(buf, g_install_log_fp);
+        fputc('\n', g_install_log_fp);
+        fflush(g_install_log_fp);
+    }
     LogMsg *m = g_new0(LogMsg, 1);
     m->text = g_strdup(buf);
     g_idle_add(log_idle, m);
@@ -136,12 +165,26 @@ static int run_cmd(const char *cmd) {
     snprintf(full, sizeof(full), "DEBIAN_FRONTEND=noninteractive %s </dev/null 2>&1", cmd);
     FILE *fp = popen(full, "r");
     if (!fp) { log_line("failed to spawn command"); return -1; }
-    char line[1024];
-    while (fgets(line, sizeof(line), fp)) {
-        size_t l = strlen(line);
-        if (l && line[l - 1] == '\n') line[l - 1] = 0;
-        log_line("%s", line);
+    GString *cur = g_string_new(NULL);
+    int c;
+    while ((c = fgetc(fp)) != EOF) {
+        if (c == '\n') {
+            if (cur->len) log_line("%s", cur->str);
+            g_string_truncate(cur, 0);
+        } else if (c == '\r') {
+            /* Progress spinners rewrite the line with \r; only the final
+               state before a real newline matters, so drop what came before. */
+            g_string_truncate(cur, 0);
+        } else if (c == '\b') {
+            if (cur->len > 0) g_string_truncate(cur, cur->len - 1);
+        } else if ((unsigned char)c < 0x20 || (unsigned char)c == 0x7f) {
+            /* drop other control/escape bytes, they render as garbage glyphs */
+        } else {
+            g_string_append_c(cur, (char)c);
+        }
     }
+    if (cur->len) log_line("%s", cur->str);
+    g_string_free(cur, TRUE);
     int status = pclose(fp);
     return WEXITSTATUS(status);
 }
@@ -174,6 +217,29 @@ static void on_dialog_realize(GtkWidget *widget, gpointer data) {
     }
 }
 
+static gboolean on_dialog_size_allocate(GtkWidget *widget, GdkRectangle *alloc, gpointer data) {
+    (void)data;
+    int w = alloc->width, h = alloc->height;
+    if (w <= 0 || h <= 0) return FALSE;
+    const double r = 10.0;
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_A1, w, h);
+    cairo_t *cr = cairo_create(surface);
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, w - r, r, r, -G_PI / 2, 0);
+    cairo_arc(cr, w - r, h - r, r, 0, G_PI / 2);
+    cairo_arc(cr, r, h - r, r, G_PI / 2, G_PI);
+    cairo_arc(cr, r, r, r, G_PI, 3 * G_PI / 2);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 1);
+    cairo_fill(cr);
+    cairo_destroy(cr);
+    cairo_region_t *region = gdk_cairo_region_create_from_surface(surface);
+    cairo_surface_destroy(surface);
+    gtk_widget_shape_combine_region(widget, region);
+    cairo_region_destroy(region);
+    return FALSE;
+}
+
 static void style_dialog(GtkWidget *dlg) {
     gtk_widget_set_name(dlg, "boreal-dialog");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
@@ -181,6 +247,7 @@ static void style_dialog(GtkWidget *dlg) {
     GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
     if (visual) gtk_widget_set_visual(dlg, visual);
     g_signal_connect(dlg, "realize", G_CALLBACK(on_dialog_realize), NULL);
+    g_signal_connect(dlg, "size-allocate", G_CALLBACK(on_dialog_size_allocate), NULL);
 }
 
 static void on_msg_response_no(GtkWidget *w, gpointer d) {
@@ -205,7 +272,7 @@ static int show_message(const char *title, const char *message, gboolean yes_no)
     gtk_window_set_title(GTK_WINDOW(dlg), title);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_widget_set_size_request(dlg, 420, -1);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 420, -1);
     style_dialog(dlg);
 
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
@@ -581,6 +648,7 @@ static gboolean mount_target(void) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "mount %s /mnt", app.final_root_dev);
     if (run_cmd(cmd) != 0) { fail_install("mount root failed"); return FALSE; }
+    relocate_log_to_target();
     run_cmd("mkdir -p /mnt/boot/efi");
     snprintf(cmd, sizeof(cmd), "mount %s /mnt/boot/efi", app.efi_part);
     if (run_cmd(cmd) != 0) { fail_install("mount EFI failed"); return FALSE; }
@@ -1659,7 +1727,7 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     gtk_window_set_title(GTK_WINDOW(dlg), "Add user");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_widget_set_size_request(dlg, 380, -1);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_container_set_border_width(GTK_CONTAINER(content), 20);
@@ -1822,7 +1890,7 @@ static void on_add_custom_partition(GtkButton *btn, gpointer data) {
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_widget_set_size_request(dlg, 380, -1);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_container_set_border_width(GTK_CONTAINER(content), 20);
@@ -2030,13 +2098,25 @@ static GtkWidget *page_partitioning(void) {
     gtk_widget_set_halign(sep, GTK_ALIGN_START);
     gtk_widget_set_margin_top(sep, 12);
 
-    GtkWidget *crypt_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_widget_set_name(crypt_group, "part-group");
-    gtk_widget_set_margin_start(crypt_group, 20);
+    GtkWidget *crypt_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    gtk_widget_set_margin_start(crypt_row, 20);
 
+    GtkWidget *lvm_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_name(lvm_card, "part-group");
+    GtkWidget *lvm_hdr = gtk_label_new("LVM");
+    gtk_widget_set_name(lvm_hdr, "group-label");
+    gtk_widget_set_halign(lvm_hdr, GTK_ALIGN_START);
     app.lvm_check = gtk_check_button_new_with_label("Use LVM");
-    app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.lvm_check), FALSE);
+    gtk_box_pack_start(GTK_BOX(lvm_card), lvm_hdr, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(lvm_card), app.lvm_check, FALSE, FALSE, 0);
+
+    GtkWidget *crypt_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_name(crypt_card, "part-group");
+    GtkWidget *crypt_hdr = gtk_label_new("Encryption");
+    gtk_widget_set_name(crypt_hdr, "group-label");
+    gtk_widget_set_halign(crypt_hdr, GTK_ALIGN_START);
+    app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.luks_check), FALSE);
     g_signal_connect(app.luks_check, "toggled", G_CALLBACK(on_luks_toggled), NULL);
 
@@ -2060,9 +2140,12 @@ static GtkWidget *page_partitioning(void) {
     gtk_container_add(GTK_CONTAINER(app.luks_revealer), app.luks_box);
     gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), FALSE);
 
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.lvm_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_revealer, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_card), crypt_hdr, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_card), app.luks_check, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_card), app.luks_revealer, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(crypt_row), lvm_card, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_row), crypt_card, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_auto, FALSE, FALSE, 6);
@@ -2070,7 +2153,7 @@ static GtkWidget *page_partitioning(void) {
     gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 6);
     gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), sep, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), crypt_group, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), crypt_row, FALSE, FALSE, 0);
 
     GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
