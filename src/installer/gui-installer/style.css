@@ -192,6 +192,22 @@ combobox row:selected {
     color: #ffffff;
 }
 
+/* GtkTreeView (the partition table) uses a different CSS node structure
+   than GtkListBox for selection - "row" doesn't apply to it, cells do. */
+treeview.view {
+    background-color: transparent;
+}
+
+treeview.view cell {
+    color: #ffffff;
+}
+
+treeview.view:selected,
+treeview.view cell:selected {
+    background-color: #3dffd2;
+    color: #0d1f2d;
+}
+
 #log-scroll {
     border: 1px solid #2a6060;
     border-radius: 6px;

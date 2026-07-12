@@ -811,6 +811,7 @@ apt-get install -y --no-install-recommends \
     libinput-tools \
     libgl1-mesa-dri libgl1 mesa-utils \
     dbus dbus-x11 at-spi2-core \
+    adwaita-icon-theme gnome-themes-extra \
     libinput10 libinput-dev \
     udev
 

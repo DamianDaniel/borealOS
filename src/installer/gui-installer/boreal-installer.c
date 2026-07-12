@@ -1048,6 +1048,7 @@ static gboolean setup_de(void) {
         run_cmd("mkdir -p /mnt/etc/xdg");
         write_file("/mnt/etc/xdg/mimeapps.list",
             "[Default Applications]\ninode/directory=thunar.desktop\n");
+        run_cmd("mkdir -p /mnt/etc/runlevels/default");
         run_cmd("ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm");
         run_cmd("ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm");
         run_cmd("mkdir -p /mnt/etc/lightdm");
@@ -1083,6 +1084,7 @@ static gboolean setup_de(void) {
         write_file("/mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml",
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
             "  <property name=\"Net\" type=\"empty\">\n"
+            "    <property name=\"ThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
             "    <property name=\"IconThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
             "  </property>\n</channel>\n");
         run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
@@ -1092,6 +1094,26 @@ static gboolean setup_de(void) {
         run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
                 "-type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \\) -exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
         run_cmd("mkdir -p /mnt/etc/skel/.config/autostart");
+        write_file("/mnt/usr/local/bin/boreal-set-wallpaper.sh",
+            "#!/bin/sh\n"
+            "# xfdesktop keys its wallpaper by the *actual* connected monitor name,\n"
+            "# which varies by hardware/driver - a static guess-list can miss it.\n"
+            "# Ask xrandr what's really connected and set it directly, every time.\n"
+            "WALLPAPER=/usr/share/boreal-artwork/wallpaper-default.png\n"
+            "[ -f \"$WALLPAPER\" ] || exit 0\n"
+            "sleep 2\n"
+            "MONS=$(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')\n"
+            "for mon in $MONS monitor0; do\n"
+            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/last-image \\\n"
+            "        -n -t string -s \"$WALLPAPER\" 2>/dev/null\n"
+            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/image-style \\\n"
+            "        -n -t int -s 5 2>/dev/null\n"
+            "done\n");
+        run_cmd("chmod 755 /mnt/usr/local/bin/boreal-set-wallpaper.sh");
+        write_file("/mnt/etc/skel/.config/autostart/boreal-set-wallpaper.desktop",
+            "[Desktop Entry]\nType=Application\nName=BorealOS Wallpaper\n"
+            "Exec=/usr/local/bin/boreal-set-wallpaper.sh\nHidden=false\nNoDisplay=true\n"
+            "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
         run_cmd("cp /usr/local/bin/boreal-panel-icon.sh /mnt/usr/local/bin/boreal-panel-icon.sh");
         write_file("/mnt/etc/skel/.config/autostart/boreal-panel-icon.desktop",
             "[Desktop Entry]\nType=Application\nName=BorealOS Panel Icon\n"
@@ -2055,10 +2077,12 @@ static void refresh_part_list_view(void) {
         PlannedPart *p = l->data;
         GtkTreeIter it;
         gtk_list_store_append(app.part_store, &it);
+        char fs_label[64];
+        snprintf(fs_label, sizeof(fs_label), "%s%s", p->fs_type, p->format ? "  (format)" : "");
         gtk_list_store_set(app.part_store, &it,
             0, p->is_new ? "(new)" : p->device,
             1, p->size_spec,
-            2, p->fs_type,
+            2, fs_label,
             3, p->mountpoint,
             4, p->format,
             -1);
@@ -2158,6 +2182,21 @@ static void on_add_custom_partition(GtkButton *btn, gpointer data) {
     gtk_widget_destroy(dlg);
 }
 
+static void on_toggle_format_selected(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view));
+    GtkTreeModel *model;
+    GList *rows = gtk_tree_selection_get_selected_rows(sel, &model);
+    if (!rows) return;
+    for (GList *l = rows; l; l = l->next) {
+        int *indices = gtk_tree_path_get_indices((GtkTreePath *)l->data);
+        PlannedPart *p = g_list_nth_data(app.planned_parts, indices[0]);
+        if (p) p->format = !p->format;
+    }
+    g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+    refresh_part_list_view();
+}
+
 static void on_remove_custom_partition(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view));
@@ -2179,13 +2218,6 @@ static void on_remove_custom_partition(GtkButton *btn, gpointer data) {
     }
     g_list_free(to_remove);
     refresh_part_list_view();
-}
-
-static void on_part_format_toggled(GtkCellRendererToggle *cell, gchar *path_str, gpointer data) {
-    (void)cell; (void)data;
-    int idx = atoi(path_str);
-    PlannedPart *p = g_list_nth_data(app.planned_parts, idx);
-    if (p) { p->format = !p->format; refresh_part_list_view(); }
 }
 
 static void on_part_mountpoint_edited(GtkCellRendererText *cell, gchar *path_str, gchar *new_text, gpointer data) {
@@ -2278,9 +2310,6 @@ static GtkWidget *page_partitioning(void) {
     g_object_set(r3, "editable", TRUE, NULL);
     g_signal_connect(r3, "edited", G_CALLBACK(on_part_mountpoint_edited), NULL);
     gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Mountpoint", r3, "text", 3, NULL);
-    GtkCellRenderer *r4 = gtk_cell_renderer_toggle_new();
-    g_signal_connect(r4, "toggled", G_CALLBACK(on_part_format_toggled), NULL);
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Format", r4, "active", 4, NULL);
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, 640, 240);
@@ -2297,9 +2326,13 @@ static GtkWidget *page_partitioning(void) {
     GtkWidget *rescan_btn = gtk_button_new_with_label("Rescan disk");
     gtk_widget_set_name(rescan_btn, "nav-button");
     g_signal_connect_swapped(rescan_btn, "clicked", G_CALLBACK(rescan_existing_partitions), NULL);
+    GtkWidget *toggle_fmt_btn = gtk_button_new_with_label("Toggle format");
+    gtk_widget_set_name(toggle_fmt_btn, "nav-button");
+    g_signal_connect(toggle_fmt_btn, "clicked", G_CALLBACK(on_toggle_format_selected), NULL);
     gtk_box_pack_start(GTK_BOX(part_btn_row), add_part_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(part_btn_row), remove_part_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(part_btn_row), rescan_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(part_btn_row), toggle_fmt_btn, FALSE, FALSE, 0);
 
     GtkWidget *custom_info = gtk_label_new("Existing partitions need a mountpoint to be used. New partitions are created in free space.");
     gtk_widget_set_halign(custom_info, GTK_ALIGN_START);
@@ -2620,7 +2653,6 @@ static GtkWidget *page_progress(void) {
 
     GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
     g_signal_connect(vadj, "value-changed", G_CALLBACK(on_log_vadj_changed), NULL);
-    g_signal_connect(vadj, "changed", G_CALLBACK(on_log_vadj_changed), NULL);
 
     app.catchup_btn = gtk_button_new_with_label("Catch up");
     gtk_widget_set_name(app.catchup_btn, "primary-button");
@@ -2678,7 +2710,7 @@ static GtkWidget *wrap_page(GtkWidget *content) {
     gtk_widget_set_halign(panel, GTK_ALIGN_CENTER);
     gtk_container_set_border_width(GTK_CONTAINER(panel), 8);
     gtk_box_pack_start(GTK_BOX(panel), content, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, TRUE, 24);
+    gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, FALSE, 24);
     return outer;
 }
 
