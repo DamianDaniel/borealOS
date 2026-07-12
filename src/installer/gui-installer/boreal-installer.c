@@ -2162,15 +2162,23 @@ static void on_remove_custom_partition(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view));
     GtkTreeModel *model;
-    GtkTreeIter it;
-    if (!gtk_tree_selection_get_selected(sel, &model, &it)) return;
-    int idx = gtk_tree_path_get_indices(gtk_tree_model_get_path(model, &it))[0];
-    PlannedPart *p = g_list_nth_data(app.planned_parts, idx);
-    if (p) {
-        app.planned_parts = g_list_remove(app.planned_parts, p);
-        g_free(p);
-        refresh_part_list_view();
+    GList *rows = gtk_tree_selection_get_selected_rows(sel, &model);
+    if (!rows) return;
+    /* Collect the actual PlannedPart pointers first, since removing from
+       app.planned_parts as we go would shift indices for later paths. */
+    GList *to_remove = NULL;
+    for (GList *l = rows; l; l = l->next) {
+        int *indices = gtk_tree_path_get_indices((GtkTreePath *)l->data);
+        PlannedPart *p = g_list_nth_data(app.planned_parts, indices[0]);
+        if (p) to_remove = g_list_prepend(to_remove, p);
     }
+    g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+    for (GList *l = to_remove; l; l = l->next) {
+        app.planned_parts = g_list_remove(app.planned_parts, l->data);
+        g_free(l->data);
+    }
+    g_list_free(to_remove);
+    refresh_part_list_view();
 }
 
 static void on_part_format_toggled(GtkCellRendererToggle *cell, gchar *path_str, gpointer data) {
@@ -2276,6 +2284,7 @@ static GtkWidget *page_partitioning(void) {
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, 640, 240);
+    gtk_tree_selection_set_mode(gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view)), GTK_SELECTION_MULTIPLE);
     gtk_container_add(GTK_CONTAINER(scroll), app.part_tree_view);
 
     GtkWidget *part_btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -2661,8 +2670,12 @@ static GtkWidget *wrap_page(GtkWidget *content) {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_valign(outer, GTK_ALIGN_CENTER);
     gtk_widget_set_halign(outer, GTK_ALIGN_CENTER);
+    gtk_widget_set_vexpand(outer, TRUE);
+    gtk_widget_set_hexpand(outer, TRUE);
     GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_name(panel, "content-panel");
+    gtk_widget_set_valign(panel, GTK_ALIGN_CENTER);
+    gtk_widget_set_halign(panel, GTK_ALIGN_CENTER);
     gtk_container_set_border_width(GTK_CONTAINER(panel), 8);
     gtk_box_pack_start(GTK_BOX(panel), content, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, TRUE, 24);
