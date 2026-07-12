@@ -786,6 +786,7 @@ apt-get install -y --no-install-recommends \
     network-manager ifupdown dhcpcd5 \
     parted dosfstools e2fsprogs \
     cryptsetup cryptsetup-initramfs lvm2 \
+    btrfs-progs xfsprogs \
     passwd sudo \
     bash bash-completion \
     iproute2 iputils-ping net-tools \
@@ -798,7 +799,7 @@ apt-get install -y --no-install-recommends \
     $SHELL_PKG
 
 if [ "$DE_NAME" != "None" ]; then
-apt-get install -y \
+apt-get install -y --no-install-recommends \
     xserver-xorg xserver-xorg-core xserver-xorg-legacy \
     xserver-xorg-input-all \
     xserver-xorg-input-libinput \
@@ -837,8 +838,8 @@ if [ -n "$DE_PKGS" ]; then
 fi
 
 if [ "$DE_NAME" != "None" ]; then
-    apt-get install -y fastfetch || echo "FAILED: fastfetch install, see error above"
-    apt-get install -y kitty || { echo "FATAL: kitty install failed, see error above"; exit 1; }
+    apt-get install -y --no-install-recommends fastfetch || echo "FAILED: fastfetch install, see error above"
+    apt-get install -y --no-install-recommends kitty || { echo "FATAL: kitty install failed, see error above"; exit 1; }
     command -v kitty >/dev/null 2>&1 || { echo "FATAL: kitty binary missing after install"; exit 1; }
 
     if command -v kitty >/dev/null 2>&1; then
@@ -858,12 +859,22 @@ fi
 
 # lightdm is installed by installer.sh directly into the target, not the live env
 
-# Also cache the user's chosen DM debs (sddm for KDE etc.) if different
+# Cache ONLY the display manager's own package + dependency closure for a
+# fully offline target install. Everything downloaded/installed earlier in
+# this script (kernel, Xorg, DE packages, the gcc/libgtk3 build toolchain,
+# kitty, fastfetch, ...) is sitting in the apt cache at this point too - if
+# we don't clean it out first, ALL of that gets bundled and later blindly
+# dpkg -i'd onto the target by the installer, which corrupts dpkg's state
+# (conflicting dev packages, broken postinst scripts) and leaves apt unusable
+# after install. Clean the cache immediately before downloading just the DM.
 mkdir -p /opt/borealOS/debs
+apt-get clean
 if [ -n "$DM_PKGS" ]; then
-    apt-get install -y --download-only $DM_PKGS 2>/dev/null || true
+    apt-get install -y --no-install-recommends --download-only $DM_PKGS 2>/dev/null || true
 fi
+rm -f /var/cache/apt/archives/plymouth*.deb /var/cache/apt/archives/libplymouth*.deb 2>/dev/null || true
 cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
+apt-get clean
 
 echo 'root:borealOS' | /usr/sbin/chpasswd
 
@@ -896,6 +907,20 @@ CHROOT
 
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
+
+# Bundle any custom .deb packages for fully offline install on the target.
+# Drop them in <repo>/packages/ (i.e. ../../packages relative to this
+# script) and they're copied alongside the DM debs, so the installer's
+# offline dpkg -i step on the target picks them up automatically.
+CUSTOM_PKG_DIR="$SCRIPT_DIR/../../packages"
+if [ -d "$CUSTOM_PKG_DIR" ]; then
+    count=$(find "$CUSTOM_PKG_DIR" -maxdepth 1 -name '*.deb' | wc -l)
+    if [ "$count" -gt 0 ]; then
+        echo "==> Bundling $count custom package(s) from $CUSTOM_PKG_DIR"
+        mkdir -p "$WORK/squashfs-root/opt/borealOS/debs"
+        cp "$CUSTOM_PKG_DIR"/*.deb "$WORK/squashfs-root/opt/borealOS/debs/"
+    fi
+fi
 
 if [ "$DE_NAME" != "None" ]; then
 echo "==> Building and installing BorealOS graphical installer..."

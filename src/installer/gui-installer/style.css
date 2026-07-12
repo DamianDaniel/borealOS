@@ -39,20 +39,15 @@ viewport {
 }
 
 #part-group {
-    background-color: #eef3f2;
-    border: 1px solid #9fb3b3;
+    background-color: rgba(61, 255, 210, 0.07);
+    border: 1px solid rgba(61, 255, 210, 0.28);
     border-radius: 8px;
     padding: 12px 14px;
 }
 
 #part-group label,
 #part-group #group-label {
-    color: #10201c;
-}
-
-#part-group check,
-#part-group radio {
-    color: #10201c;
+    color: #e8f7f4;
 }
 
 #dark-entry {
@@ -69,54 +64,48 @@ viewport {
     border-color: #3dffd2;
 }
 
-combobox,
-combobox button,
-combobox box,
-combobox arrow,
-combobox entry {
-    background-color: #0f2535 !important;
-    color: #ffffff !important;
-    border: 1px solid #2a6060;
+combobox {
+    background-color: #dfe6e6;
+    color: #000000;
+    border: 1px solid #9fb3b3;
     border-radius: 6px;
     min-width: 200px;
 }
 
-combobox:hover,
-combobox button:hover {
+combobox button,
+combobox box,
+combobox arrow {
+    background-color: transparent;
+    color: #000000;
+    border: none;
+    box-shadow: none;
+}
+
+combobox label {
+    color: #000000;
+}
+
+combobox:hover {
+    background-color: #eef3f3;
     border-color: #3dffd2;
 }
 
-/* The combo box popup list is a separate top-level popup surface, not a
-   descendant of "combobox" in the widget tree, so it must be targeted
-   generically rather than scoped under combobox. This app is entirely
-   dark-themed, so styling all popups/menus dark is safe app-wide. */
-window.background.popup,
-menu,
-.popup,
 combobox window,
 combobox popover {
-    background-color: #0d1f2d !important;
-    color: #ffffff !important;
-    border: 1px solid #2a6060;
+    background-color: #ffffff;
+    color: #000000;
+    border: 1px solid #9fb3b3;
 }
 
-window.background.popup list,
-window.background.popup row,
-menu menuitem,
-.popup list,
-.popup row {
-    background-color: transparent;
-    color: #ffffff;
+combobox row {
+    color: #000000;
 }
 
-window.background.popup row:hover,
-menu menuitem:hover,
-.popup row:hover {
-    background-color: rgba(61, 255, 210, 0.18);
+combobox row:hover {
+    background-color: #eef3f3;
 }
 
-window.background.popup row:selected,
-.popup row:selected {
+combobox row:selected {
     background-color: #3dffd2;
     color: #0d1f2d;
 }
@@ -175,6 +164,17 @@ window.background.popup row:selected,
     color: #ffffff;
 }
 
+#dark-listbox button {
+    background-color: #0f2535;
+    color: #ffffff;
+    border: 1px solid #2a6060;
+    padding: 6px 8px;
+}
+
+#dark-listbox button:hover {
+    background-color: #123047;
+}
+
 #dark-listbox row {
     padding: 4px 6px;
 }
@@ -192,13 +192,18 @@ window.background.popup row:selected,
     color: #ffffff;
 }
 
+#log-scroll {
+    border: 1px solid #2a6060;
+    border-radius: 6px;
+}
+
 #log-view {
     background-color: transparent;
     color: #b2f0e8;
 }
 
 #log-view text {
-    background-color: rgba(10, 26, 36, 0.92);
+    background-color: transparent;
     color: #b2f0e8;
 }
 
@@ -208,12 +213,14 @@ window.background.popup row:selected,
 
 #boreal-progress trough {
     background-color: #0f2535;
+    border: 1px solid #2a6060;
     border-radius: 6px;
     min-height: 34px;
 }
 
 #boreal-progress progress {
     background-color: #3dffd2;
+    border: none;
     border-radius: 6px;
     min-height: 34px;
 }
@@ -222,7 +229,6 @@ window.background.popup row:selected,
     background-color: #0d1f2d;
     border: 2px solid #2a6060;
     border-radius: 8px;
-    min-width: 360px;
 }
 
 #boreal-dialog.csd {

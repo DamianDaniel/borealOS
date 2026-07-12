@@ -58,6 +58,7 @@ typedef struct {
     char wifi_ssid[128];
     char wifi_pass[128];
     char root_uuid[64];
+    char boot_uuid[64];
     char efi_uuid[64];
     char bios_part[64];
     char efi_part[64];
@@ -75,6 +76,9 @@ typedef struct {
     gboolean net_skipped;
     GtkWidget *steps_popover;
     GtkWidget *auto_revealer, *custom_revealer, *luks_revealer;
+    GtkWidget *log_scroll;
+    GtkWidget *catchup_btn;
+    gboolean log_autoscroll;
 
     GList *extra_users;
 
@@ -87,16 +91,42 @@ static App app;
 typedef struct { char *text; } LogMsg;
 typedef struct { double frac; char *label; } ProgMsg;
 
+static FILE *g_install_log_fp = NULL;
+static gboolean g_log_relocated = FALSE;
+
+static void ensure_log_file(void) {
+    if (g_install_log_fp) return;
+    g_install_log_fp = fopen("/tmp/boreal-install.log", "a");
+}
+
+/* The log starts on the live system (target disk isn't mounted yet at
+   startup). Once /mnt is mounted, move logging onto the installed system
+   itself so the log ends up on disk, not just in the live/RAM environment. */
+static void relocate_log_to_target(void) {
+    if (g_log_relocated) return;
+    g_log_relocated = TRUE;
+    if (system("mkdir -p /mnt/logs") != 0) return;
+    if (g_install_log_fp) {
+        fflush(g_install_log_fp);
+        system("cp /tmp/boreal-install.log /mnt/logs/system-install 2>/dev/null");
+        fclose(g_install_log_fp);
+    }
+    g_install_log_fp = fopen("/mnt/logs/system-install", "a");
+}
+
 static gboolean log_idle(gpointer data) {
     LogMsg *m = data;
     GtkTextIter end;
     gtk_text_buffer_get_end_iter(app.log_buffer, &end);
     gtk_text_buffer_insert(app.log_buffer, &end, m->text, -1);
     gtk_text_buffer_insert(app.log_buffer, &end, "\n", -1);
-    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
-    gtk_text_buffer_place_cursor(app.log_buffer, &end);
-    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
-    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
+
+    if (app.log_autoscroll) {
+        gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+        gtk_text_buffer_place_cursor(app.log_buffer, &end);
+        GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
+        gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
+    }
     g_free(m->text);
     g_free(m);
     return FALSE;
@@ -108,6 +138,12 @@ static void log_line(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+    ensure_log_file();
+    if (g_install_log_fp) {
+        fputs(buf, g_install_log_fp);
+        fputc('\n', g_install_log_fp);
+        fflush(g_install_log_fp);
+    }
     LogMsg *m = g_new0(LogMsg, 1);
     m->text = g_strdup(buf);
     g_idle_add(log_idle, m);
@@ -130,18 +166,38 @@ static void set_progress(double frac, const char *label) {
     g_idle_add(prog_idle, m);
 }
 
+static void run_cmd_quiet(const char *cmd) {
+    char full[4096];
+    snprintf(full, sizeof(full), "%s </dev/null >/dev/null 2>&1", cmd);
+    system(full);
+}
+
 static int run_cmd(const char *cmd) {
     log_line("$ %s", cmd);
     char full[4096];
     snprintf(full, sizeof(full), "DEBIAN_FRONTEND=noninteractive %s </dev/null 2>&1", cmd);
     FILE *fp = popen(full, "r");
     if (!fp) { log_line("failed to spawn command"); return -1; }
-    char line[1024];
-    while (fgets(line, sizeof(line), fp)) {
-        size_t l = strlen(line);
-        if (l && line[l - 1] == '\n') line[l - 1] = 0;
-        log_line("%s", line);
+    GString *cur = g_string_new(NULL);
+    int c;
+    while ((c = fgetc(fp)) != EOF) {
+        if (c == '\n') {
+            if (cur->len) log_line("%s", cur->str);
+            g_string_truncate(cur, 0);
+        } else if (c == '\r') {
+            /* Progress spinners rewrite the line with \r; only the final
+               state before a real newline matters, so drop what came before. */
+            g_string_truncate(cur, 0);
+        } else if (c == '\b') {
+            if (cur->len > 0) g_string_truncate(cur, cur->len - 1);
+        } else if ((unsigned char)c < 0x20 || (unsigned char)c == 0x7f) {
+            /* drop other control/escape bytes, they render as garbage glyphs */
+        } else {
+            g_string_append_c(cur, (char)c);
+        }
     }
+    if (cur->len) log_line("%s", cur->str);
+    g_string_free(cur, TRUE);
     int status = pclose(fp);
     return WEXITSTATUS(status);
 }
@@ -165,6 +221,30 @@ static void write_file(const char *path, const char *content) {
 
 typedef struct { gboolean *result; char *msg; } ErrMsg;
 
+static void on_catchup_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    app.log_autoscroll = TRUE;
+    gtk_widget_hide(app.catchup_btn);
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+    gtk_text_buffer_place_cursor(app.log_buffer, &end);
+    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
+}
+
+static void on_log_vadj_changed(GtkAdjustment *adj, gpointer data) {
+    (void)data;
+    double value = gtk_adjustment_get_value(adj);
+    double page = gtk_adjustment_get_page_size(adj);
+    double upper = gtk_adjustment_get_upper(adj);
+    gboolean at_bottom = (value + page >= upper - 24.0);
+    app.log_autoscroll = at_bottom;
+    if (app.catchup_btn) {
+        if (at_bottom) gtk_widget_hide(app.catchup_btn);
+        else gtk_widget_show(app.catchup_btn);
+    }
+}
+
 static void on_dialog_realize(GtkWidget *widget, gpointer data) {
     (void)data;
     GdkWindow *w = gtk_widget_get_window(widget);
@@ -174,13 +254,45 @@ static void on_dialog_realize(GtkWidget *widget, gpointer data) {
     }
 }
 
+static gboolean on_dialog_size_allocate(GtkWidget *widget, GdkRectangle *alloc, gpointer data) {
+    (void)data;
+    int w = alloc->width, h = alloc->height;
+    if (w <= 0 || h <= 0) return FALSE;
+    const double r = 10.0;
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_A1, w, h);
+    cairo_t *cr = cairo_create(surface);
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, w - r, r, r, -G_PI / 2, 0);
+    cairo_arc(cr, w - r, h - r, r, 0, G_PI / 2);
+    cairo_arc(cr, r, h - r, r, G_PI / 2, G_PI);
+    cairo_arc(cr, r, r, r, G_PI, 3 * G_PI / 2);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 1);
+    cairo_fill(cr);
+    cairo_destroy(cr);
+    cairo_region_t *region = gdk_cairo_region_create_from_surface(surface);
+    cairo_surface_destroy(surface);
+    gtk_widget_shape_combine_region(widget, region);
+    cairo_region_destroy(region);
+    return FALSE;
+}
+
 static void style_dialog(GtkWidget *dlg) {
     gtk_widget_set_name(dlg, "boreal-dialog");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     GdkScreen *screen = gtk_widget_get_screen(dlg);
     GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
     if (visual) gtk_widget_set_visual(dlg, visual);
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    GtkWidget *action_area = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
+    if (action_area) {
+        gtk_widget_hide(action_area);
+        gtk_widget_set_no_show_all(action_area, TRUE);
+    }
+    G_GNUC_END_IGNORE_DEPRECATIONS
     g_signal_connect(dlg, "realize", G_CALLBACK(on_dialog_realize), NULL);
+    g_signal_connect(dlg, "size-allocate", G_CALLBACK(on_dialog_size_allocate), NULL);
 }
 
 static void on_msg_response_no(GtkWidget *w, gpointer d) {
@@ -205,16 +317,15 @@ static int show_message(const char *title, const char *message, gboolean yes_no)
     gtk_window_set_title(GTK_WINDOW(dlg), title);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_widget_set_size_request(dlg, 420, -1);
     style_dialog(dlg);
 
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
-    gtk_container_set_border_width(GTK_CONTAINER(content), 24);
-    gtk_box_set_spacing(GTK_BOX(content), 18);
+    gtk_container_set_border_width(GTK_CONTAINER(content), 18);
+    gtk_box_set_spacing(GTK_BOX(content), 14);
 
     GtkWidget *label = gtk_label_new(message);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(label), 50);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 40);
     gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
     gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
     gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
@@ -327,6 +438,14 @@ static PlannedPart *add_planned_part(const char *size_spec, const char *fs_type,
 static void build_automatic_plan(void) {
     free_planned_parts();
     add_planned_part("512MiB", "fat32", "/boot/efi", TRUE, TRUE);
+    if (app.use_luks) {
+        /* GRUB has to be able to read the kernel/initramfs without going
+           through cryptomount - otherwise it prompts for the passphrase
+           itself (slow, GRUB's own crypto is not hardware-accelerated),
+           and then the kernel/initramfs prompts again to actually mount
+           root. A small unencrypted /boot avoids the double prompt. */
+        add_planned_part("1024MiB", "ext4", "/boot", TRUE, TRUE);
+    }
 
     double disk_mib = 0;
     {
@@ -526,7 +645,7 @@ static gboolean partition_disk(void) {
         write_file("/tmp/borealkey", app.luks_pass);
         run_cmd("chmod 600 /tmp/borealkey");
         snprintf(cmd, sizeof(cmd),
-            "cryptsetup luksFormat --type luks2 -q %s --key-file=/tmp/borealkey", app.root_part);
+            "cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 -q %s --key-file=/tmp/borealkey", app.root_part);
         int fmt_rc = run_cmd(cmd);
         if (fmt_rc != 0) { run_cmd("shred -u /tmp/borealkey"); fail_install("luksFormat failed"); return FALSE; }
         snprintf(cmd, sizeof(cmd),
@@ -572,6 +691,18 @@ static gboolean partition_disk(void) {
     if (u) { g_strstrip(u); strncpy(app.efi_uuid, u, sizeof(app.efi_uuid) - 1); g_free(u); }
 
     if (!app.root_uuid[0] || !app.efi_uuid[0]) { fail_install("Could not read partition UUIDs"); return FALSE; }
+
+    app.boot_uuid[0] = 0;
+    for (GList *l = app.planned_parts; l; l = l->next) {
+        PlannedPart *p = l->data;
+        if (!strcmp(p->mountpoint, "/boot") && p->device[0]) {
+            snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", p->device);
+            char *bu = run_capture(cmd);
+            if (bu) { g_strstrip(bu); strncpy(app.boot_uuid, bu, sizeof(app.boot_uuid) - 1); g_free(bu); }
+            break;
+        }
+    }
+
     log_line("Root UUID: %s  EFI UUID: %s", app.root_uuid, app.efi_uuid);
     return TRUE;
 }
@@ -581,6 +712,7 @@ static gboolean mount_target(void) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "mount %s /mnt", app.final_root_dev);
     if (run_cmd(cmd) != 0) { fail_install("mount root failed"); return FALSE; }
+    relocate_log_to_target();
     run_cmd("mkdir -p /mnt/boot/efi");
     snprintf(cmd, sizeof(cmd), "mount %s /mnt/boot/efi", app.efi_part);
     if (run_cmd(cmd) != 0) { fail_install("mount EFI failed"); return FALSE; }
@@ -626,6 +758,7 @@ static gboolean rsync_system(void) {
 }
 
 static void bind_mounts(void) {
+    run_cmd("mkdir -p /mnt/dev /mnt/proc /mnt/sys /mnt/run");
     run_cmd("mount --bind /dev /mnt/dev");
     run_cmd("mount --bind /proc /mnt/proc");
     run_cmd("mount --bind /sys /mnt/sys");
@@ -638,7 +771,7 @@ static void unbind_mounts(void) {
 }
 
 static gboolean install_bundled_packages(void) {
-    STEP("Installing display manager into target");
+    STEP("Installing packages");
     bind_mounts();
     run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
 
@@ -648,6 +781,7 @@ static gboolean install_bundled_packages(void) {
     if (run_cmd("ls /opt/borealOS/debs/*.deb >/dev/null 2>&1") == 0) {
         run_cmd("mkdir -p /mnt/var/cache/boreal-debs");
         run_cmd("cp /opt/borealOS/debs/*.deb /mnt/var/cache/boreal-debs/");
+        run_cmd("rm -f /mnt/var/cache/boreal-debs/plymouth*.deb /mnt/var/cache/boreal-debs/libplymouth*.deb");
         if (run_cmd("chroot /mnt bash -c 'dpkg -i /var/cache/boreal-debs/*.deb; apt-get install -f -y'") != 0)
             log_line("WARN: offline display manager install had errors, see log");
         run_cmd("rm -rf /mnt/var/cache/boreal-debs");
@@ -666,7 +800,9 @@ static gboolean install_bundled_packages(void) {
 static gboolean write_fstab(void) {
     STEP("Writing fstab");
     GString *buf = g_string_new(NULL);
-    g_string_append_printf(buf, "UUID=%s  /         ext4  errors=remount-ro  0  1\n", app.root_uuid);
+    const char *root_fstype = !strcmp(app.root_fs, "fat32") ? "vfat" : app.root_fs;
+    const char *root_opts = !strcmp(root_fstype, "ext4") ? "errors=remount-ro" : "defaults";
+    g_string_append_printf(buf, "UUID=%s  /         %s  %s  0  1\n", app.root_uuid, root_fstype, root_opts);
     g_string_append_printf(buf, "UUID=%s   /boot/efi vfat  umask=0077         0  2\n", app.efi_uuid);
 
     for (GList *l = app.planned_parts; l; l = l->next) {
@@ -759,6 +895,16 @@ static gboolean configure_system(void) {
         "deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\n");
     run_cmd("rm -f /mnt/etc/apt/sources.list.d/*.list");
 
+    /* The live ISO strips /var/lib/apt/lists to save space, and that empty
+       state gets rsynced onto the target - so apt has no package index at
+       all until we actually update it here. Best-effort: don't fail the
+       install if there's no network yet, just warn. */
+    bind_mounts();
+    run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
+    if (run_cmd("chroot /mnt apt-get update") != 0)
+        log_line("WARN: apt-get update failed (no network at install time?); run it manually after connecting.");
+    unbind_mounts();
+
     char script[4096];
     snprintf(script, sizeof(script),
         "set -e\n"
@@ -837,7 +983,7 @@ static gboolean set_passwords(void) {
 }
 
 static gboolean remove_live_boot(void) {
-    STEP("Removing live-boot components");
+    STEP("Finalizing system");
     run_cmd("chroot /mnt dpkg -r --force-depends live-boot live-boot-initramfs-tools live-config live-config-systemd");
     run_cmd("find /mnt/usr/share/initramfs-tools /mnt/etc/initramfs-tools /mnt/etc/grub.d -name '*live*' -delete");
     run_cmd("rm -rf /mnt/lib/live /mnt/usr/lib/live");
@@ -1014,9 +1160,13 @@ static gboolean install_grub(void) {
     snprintf(initrd_path, sizeof(initrd_path), "/mnt/boot/initrd.img-%s", kver);
     if (access(initrd_path, F_OK) != 0) { fail_install("No matching initrd for kernel"); g_free(kver); return FALSE; }
 
+    gboolean separate_boot = app.boot_uuid[0] != 0;
+    const char *boot_path_prefix = separate_boot ? "" : "/boot";
+    const char *search_uuid = separate_boot ? app.boot_uuid : app.root_uuid;
+
     run_cmd("mkdir -p /mnt/boot/efi/EFI/BOOT");
     char unlock[256] = "";
-    if (app.use_luks) {
+    if (app.use_luks && !separate_boot) {
         char nodash[64]; int j = 0;
         for (int i = 0; app.luks_uuid[i] && j < (int)sizeof(nodash) - 1; i++)
             if (app.luks_uuid[i] != '-') nodash[j++] = app.luks_uuid[i];
@@ -1024,28 +1174,29 @@ static gboolean install_grub(void) {
         snprintf(unlock, sizeof(unlock),
             "insmod cryptodisk\ninsmod luks2\ninsmod luks\ncryptomount -u %s\n%s",
             nodash, app.use_lvm ? "insmod lvm\n" : "");
-    } else if (app.use_lvm) {
+    } else if (app.use_lvm && !separate_boot) {
         strcpy(unlock, "insmod lvm\n");
     }
 
     char buf[1536];
     snprintf(buf, sizeof(buf),
-        "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)/boot/grub\nconfigfile ($root)/boot/grub/grub.cfg\n",
-        unlock, app.root_uuid);
+        "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)%s/grub\nconfigfile ($root)%s/grub/grub.cfg\n",
+        unlock, search_uuid, boot_path_prefix, boot_path_prefix);
     write_file("/mnt/boot/efi/EFI/BOOT/grub.cfg", buf);
 
     run_cmd("mkdir -p /mnt/boot/grub");
     snprintf(buf, sizeof(buf),
         "insmod all_video\ninsmod gfxterm\ninsmod png\nset gfxmode=auto\nterminal_output gfxterm\n\n"
         "set default=0\nset timeout=5\n\n"
-        "if [ -f /boot/grub/themes/boreal/theme.txt ]; then\n    set theme=/boot/grub/themes/boreal/theme.txt\n"
+        "if [ -f %s/grub/themes/boreal/theme.txt ]; then\n    set theme=%s/grub/themes/boreal/theme.txt\n"
         "else\n    set menu_color_normal=cyan/black\n    set menu_color_highlight=black/cyan\nfi\n\n"
         "menuentry \"BorealOS alpha\" {\n    %ssearch --no-floppy --fs-uuid --set=root %s\n"
-        "    linux /boot/vmlinuz-%s root=UUID=%s ro quiet\n    initrd /boot/initrd.img-%s\n}\n"
+        "    linux %s/vmlinuz-%s root=UUID=%s ro quiet\n    initrd %s/initrd.img-%s\n}\n"
         "menuentry \"BorealOS alpha (recovery)\" {\n    %ssearch --no-floppy --fs-uuid --set=root %s\n"
-        "    linux /boot/vmlinuz-%s root=UUID=%s ro single\n    initrd /boot/initrd.img-%s\n}\n",
-        unlock, app.root_uuid, kver, app.root_uuid, kver,
-        unlock, app.root_uuid, kver, app.root_uuid, kver);
+        "    linux %s/vmlinuz-%s root=UUID=%s ro single\n    initrd %s/initrd.img-%s\n}\n",
+        boot_path_prefix, boot_path_prefix,
+        unlock, search_uuid, boot_path_prefix, kver, app.root_uuid, boot_path_prefix, kver,
+        unlock, search_uuid, boot_path_prefix, kver, app.root_uuid, boot_path_prefix, kver);
     write_file("/mnt/boot/grub/grub.cfg", buf);
     log_line("GRUB installed. Kernel: %s", kver);
     g_free(kver);
@@ -1114,19 +1265,17 @@ static void *install_thread(void *arg) {
         {"Partitioning disk", partition_disk, 0.10},
         {"Mounting target", mount_target, 0.15},
         {"Copying system (can take a while)", rsync_system, 0.45},
-        {"Installing display manager", install_bundled_packages, 0.55},
+        {"Installing packages", install_bundled_packages, 0.55},
         {"Writing fstab", write_fstab, 0.58},
         {"Writing network config", write_network, 0.60},
         {"Configuring system", configure_system, 0.68},
         {"Setting passwords", set_passwords, 0.72},
-        {"Removing live-boot", remove_live_boot, 0.85},
+        {"Finalizing system", remove_live_boot, 0.85},
         {"Restoring inittab", restore_inittab, 0.87},
         {"Configuring desktop", setup_de, 0.90},
         {"Installing GRUB", install_grub, 0.97},
         {"Verifying", verify_install, 1.00},
     };
-    bind_mounts();
-    unbind_mounts();
     for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
         set_progress(steps[i].frac - 0.02, steps[i].name);
         gboolean use_bind = (steps[i].fn == configure_system || steps[i].fn == set_passwords ||
@@ -1150,7 +1299,6 @@ static void collect_state_from_ui(void) {
     sync_selected_disk();
     app.use_lvm = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.lvm_check));
     app.use_luks = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check));
-    strncpy(app.luks_pass, gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry)), sizeof(app.luks_pass) - 1);
     app.advanced_part = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.part_advanced));
     app.wipe_disk = app.advanced_part ? FALSE : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.wipe_erase));
     app.layout_mode = gtk_combo_box_get_active(GTK_COMBO_BOX(app.layout_combo));
@@ -1290,13 +1438,9 @@ static gboolean validate_page(int idx) {
                 return FALSE;
             }
         }
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check))) {
-            const char *p1 = gtk_entry_get_text(GTK_ENTRY(app.luks_pass_entry));
-            const char *p2 = gtk_entry_get_text(GTK_ENTRY(app.luks_pass2_entry));
-            if (!p1[0] || strcmp(p1, p2)) {
-                show_message("Warning", "Enter a matching encryption passphrase.", FALSE);
-                return FALSE;
-            }
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.luks_check)) && !app.luks_pass[0]) {
+            show_message("Warning", "Enter an encryption passphrase.", FALSE);
+            return FALSE;
         }
         for (GList *l = app.planned_parts; l; l = l->next) {
             PlannedPart *p = l->data;
@@ -1341,6 +1485,80 @@ static void refresh_wifi_list(void);
 static gboolean page_should_skip(int idx) {
     if (!strcmp(PAGE_ORDER[idx], "wifi") && strcmp(app.net_type, "wifi") != 0) return TRUE;
     return FALSE;
+}
+
+static GtkCssProvider *g_a11y_provider = NULL;
+
+static void apply_a11y_css(int font_pct, gboolean high_contrast) {
+    if (g_a11y_provider) {
+        gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(g_a11y_provider));
+        g_object_unref(g_a11y_provider);
+        g_a11y_provider = NULL;
+    }
+    GString *css = g_string_new(NULL);
+    g_string_append_printf(css,
+        "window, label, button, entry, checkbutton, radiobutton, combobox { font-size: %d%%; }\n",
+        font_pct);
+    if (high_contrast) {
+        g_string_append(css,
+            "#content-panel { background-color: #000000; }\n"
+            "#content-panel label { color: #ffffff; }\n"
+            "#part-group { background-color: #000000; border: 2px solid #ffffff; }\n"
+            "#part-group label, #part-group #group-label { color: #ffffff; }\n"
+            "#title-label { color: #ffff00; }\n"
+            "#nav-button { background-color: #ffffff; border: 2px solid #000000; }\n"
+            "#nav-button label { color: #000000; }\n"
+            "#primary-button { background-color: #ffff00; border: 2px solid #000000; }\n"
+            "#primary-button label { color: #000000; }\n"
+            "#dark-entry { background-color: #000000; color: #ffffff; border: 2px solid #ffffff; }\n"
+            "combobox { background-color: #ffffff; border: 2px solid #000000; }\n");
+    }
+    g_a11y_provider = gtk_css_provider_new();
+    GError *err = NULL;
+    gtk_css_provider_load_from_data(g_a11y_provider, css->str, (gint)css->len, &err);
+    if (err) g_error_free(err);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(g_a11y_provider), GTK_STYLE_PROVIDER_PRIORITY_USER + 10);
+    g_string_free(css, TRUE);
+}
+
+typedef struct { GtkWidget *scale; GtkWidget *contrast_check; } A11yState;
+
+static void on_a11y_changed(GtkWidget *w, gpointer data) {
+    (void)w;
+    A11yState *s = data;
+    int pct = (int)gtk_range_get_value(GTK_RANGE(s->scale));
+    gboolean hc = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(s->contrast_check));
+    apply_a11y_css(pct, hc);
+}
+
+static GtkWidget *build_a11y_popover(GtkWidget *relative_to) {
+    GtkWidget *pop = gtk_popover_new(relative_to);
+    gtk_widget_set_name(pop, "boreal-dialog");
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 14);
+    gtk_widget_set_size_request(box, 240, -1);
+
+    GtkWidget *lbl = gtk_label_new("Text size");
+    gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+    GtkWidget *scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 80, 160, 10);
+    gtk_range_set_value(GTK_RANGE(scale), 100);
+    gtk_scale_set_value_pos(GTK_SCALE(scale), GTK_POS_RIGHT);
+
+    GtkWidget *contrast_check = gtk_check_button_new_with_label("High contrast mode");
+
+    A11yState *s = g_new0(A11yState, 1);
+    s->scale = scale;
+    s->contrast_check = contrast_check;
+    g_signal_connect(scale, "value-changed", G_CALLBACK(on_a11y_changed), s);
+    g_signal_connect(contrast_check, "toggled", G_CALLBACK(on_a11y_changed), s);
+
+    gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), scale, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), contrast_check, FALSE, FALSE, 4);
+    gtk_container_add(GTK_CONTAINER(pop), box);
+    gtk_widget_show_all(box);
+    return pop;
 }
 
 static void goto_page(int idx);
@@ -1541,7 +1759,7 @@ static void refresh_iface_list(void) {
 
 static void refresh_wifi_list(void) {
     gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(app.wifi_ssid_combo));
-    run_cmd("nmcli device wifi rescan 2>/dev/null");
+    run_cmd_quiet("nmcli device wifi rescan 2>/dev/null");
     char *out = run_capture("nmcli -t -f SSID device wifi list 2>/dev/null | awk 'NF && !seen[$0]++'");
     if (!out) return;
     gchar **lines = g_strsplit(out, "\n", -1);
@@ -1659,7 +1877,6 @@ static void on_add_user(GtkButton *btn, gpointer data) {
     gtk_window_set_title(GTK_WINDOW(dlg), "Add user");
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_widget_set_size_request(dlg, 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_container_set_border_width(GTK_CONTAINER(content), 20);
@@ -1766,7 +1983,70 @@ static GtkWidget *page_disk(void) {
 
 static void on_luks_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), gtk_toggle_button_get_active(btn));
+    if (!gtk_toggle_button_get_active(btn)) {
+        app.luks_pass[0] = 0;
+        return;
+    }
+
+    GtkWidget *dlg = gtk_dialog_new();
+    gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(app.window));
+    gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
+    gtk_window_set_title(GTK_WINDOW(dlg), "Encryption passphrase");
+    gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
+    style_dialog(dlg);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    gtk_container_set_border_width(GTK_CONTAINER(content), 18);
+    gtk_box_set_spacing(GTK_BOX(content), 12);
+
+    GtkWidget *title = gtk_label_new("Encrypt root with LUKS");
+    gtk_widget_set_name(title, "title-label");
+    gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    GtkWidget *e1 = gtk_entry_new();
+    gtk_widget_set_name(e1, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(e1), FALSE);
+    GtkWidget *e2 = gtk_entry_new();
+    gtk_widget_set_name(e2, "dark-entry");
+    gtk_entry_set_visibility(GTK_ENTRY(e2), FALSE);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Passphrase"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), e1, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Confirm"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), e2, 1, 1, 1, 1);
+    gtk_box_pack_start(GTK_BOX(content), grid, FALSE, FALSE, 0);
+
+    GtkWidget *btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_row, GTK_ALIGN_CENTER);
+    GtkWidget *cancel = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_name(cancel, "nav-button");
+    g_signal_connect(cancel, "clicked", G_CALLBACK(on_msg_response_no), dlg);
+    GtkWidget *ok = gtk_button_new_with_label("OK");
+    gtk_widget_set_name(ok, "primary-button");
+    g_signal_connect(ok, "clicked", G_CALLBACK(on_msg_response_yes), dlg);
+    gtk_box_pack_start(GTK_BOX(btn_row), cancel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(btn_row), ok, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), btn_row, FALSE, FALSE, 0);
+
+    gtk_widget_show_all(dlg);
+    gboolean confirmed = FALSE;
+    while (TRUE) {
+        int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+        if (resp != GTK_RESPONSE_YES) break;
+        const char *p1 = gtk_entry_get_text(GTK_ENTRY(e1));
+        const char *p2 = gtk_entry_get_text(GTK_ENTRY(e2));
+        if (!p1[0] || strcmp(p1, p2)) {
+            show_message("Warning", "Passphrases are empty or don't match.", FALSE);
+            continue;
+        }
+        strncpy(app.luks_pass, p1, sizeof(app.luks_pass) - 1);
+        confirmed = TRUE;
+        break;
+    }
+    gtk_widget_destroy(dlg);
+    if (!confirmed) gtk_toggle_button_set_active(btn, FALSE);
 }
 
 static void refresh_part_list_view(void) {
@@ -1822,7 +2102,6 @@ static void on_add_custom_partition(GtkButton *btn, gpointer data) {
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_widget_set_size_request(dlg, 380, -1);
     style_dialog(dlg);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_container_set_border_width(GTK_CONTAINER(content), 20);
@@ -1883,15 +2162,23 @@ static void on_remove_custom_partition(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view));
     GtkTreeModel *model;
-    GtkTreeIter it;
-    if (!gtk_tree_selection_get_selected(sel, &model, &it)) return;
-    int idx = gtk_tree_path_get_indices(gtk_tree_model_get_path(model, &it))[0];
-    PlannedPart *p = g_list_nth_data(app.planned_parts, idx);
-    if (p) {
-        app.planned_parts = g_list_remove(app.planned_parts, p);
-        g_free(p);
-        refresh_part_list_view();
+    GList *rows = gtk_tree_selection_get_selected_rows(sel, &model);
+    if (!rows) return;
+    /* Collect the actual PlannedPart pointers first, since removing from
+       app.planned_parts as we go would shift indices for later paths. */
+    GList *to_remove = NULL;
+    for (GList *l = rows; l; l = l->next) {
+        int *indices = gtk_tree_path_get_indices((GtkTreePath *)l->data);
+        PlannedPart *p = g_list_nth_data(app.planned_parts, indices[0]);
+        if (p) to_remove = g_list_prepend(to_remove, p);
     }
+    g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+    for (GList *l = to_remove; l; l = l->next) {
+        app.planned_parts = g_list_remove(app.planned_parts, l->data);
+        g_free(l->data);
+    }
+    g_list_free(to_remove);
+    refresh_part_list_view();
 }
 
 static void on_part_format_toggled(GtkCellRendererToggle *cell, gchar *path_str, gpointer data) {
@@ -1979,6 +2266,7 @@ static GtkWidget *page_partitioning(void) {
     app.part_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     app.part_tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(app.part_store));
     gtk_widget_set_name(app.part_tree_view, "dark-listbox");
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(app.part_tree_view), FALSE);
 
     GtkCellRenderer *r0 = gtk_cell_renderer_text_new();
     gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Device", r0, "text", 0, NULL);
@@ -1996,6 +2284,7 @@ static GtkWidget *page_partitioning(void) {
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, 640, 240);
+    gtk_tree_selection_set_mode(gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view)), GTK_SELECTION_MULTIPLE);
     gtk_container_add(GTK_CONTAINER(scroll), app.part_tree_view);
 
     GtkWidget *part_btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -2025,52 +2314,43 @@ static GtkWidget *page_partitioning(void) {
     gtk_container_add(GTK_CONTAINER(app.custom_revealer), app.custom_box);
     gtk_revealer_set_reveal_child(GTK_REVEALER(app.custom_revealer), FALSE);
 
-    GtkWidget *sep = gtk_label_new("Encryption & LVM");
-    gtk_widget_set_name(sep, "title-label");
-    gtk_widget_set_halign(sep, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(sep, 12);
+    GtkWidget *crypt_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    gtk_widget_set_margin_start(crypt_row, 20);
+    gtk_widget_set_margin_top(crypt_row, 12);
 
-    GtkWidget *crypt_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_widget_set_name(crypt_group, "part-group");
-    gtk_widget_set_margin_start(crypt_group, 20);
-
+    GtkWidget *lvm_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_name(lvm_card, "part-group");
+    gtk_widget_set_valign(lvm_card, GTK_ALIGN_START);
+    GtkWidget *lvm_hdr = gtk_label_new("LVM");
+    gtk_widget_set_name(lvm_hdr, "group-label");
+    gtk_widget_set_halign(lvm_hdr, GTK_ALIGN_START);
     app.lvm_check = gtk_check_button_new_with_label("Use LVM");
-    app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.lvm_check), FALSE);
+    gtk_box_pack_start(GTK_BOX(lvm_card), lvm_hdr, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(lvm_card), app.lvm_check, FALSE, FALSE, 0);
+
+    GtkWidget *crypt_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_name(crypt_card, "part-group");
+    gtk_widget_set_valign(crypt_card, GTK_ALIGN_START);
+    GtkWidget *crypt_hdr = gtk_label_new("Encryption");
+    gtk_widget_set_name(crypt_hdr, "group-label");
+    gtk_widget_set_halign(crypt_hdr, GTK_ALIGN_START);
+    app.luks_check = gtk_check_button_new_with_label("Encrypt root with LUKS");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.luks_check), FALSE);
     g_signal_connect(app.luks_check, "toggled", G_CALLBACK(on_luks_toggled), NULL);
 
-    app.luks_box = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(app.luks_box), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(app.luks_box), 12);
-    gtk_widget_set_margin_top(app.luks_box, 4);
-    app.luks_pass_entry = gtk_entry_new();
-    gtk_widget_set_name(app.luks_pass_entry, "dark-entry");
-    gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass_entry), FALSE);
-    app.luks_pass2_entry = gtk_entry_new();
-    gtk_widget_set_name(app.luks_pass2_entry, "dark-entry");
-    gtk_entry_set_visibility(GTK_ENTRY(app.luks_pass2_entry), FALSE);
-    gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Passphrase"), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass_entry, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.luks_box), gtk_label_new("Confirm"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(app.luks_box), app.luks_pass2_entry, 1, 1, 1, 1);
+    gtk_box_pack_start(GTK_BOX(crypt_card), crypt_hdr, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_card), app.luks_check, FALSE, FALSE, 0);
 
-    app.luks_revealer = gtk_revealer_new();
-    gtk_revealer_set_transition_type(GTK_REVEALER(app.luks_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    gtk_container_add(GTK_CONTAINER(app.luks_revealer), app.luks_box);
-    gtk_revealer_set_reveal_child(GTK_REVEALER(app.luks_revealer), FALSE);
-
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.lvm_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypt_group), app.luks_revealer, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_row), lvm_card, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(crypt_row), crypt_card, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_auto, FALSE, FALSE, 6);
     gtk_box_pack_start(GTK_BOX(box), app.auto_revealer, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.part_advanced, FALSE, FALSE, 6);
-    gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(box), sep, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), crypt_group, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), app.custom_revealer, FALSE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), crypt_row, FALSE, FALSE, 0);
 
     GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -2327,7 +2607,10 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_size_request(app.progress_bar, -1, 34);
     g_signal_connect_after(app.progress_bar, "draw", G_CALLBACK(on_progress_draw), NULL);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_name(scroll, "log-scroll");
     gtk_widget_set_size_request(scroll, 700, 400);
+    app.log_scroll = scroll;
+    app.log_autoscroll = TRUE;
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
@@ -2335,9 +2618,27 @@ static GtkWidget *page_progress(void) {
     app.log_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app.log_view));
     gtk_container_add(GTK_CONTAINER(scroll), app.log_view);
 
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+    g_signal_connect(vadj, "value-changed", G_CALLBACK(on_log_vadj_changed), NULL);
+    g_signal_connect(vadj, "changed", G_CALLBACK(on_log_vadj_changed), NULL);
+
+    app.catchup_btn = gtk_button_new_with_label("Catch up");
+    gtk_widget_set_name(app.catchup_btn, "primary-button");
+    gtk_widget_set_halign(app.catchup_btn, GTK_ALIGN_END);
+    gtk_widget_set_valign(app.catchup_btn, GTK_ALIGN_END);
+    gtk_widget_set_margin_end(app.catchup_btn, 16);
+    gtk_widget_set_margin_bottom(app.catchup_btn, 16);
+    gtk_widget_set_no_show_all(app.catchup_btn, TRUE);
+    gtk_widget_hide(app.catchup_btn);
+    g_signal_connect(app.catchup_btn, "clicked", G_CALLBACK(on_catchup_clicked), NULL);
+
+    GtkWidget *log_overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(log_overlay), scroll);
+    gtk_overlay_add_overlay(GTK_OVERLAY(log_overlay), app.catchup_btn);
+
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.progress_bar, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 8);
+    gtk_box_pack_start(GTK_BOX(box), log_overlay, TRUE, TRUE, 8);
     return box;
 }
 
@@ -2369,8 +2670,12 @@ static GtkWidget *wrap_page(GtkWidget *content) {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_valign(outer, GTK_ALIGN_CENTER);
     gtk_widget_set_halign(outer, GTK_ALIGN_CENTER);
+    gtk_widget_set_vexpand(outer, TRUE);
+    gtk_widget_set_hexpand(outer, TRUE);
     GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_name(panel, "content-panel");
+    gtk_widget_set_valign(panel, GTK_ALIGN_CENTER);
+    gtk_widget_set_halign(panel, GTK_ALIGN_CENTER);
     gtk_container_set_border_width(GTK_CONTAINER(panel), 8);
     gtk_box_pack_start(GTK_BOX(panel), content, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, TRUE, 24);
@@ -2477,10 +2782,17 @@ int main(int argc, char **argv) {
     GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(nav), 12);
     app.btn_cancel = gtk_menu_button_new();
-    gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Steps \xE2\x96\xBE");
+    gtk_button_set_label(GTK_BUTTON(app.btn_cancel), "Steps");
     gtk_widget_set_name(app.btn_cancel, "nav-button");
     app.steps_popover = build_steps_popover(app.btn_cancel);
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(app.btn_cancel), app.steps_popover);
+
+    GtkWidget *btn_a11y = gtk_menu_button_new();
+    gtk_button_set_label(GTK_BUTTON(btn_a11y), "Accessibility");
+    gtk_widget_set_name(btn_a11y, "nav-button");
+    GtkWidget *a11y_popover = build_a11y_popover(btn_a11y);
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(btn_a11y), a11y_popover);
+
     app.btn_back = gtk_button_new_with_label("Back");
     gtk_widget_set_name(app.btn_back, "nav-button");
     g_signal_connect(app.btn_back, "clicked", G_CALLBACK(on_back), NULL);
@@ -2489,6 +2801,7 @@ int main(int argc, char **argv) {
     g_signal_connect(app.btn_next, "clicked", G_CALLBACK(on_next), NULL);
 
     gtk_box_pack_start(GTK_BOX(nav), app.btn_cancel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(nav), btn_a11y, FALSE, FALSE, 0);
     GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_pack_start(GTK_BOX(nav), spacer, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(nav), app.btn_back, FALSE, FALSE, 0);
@@ -2517,7 +2830,6 @@ int main(int argc, char **argv) {
         gtk_window_move(GTK_WINDOW(app.window), 0, 0);
     }
     gtk_widget_hide(app.net_static_box);
-    refresh_wifi_list();
 
     GdkWindow *gdkwin = gtk_widget_get_window(app.window);
     if (gdkwin) {
