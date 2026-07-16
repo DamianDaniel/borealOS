@@ -836,6 +836,9 @@ fi
 # Install the user's chosen DE
 if [ -n "$DE_PKGS" ]; then
     apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
+    if [ -n "$DM_PKGS" ]; then
+        apt-get install -y --no-install-recommends $DM_PKGS || echo "WARN: DM install failed"
+    fi
 fi
 
 if [ "$DE_NAME" != "None" ]; then
@@ -858,48 +861,28 @@ if [ "$DE_NAME" != "None" ]; then
         || echo "WARN: GTK3 build deps failed"
 fi
 
-# lightdm is installed by installer.sh directly into the target, not the live env
-
-# Cache ONLY the display manager's own package + dependency closure for a
-# fully offline target install. Everything downloaded/installed earlier in
-# this script (kernel, Xorg, DE packages, the gcc/libgtk3 build toolchain,
-# kitty, fastfetch, ...) is sitting in the apt cache at this point too - if
-# we don't clean it out first, ALL of that gets bundled and later blindly
-# dpkg -i'd onto the target by the installer, which corrupts dpkg's state
-# (conflicting dev packages, broken postinst scripts) and leaves apt unusable
-# after install. Clean the cache immediately before downloading just the DM.
+# lightdm is now installed normally above (with $DE_PKGS), so it gets
+# properly configured with full dependency resolution and rides along
+# to the target via the rsync copy of the live system - no more fragile
+# separate offline-cache/dpkg-i dance for the DM itself.
 mkdir -p /opt/borealOS/debs
-apt-get clean
-if [ -n "$DM_PKGS" ]; then
-    apt-get install -y --no-install-recommends --download-only $DM_PKGS 2>/dev/null || true
-fi
-rm -f /var/cache/apt/archives/plymouth*.deb /var/cache/apt/archives/libplymouth*.deb 2>/dev/null || true
-cp /var/cache/apt/archives/*.deb /opt/borealOS/debs/ 2>/dev/null || true
-apt-get clean
 
 echo 'root:borealOS' | /usr/sbin/chpasswd
 
-# ── Nuclear DM purge ──────────────────────────────────────────────────────────
-# Belt-and-suspenders: purge every known DM even if none were installed.
-# Then delete every hook that could auto-start one on boot.
-echo "==> Purging all display managers from live env..."
-apt-get remove --purge -y \
-    lightdm lightdm-gtk-greeter lightdm-gtk-greeter-settings \
-    sddm gdm3 gdm xdm wdm nodm slim \
-    2>/dev/null || true
-apt-get autoremove --purge -y 2>/dev/null || true
-
-# Remove every OpenRC/SysV runlevel symlink for any DM
+# ── Disable (not uninstall) any display manager in the live env ────────────
+# lightdm's own postinst auto-enables it via rc-update, which would make the
+# live boot media show a login screen instead of going straight to the
+# installer. We want the package itself to stay installed (so it rsyncs
+# onto the target intact), just not auto-started here in the live env -
+# the installer re-enables it for the target specifically later.
+echo "==> Disabling (not removing) any display manager for the live boot..."
 for dm in lightdm sddm gdm gdm3 xdm wdm slim nodm; do
+    rc-update del ${dm} default 2>/dev/null || true
+    rc-update del ${dm} boot 2>/dev/null || true
     rm -f /etc/runlevels/default/${dm} \
           /etc/runlevels/boot/${dm} \
           /etc/runlevels/sysinit/${dm} 2>/dev/null || true
     find /etc/rc*.d -name "*${dm}*" -delete 2>/dev/null || true
-    # Stub out any surviving init.d script so it can't start anything
-    if [ -f /etc/init.d/${dm} ]; then
-        printf '#!/bin/sh\nexit 0\n' > /etc/init.d/${dm}
-        chmod +x /etc/init.d/${dm}
-    fi
 done
 
 # Remove the file that tells Xorg/PAM which DM to use

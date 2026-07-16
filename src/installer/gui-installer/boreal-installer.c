@@ -77,8 +77,6 @@ typedef struct {
     GtkWidget *steps_popover;
     GtkWidget *auto_revealer, *custom_revealer, *luks_revealer;
     GtkWidget *log_scroll;
-    GtkWidget *catchup_btn;
-    gboolean log_autoscroll;
 
     GList *extra_users;
 
@@ -121,12 +119,10 @@ static gboolean log_idle(gpointer data) {
     gtk_text_buffer_insert(app.log_buffer, &end, m->text, -1);
     gtk_text_buffer_insert(app.log_buffer, &end, "\n", -1);
 
-    if (app.log_autoscroll) {
-        gtk_text_buffer_get_end_iter(app.log_buffer, &end);
-        gtk_text_buffer_place_cursor(app.log_buffer, &end);
-        GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
-        gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
-    }
+    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+    gtk_text_buffer_place_cursor(app.log_buffer, &end);
+    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
     g_free(m->text);
     g_free(m);
     return FALSE;
@@ -220,30 +216,6 @@ static void write_file(const char *path, const char *content) {
 }
 
 typedef struct { gboolean *result; char *msg; } ErrMsg;
-
-static void on_catchup_clicked(GtkButton *btn, gpointer data) {
-    (void)btn; (void)data;
-    app.log_autoscroll = TRUE;
-    gtk_widget_hide(app.catchup_btn);
-    GtkTextIter end;
-    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
-    gtk_text_buffer_place_cursor(app.log_buffer, &end);
-    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
-    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
-}
-
-static void on_log_vadj_changed(GtkAdjustment *adj, gpointer data) {
-    (void)data;
-    double value = gtk_adjustment_get_value(adj);
-    double page = gtk_adjustment_get_page_size(adj);
-    double upper = gtk_adjustment_get_upper(adj);
-    gboolean at_bottom = (value + page >= upper - 24.0);
-    app.log_autoscroll = at_bottom;
-    if (app.catchup_btn) {
-        if (at_bottom) gtk_widget_hide(app.catchup_btn);
-        else gtk_widget_show(app.catchup_btn);
-    }
-}
 
 static void on_dialog_realize(GtkWidget *widget, gpointer data) {
     (void)data;
@@ -775,22 +747,16 @@ static gboolean install_bundled_packages(void) {
     bind_mounts();
     run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
 
-    /* Prefer the .debs cached at ISO build time (fully offline, no network
-       needed on the target). Falls back to a live network install only if
-       no cached debs are present. */
+    /* The display manager itself is installed normally in the live env
+       (see build-iso.sh) and rides onto the target via the rsync copy -
+       no separate install needed here. This step now only installs any
+       extra custom .deb packages dropped in <repo>/packages/. */
     if (run_cmd("ls /opt/borealOS/debs/*.deb >/dev/null 2>&1") == 0) {
         run_cmd("mkdir -p /mnt/var/cache/boreal-debs");
         run_cmd("cp /opt/borealOS/debs/*.deb /mnt/var/cache/boreal-debs/");
-        run_cmd("rm -f /mnt/var/cache/boreal-debs/plymouth*.deb /mnt/var/cache/boreal-debs/libplymouth*.deb");
         if (run_cmd("chroot /mnt bash -c 'dpkg -i /var/cache/boreal-debs/*.deb; apt-get install -f -y'") != 0)
-            log_line("WARN: offline display manager install had errors, see log");
+            log_line("WARN: custom package install had errors, see log");
         run_cmd("rm -rf /mnt/var/cache/boreal-debs");
-    } else {
-        const char *dm = "lightdm lightdm-gtk-greeter";
-        if (strcmp(app.de_choice, "KDE Plasma") == 0) dm = "sddm";
-        char cmd[256];
-        snprintf(cmd, sizeof(cmd), "chroot /mnt apt-get install -y %s", dm);
-        if (run_cmd(cmd) != 0) log_line("WARN: display manager install failed, target may boot to TTY");
     }
 
     unbind_mounts();
@@ -1101,14 +1067,18 @@ static gboolean setup_de(void) {
             "# Ask xrandr what's really connected and set it directly, every time.\n"
             "WALLPAPER=/usr/share/boreal-artwork/wallpaper-default.png\n"
             "[ -f \"$WALLPAPER\" ] || exit 0\n"
-            "sleep 2\n"
+            "sleep 3\n"
             "MONS=$(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')\n"
             "for mon in $MONS monitor0; do\n"
             "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/last-image \\\n"
             "        -n -t string -s \"$WALLPAPER\" 2>/dev/null\n"
             "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/image-style \\\n"
             "        -n -t int -s 5 2>/dev/null\n"
-            "done\n");
+            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/color-style \\\n"
+            "        -n -t int -s 0 2>/dev/null\n"
+            "done\n"
+            "sleep 1\n"
+            "xfdesktop --reload 2>/dev/null || xfdesktop &\n");
         run_cmd("chmod 755 /mnt/usr/local/bin/boreal-set-wallpaper.sh");
         write_file("/mnt/etc/skel/.config/autostart/boreal-set-wallpaper.desktop",
             "[Desktop Entry]\nType=Application\nName=BorealOS Wallpaper\n"
@@ -2245,6 +2215,9 @@ static GtkWidget *page_partitioning(void) {
     app.auto_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_name(app.auto_box, "part-group");
     gtk_widget_set_margin_start(app.auto_box, 20);
+    gtk_widget_set_margin_end(app.auto_box, 20);
+    gtk_widget_set_hexpand(app.auto_box, TRUE);
+    gtk_widget_set_halign(app.auto_box, GTK_ALIGN_FILL);
 
     GtkWidget *wipe_hdr = gtk_label_new("Where to install");
     gtk_widget_set_name(wipe_hdr, "group-label");
@@ -2295,6 +2268,9 @@ static GtkWidget *page_partitioning(void) {
     app.custom_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_name(app.custom_box, "part-group");
     gtk_widget_set_margin_start(app.custom_box, 20);
+    gtk_widget_set_margin_end(app.custom_box, 20);
+    gtk_widget_set_hexpand(app.custom_box, TRUE);
+    gtk_widget_set_halign(app.custom_box, GTK_ALIGN_FILL);
     app.part_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     app.part_tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(app.part_store));
     gtk_widget_set_name(app.part_tree_view, "dark-listbox");
@@ -2349,6 +2325,9 @@ static GtkWidget *page_partitioning(void) {
 
     GtkWidget *crypt_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_set_margin_start(crypt_row, 20);
+    gtk_widget_set_margin_end(crypt_row, 20);
+    gtk_widget_set_hexpand(crypt_row, TRUE);
+    gtk_widget_set_halign(crypt_row, GTK_ALIGN_FILL);
     gtk_widget_set_margin_top(crypt_row, 12);
 
     GtkWidget *lvm_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -2643,7 +2622,6 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_name(scroll, "log-scroll");
     gtk_widget_set_size_request(scroll, 700, 400);
     app.log_scroll = scroll;
-    app.log_autoscroll = TRUE;
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
@@ -2651,26 +2629,9 @@ static GtkWidget *page_progress(void) {
     app.log_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app.log_view));
     gtk_container_add(GTK_CONTAINER(scroll), app.log_view);
 
-    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
-    g_signal_connect(vadj, "value-changed", G_CALLBACK(on_log_vadj_changed), NULL);
-
-    app.catchup_btn = gtk_button_new_with_label("Catch up");
-    gtk_widget_set_name(app.catchup_btn, "primary-button");
-    gtk_widget_set_halign(app.catchup_btn, GTK_ALIGN_END);
-    gtk_widget_set_valign(app.catchup_btn, GTK_ALIGN_END);
-    gtk_widget_set_margin_end(app.catchup_btn, 16);
-    gtk_widget_set_margin_bottom(app.catchup_btn, 16);
-    gtk_widget_set_no_show_all(app.catchup_btn, TRUE);
-    gtk_widget_hide(app.catchup_btn);
-    g_signal_connect(app.catchup_btn, "clicked", G_CALLBACK(on_catchup_clicked), NULL);
-
-    GtkWidget *log_overlay = gtk_overlay_new();
-    gtk_container_add(GTK_CONTAINER(log_overlay), scroll);
-    gtk_overlay_add_overlay(GTK_OVERLAY(log_overlay), app.catchup_btn);
-
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.progress_bar, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(box), log_overlay, TRUE, TRUE, 8);
+    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 8);
     return box;
 }
 
