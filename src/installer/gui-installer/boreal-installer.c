@@ -571,7 +571,6 @@ static gboolean partition_disk(void) {
         }
         if (!is_percent) cursor_mib = end_mib;
     }
-
     snprintf(cmd, sizeof(cmd), "partprobe %s", app.disk);
     run_cmd(cmd);
     sleep(2);
@@ -626,7 +625,6 @@ static gboolean partition_disk(void) {
         run_cmd("shred -u /tmp/borealkey");
         if (open_rc != 0) { fail_install("luksOpen failed"); return FALSE; }
         strncpy(app.final_root_dev, "/dev/mapper/borealcrypt", sizeof(app.final_root_dev) - 1);
-
         snprintf(cmd, sizeof(cmd), "cryptsetup luksUUID %s", app.root_part);
         char *lu = run_capture(cmd);
         if (lu) { g_strstrip(lu); strncpy(app.luks_uuid, lu, sizeof(app.luks_uuid) - 1); g_free(lu); }
@@ -654,7 +652,6 @@ static gboolean partition_disk(void) {
     else snprintf(cmd, sizeof(cmd), "mkfs.ext4 -F -L borealOS %s", app.final_root_dev);
     if (run_cmd(cmd) != 0) { fail_install("mkfs failed for root"); return FALSE; }
     sleep(1);
-
     snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", app.final_root_dev);
     char *u = run_capture(cmd);
     if (u) { g_strstrip(u); strncpy(app.root_uuid, u, sizeof(app.root_uuid) - 1); g_free(u); }
@@ -805,7 +802,6 @@ static gboolean write_network(void) {
     run_cmd("rm -rf /mnt/etc/network/interfaces.d/*");
 
     if (strcmp(app.net_type, "skip") == 0) return TRUE;
-
     run_cmd("mkdir -p /mnt/etc/rc2.d /mnt/etc/runlevels/default");
 
     if (strcmp(app.net_type, "dhcp") == 0) {
@@ -892,9 +888,38 @@ static gboolean configure_system(void) {
         fail_install("System configuration failed");
         return FALSE;
     }
-
     run_cmd("find /mnt/usr/share \\( -name '*debian*' -not -path '*/dpkg/*' -not -path '*/apt/*' -not -path '*/python3/*' \\) -delete");
     run_cmd("rm -rf /mnt/usr/share/images/desktop-base /mnt/usr/share/images/vendor-logos");
+
+    
+    STEP("Configuring time sync and seat management");
+    bind_mounts();
+    run_cmd("chroot /mnt apt-get install -y --no-install-recommends chrony elogind libpam-elogind policykit-1");
+    write_file("/mnt/etc/adjtime", "0.0 0 0.0\n0\nUTC\n");
+    run_cmd("chroot /mnt hwclock --systohc --utc 2>/dev/null || true");
+    run_cmd("test -f /mnt/etc/chrony/chrony.conf && ! grep -q '^makestep' /mnt/etc/chrony/chrony.conf && "
+            "echo 'makestep 1.0 3' >> /mnt/etc/chrony/chrony.conf || true");
+    run_cmd("chroot /mnt rc-update add chronyd default 2>/dev/null || chroot /mnt rc-update add chrony default 2>/dev/null || true");
+    run_cmd("chroot /mnt rc-update add hwclock boot 2>/dev/null || true");
+
+    run_cmd("chroot /mnt rc-update add elogind boot 2>/dev/null || chroot /mnt rc-update add elogind default 2>/dev/null || true");
+    run_cmd("chroot /mnt rc-update add dbus boot 2>/dev/null || chroot /mnt rc-update add dbus default 2>/dev/null || true");
+    run_cmd("mkdir -p /mnt/etc/polkit-1/rules.d");
+    write_file("/mnt/etc/polkit-1/rules.d/50-boreal-power.rules",
+        "polkit.addRule(function(action, subject) {\n"
+        "    if ((action.id == \"org.freedesktop.login1.power-off\" ||\n"
+        "         action.id == \"org.freedesktop.login1.power-off-multiple-sessions\" ||\n"
+        "         action.id == \"org.freedesktop.login1.reboot\" ||\n"
+        "         action.id == \"org.freedesktop.login1.reboot-multiple-sessions\" ||\n"
+        "         action.id == \"org.freedesktop.login1.suspend\" ||\n"
+        "         action.id == \"org.freedesktop.login1.suspend-multiple-sessions\" ||\n"
+        "         action.id == \"org.freedesktop.login1.hibernate\" ||\n"
+        "         action.id == \"org.freedesktop.login1.hibernate-multiple-sessions\") &&\n"
+        "        subject.local && subject.active) {\n"
+        "        return polkit.Result.YES;\n"
+        "    }\n"
+        "});\n");
+    unbind_mounts();
 
     if (run_cmd("test -s /mnt/usr/share/python3/debian_defaults") != 0) {
         char *pyver = run_capture("ls /mnt/usr/lib/ | grep -oP '^python3\\.[0-9]+$' | sort -V | tail -1");
@@ -998,6 +1023,91 @@ static gboolean restore_inittab(void) {
     return TRUE;
 }
 
+static void write_xfce_config_to(const char *dest, gboolean is_system_xdg) {
+    char dir[512], path[600];
+    if (is_system_xdg) {
+        snprintf(dir, sizeof(dir), "%s/xfce4/xfconf/xfce-perchannel-xml", dest);
+    } else {
+        snprintf(dir, sizeof(dir), "%s/.config/xfce4/xfconf/xfce-perchannel-xml", dest);
+    }
+    char mkcmd[560];
+    snprintf(mkcmd, sizeof(mkcmd), "mkdir -p '%s'", dir);
+    run_cmd(mkcmd);
+
+    const char *mons[] = {"Virtual-1","Virtual-0","VGA-1","VGA-0","HDMI-1","HDMI-0",
+                           "DP-1","DP-0","eDP-1","eDP-0","DVI-I-1","DVI-D-1", NULL};
+    GString *xml = g_string_new(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-desktop\" version=\"1.0\">\n"
+        "  <property name=\"backdrop\" type=\"empty\">\n    <property name=\"screen0\" type=\"empty\">\n"
+        "      <property name=\"monitor0\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
+        "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
+        "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n"
+        "        </property>\n      </property>\n");
+    for (int i = 0; mons[i]; i++) {
+        g_string_append_printf(xml,
+            "      <property name=\"%s\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
+            "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
+            "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n        </property>\n      </property>\n", mons[i]);
+    }
+    g_string_append(xml,
+        "    </property>\n  </property>\n"
+        "  <property name=\"desktop-icons\" type=\"empty\">\n    <property name=\"style\" type=\"int\" value=\"2\"/>\n  </property>\n"
+        "</channel>\n");
+    snprintf(path, sizeof(path), "%s/xfce4-desktop.xml", dir);
+    write_file(path, xml->str);
+    g_string_free(xml, TRUE);
+
+    snprintf(path, sizeof(path), "%s/xfwm4.xml", dir);
+    write_file(path,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfwm4\" version=\"1.0\">\n"
+        "  <property name=\"general\" type=\"empty\">\n"
+        "    <property name=\"theme\" type=\"string\" value=\"Materia-dark\"/>\n"
+        "    <property name=\"title_font\" type=\"string\" value=\"IBM Plex Sans Bold 10\"/>\n"
+        "    <property name=\"double_click_action\" type=\"string\" value=\"maximize\"/>\n"
+        "    <property name=\"double_click_time\" type=\"int\" value=\"400\"/>\n"
+        "    <property name=\"double_click_distance\" type=\"int\" value=\"5\"/>\n"
+        "    <property name=\"click_to_focus\" type=\"bool\" value=\"true\"/>\n"
+        "    <property name=\"wrap_workspaces\" type=\"bool\" value=\"true\"/>\n"
+        "    <property name=\"box_move\" type=\"bool\" value=\"false\"/>\n"
+        "    <property name=\"box_resize\" type=\"bool\" value=\"false\"/>\n"
+        "  </property>\n</channel>\n");
+    snprintf(path, sizeof(path), "%s/xsettings.xml", dir);
+    write_file(path,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
+        "  <property name=\"Net\" type=\"empty\">\n"
+        "    <property name=\"ThemeName\" type=\"string\" value=\"Materia-dark\"/>\n"
+        "    <property name=\"IconThemeName\" type=\"string\" value=\"Papirus-Dark\"/>\n"
+        "    <property name=\"DoubleClickTime\" type=\"int\" value=\"400\"/>\n"
+        "    <property name=\"DoubleClickDistance\" type=\"int\" value=\"5\"/>\n"
+        "  </property>\n"
+        "  <property name=\"Gtk\" type=\"empty\">\n"
+        "    <property name=\"CursorThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
+        "    <property name=\"FontName\" type=\"string\" value=\"IBM Plex Sans 10\"/>\n"
+        "    <property name=\"MonospaceFontName\" type=\"string\" value=\"IBM Plex Mono 10\"/>\n"
+        "  </property>\n</channel>\n");
+
+    snprintf(path, sizeof(path), "%s/xfce4-session.xml", dir);
+    write_file(path,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-session\" version=\"1.0\">\n"
+        "  <property name=\"general\" type=\"empty\">\n"
+        "    <property name=\"FailsafeSessionName\" type=\"string\" value=\"Failsafe\"/>\n"
+        "    <property name=\"SaveOnExit\" type=\"bool\" value=\"false\"/>\n"
+        "    <property name=\"LockScreen\" type=\"string\" value=\"xflock4\"/>\n"
+        "  </property>\n"
+        "  <property name=\"shutdown\" type=\"empty\">\n"
+        "    <property name=\"ShowOnLogout\" type=\"bool\" value=\"true\"/>\n"
+        "  </property>\n"
+        "  <property name=\"sessions\" type=\"empty\">\n"
+        "    <property name=\"Failsafe\" type=\"empty\">\n"
+        "      <property name=\"Client0_Command\" type=\"array\"><value type=\"string\" value=\"xfwm4\"/></property>\n"
+        "      <property name=\"Client1_Command\" type=\"array\"><value type=\"string\" value=\"xfce4-panel\"/></property>\n"
+        "      <property name=\"Client2_Command\" type=\"array\"><value type=\"string\" value=\"xfdesktop\"/></property>\n"
+        "      <property name=\"Client3_Command\" type=\"array\"><value type=\"string\" value=\"xfsettingsd\"/></property>\n"
+        "      <property name=\"Count\" type=\"int\" value=\"4\"/>\n"
+        "    </property>\n"
+        "  </property>\n</channel>\n");
+}
+
 static gboolean setup_de(void) {
     STEP("Configuring desktop environment");
     run_cmd("mkdir -p /mnt/etc/runlevels/default /mnt/etc/rc2.d");
@@ -1017,46 +1127,43 @@ static gboolean setup_de(void) {
         run_cmd("mkdir -p /mnt/etc/runlevels/default");
         run_cmd("ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm");
         run_cmd("ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm");
+
+        STEP("Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)");
+        bind_mounts();
+        run_cmd("chroot /mnt apt-get install -y --no-install-recommends fonts-ibm-plex papirus-icon-theme materia-gtk-theme");
+        unbind_mounts();
         run_cmd("mkdir -p /mnt/etc/lightdm");
         if (run_cmd("ls /opt/borealOS/lightdm/* >/dev/null 2>&1") == 0) {
             run_cmd("cp -r /opt/borealOS/lightdm/. /mnt/etc/lightdm/");
         } else {
             write_file("/mnt/etc/lightdm/lightdm-gtk-greeter.conf",
-                "[greeter]\nbackground=/usr/share/boreal-artwork/wallpaper-default.png\n");
+                "[greeter]\nbackground=/usr/share/boreal-artwork/wallpaper-default.png\n"
+                "theme-name=Materia-dark\nicon-theme-name=Papirus-Dark\nfont-name=IBM Plex Sans 10\n");
         }
-        run_cmd("mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml");
-        const char *mons[] = {"Virtual-1","Virtual-0","VGA-1","VGA-0","HDMI-1","HDMI-0",
-                               "DP-1","DP-0","eDP-1","eDP-0","DVI-I-1","DVI-D-1", NULL};
-        GString *xml = g_string_new(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-desktop\" version=\"1.0\">\n"
-            "  <property name=\"backdrop\" type=\"empty\">\n    <property name=\"screen0\" type=\"empty\">\n"
-            "      <property name=\"monitor0\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
-            "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
-            "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n"
-            "        </property>\n      </property>\n");
-        for (int i = 0; mons[i]; i++) {
-            g_string_append_printf(xml,
-                "      <property name=\"%s\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
-                "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
-                "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n        </property>\n      </property>\n", mons[i]);
+        run_cmd("mkdir -p /mnt/etc/lightdm/lightdm.conf.d");
+        write_file("/mnt/etc/lightdm/lightdm.conf.d/60-boreal.conf",
+            "[LightDM]\nlogind-check-graphical=true\n\n[Seat:*]\ngreeter-session=lightdm-gtk-greeter\n");
+
+        STEP("Writing complete XFCE config (desktop, window manager, theme, session)");
+        
+        write_xfce_config_to("/mnt/etc/xdg", TRUE);
+        
+        write_xfce_config_to("/mnt/etc/skel", FALSE);
+        
+        write_xfce_config_to("/mnt/root", FALSE);
+        run_cmd("chroot /mnt chown -R root:root /root/.config 2>/dev/null || true");
+        
+        for (GList *l = app.extra_users; l; l = l->next) {
+            ExtraUser *u = l->data;
+            char home[300], chowncmd[400];
+            snprintf(home, sizeof(home), "/mnt/home/%s", u->name);
+            if (g_file_test(home, G_FILE_TEST_IS_DIR)) {
+                write_xfce_config_to(home, FALSE);
+                snprintf(chowncmd, sizeof(chowncmd), "chroot /mnt chown -R %s:%s /home/%s/.config 2>/dev/null || true",
+                         u->name, u->name, u->name);
+                run_cmd(chowncmd);
+            }
         }
-        g_string_append(xml, "    </property>\n  </property>\n</channel>\n");
-        write_file("/mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml", xml->str);
-        run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
-        run_cmd("cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml "
-                "/mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml");
-
-        run_cmd("mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml");
-        write_file("/mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
-            "  <property name=\"Net\" type=\"empty\">\n"
-            "    <property name=\"ThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
-            "    <property name=\"IconThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
-            "  </property>\n</channel>\n");
-        run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
-        run_cmd("cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml "
-                "/mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml");
-
         run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
                 "-type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \\) -exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
         run_cmd("mkdir -p /mnt/etc/skel/.config/autostart");
@@ -1089,7 +1196,6 @@ static gboolean setup_de(void) {
             "[Desktop Entry]\nType=Application\nName=BorealOS Panel Icon\n"
             "Exec=/usr/local/bin/boreal-panel-icon.sh\nHidden=false\nNoDisplay=true\n"
             "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
-        g_string_free(xml, TRUE);
         run_cmd("cp /mnt/usr/share/boreal-artwork/logo.png /mnt/etc/skel/.face 2>/dev/null || true");
         run_cmd("cp /mnt/usr/share/boreal-artwork/logo.png /mnt/root/.face 2>/dev/null || true");
         run_cmd("find /mnt/home -maxdepth 1 -mindepth 1 -type d -exec cp /mnt/usr/share/boreal-artwork/logo.png {}/.face \\; 2>/dev/null || true");
@@ -1155,7 +1261,6 @@ static gboolean install_grub(void) {
     gboolean separate_boot = app.boot_uuid[0] != 0;
     const char *boot_path_prefix = separate_boot ? "" : "/boot";
     const char *search_uuid = separate_boot ? app.boot_uuid : app.root_uuid;
-
     run_cmd("mkdir -p /mnt/boot/efi/EFI/BOOT");
     char unlock[256] = "";
     if (app.use_luks && !separate_boot) {
@@ -1175,7 +1280,6 @@ static gboolean install_grub(void) {
         "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)%s/grub\nconfigfile ($root)%s/grub/grub.cfg\n",
         unlock, search_uuid, boot_path_prefix, boot_path_prefix);
     write_file("/mnt/boot/efi/EFI/BOOT/grub.cfg", buf);
-
     run_cmd("mkdir -p /mnt/boot/grub");
     snprintf(buf, sizeof(buf),
         "insmod all_video\ninsmod gfxterm\ninsmod png\nset gfxmode=auto\nterminal_output gfxterm\n\n"
@@ -1768,8 +1872,6 @@ static void on_wifi_scan(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     refresh_wifi_list();
 }
-
-
 
 static void on_net_static_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;

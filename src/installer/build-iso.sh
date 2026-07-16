@@ -32,9 +32,15 @@ done
 
 command -v xorriso       >/dev/null || apt-get install -y xorriso        || die "Failed to install xorriso"
 command -v convert       >/dev/null || apt-get install -y imagemagick    || die "Failed to install imagemagick"
-command -v grub-mkrescue >/dev/null || apt-get install -y grub-efi-amd64-bin grub-pc-bin mtools || die "Failed to install grub"
+dpkg -s grub-efi-amd64-bin >/dev/null 2>&1 || apt-get install -y grub-efi-amd64-bin || die "Failed to install grub-efi-amd64-bin"
+dpkg -s grub-pc-bin        >/dev/null 2>&1 || apt-get install -y grub-pc-bin        || die "Failed to install grub-pc-bin"
+dpkg -s mtools             >/dev/null 2>&1 || apt-get install -y mtools             || die "Failed to install mtools"
+command -v grub-mkrescue >/dev/null || apt-get install -y grub2-common || die "Failed to install grub2-common"
 command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools  || die "Failed to install squashfs-tools"
 command -v unzip         >/dev/null || apt-get install -y unzip           || die "Failed to install unzip"
+
+EFI_PLATFORM_DIR="$(find /usr/lib/grub -maxdepth 1 -type d -name 'x86_64-efi' 2>/dev/null | head -1)"
+[ -n "$EFI_PLATFORM_DIR" ] || die "grub x86_64-efi platform directory not found — grub-efi-amd64-bin did not install correctly, EFI ISO cannot be built"
 
 echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
@@ -47,7 +53,7 @@ while true; do
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
-        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
+        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra fonts-ibm-plex papirus-icon-theme materia-gtk-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
         3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
         4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
@@ -373,19 +379,72 @@ for size in 16 24 32 48 64 96 128; do
     cp "$dir/xfce4-logo.png" "$dir/xfce-logo.png" 2>/dev/null || true
 done
 
-# Write a xfconf xsettings channel to set GTK theme and icon theme
 mkdir -p "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml"
 cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml" <<'XSETTINGS'
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xsettings" version="1.0">
   <property name="Net" type="empty">
-    <property name="IconThemeName" type="string" value="Adwaita"/>
+    <property name="ThemeName" type="string" value="Materia-dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="DoubleClickTime" type="int" value="400"/>
+    <property name="DoubleClickDistance" type="int" value="5"/>
   </property>
   <property name="Gtk" type="empty">
     <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="FontName" type="string" value="IBM Plex Sans 10"/>
+    <property name="MonospaceFontName" type="string" value="IBM Plex Mono 10"/>
   </property>
 </channel>
 XSETTINGS
+
+mkdir -p "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml"
+cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml" <<'XFWM4'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Materia-dark"/>
+    <property name="title_font" type="string" value="IBM Plex Sans Bold 10"/>
+    <property name="double_click_action" type="string" value="maximize"/>
+    <property name="double_click_time" type="int" value="400"/>
+    <property name="double_click_distance" type="int" value="5"/>
+    <property name="click_to_focus" type="bool" value="true"/>
+    <property name="wrap_workspaces" type="bool" value="true"/>
+    <property name="box_move" type="bool" value="false"/>
+    <property name="box_resize" type="bool" value="false"/>
+  </property>
+</channel>
+XFWM4
+
+cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml" <<'XFSESSION'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-session" version="1.0">
+  <property name="general" type="empty">
+    <property name="FailsafeSessionName" type="string" value="Failsafe"/>
+    <property name="SaveOnExit" type="bool" value="false"/>
+    <property name="LockScreen" type="string" value="xflock4"/>
+  </property>
+  <property name="shutdown" type="empty">
+    <property name="ShowOnLogout" type="bool" value="true"/>
+  </property>
+  <property name="sessions" type="empty">
+    <property name="Failsafe" type="empty">
+      <property name="Client0_Command" type="array">
+        <value type="string" value="xfwm4"/>
+      </property>
+      <property name="Client1_Command" type="array">
+        <value type="string" value="xfce4-panel"/>
+      </property>
+      <property name="Client2_Command" type="array">
+        <value type="string" value="xfdesktop"/>
+      </property>
+      <property name="Client3_Command" type="array">
+        <value type="string" value="xfsettingsd"/>
+      </property>
+      <property name="Count" type="int" value="4"/>
+    </property>
+  </property>
+</channel>
+XFSESSION
 
 # xfce4-desktop channel: wallpaper for all common monitor connectors + no system icons
 # xfdesktop4 stores wallpaper under the raw connector name (e.g. "Virtual-1"),
@@ -560,8 +619,10 @@ DESKTOP
 # Copy the same xfconf XMLs to /etc/skel so installed users get them too
 SKEL_XFCONF="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
 mkdir -p "$SKEL_XFCONF"
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"    "$SKEL_XFCONF/" 2>/dev/null || true
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"    "$SKEL_XFCONF/" 2>/dev/null || true
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"  "$SKEL_XFCONF/" 2>/dev/null || true
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"      "$SKEL_XFCONF/" 2>/dev/null || true
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"          "$SKEL_XFCONF/" 2>/dev/null || true
+cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml"  "$SKEL_XFCONF/" 2>/dev/null || true
 # Don't copy panel.xml to skel — installed users can have their own panel layout
 ok "BorealOS XFCE branding applied."
 
@@ -796,6 +857,8 @@ apt-get install -y --no-install-recommends \
     os-prober python3 rsync \
     fonts-dejavu-core \
     wpasupplicant \
+    elogind libpam-elogind policykit-1 \
+    chrony \
     $SHELL_PKG
 
 if [ "$DE_NAME" != "None" ]; then
@@ -887,6 +950,40 @@ done
 
 # Remove the file that tells Xorg/PAM which DM to use
 rm -f /etc/X11/default-display-manager 2>/dev/null || true
+
+echo "==> Configuring UTC hwclock + chrony..."
+cat > /etc/adjtime <<'ADJTIME'
+0.0 0 0.0
+0
+UTC
+ADJTIME
+hwclock --systohc --utc 2>/dev/null || true
+cat >> /etc/chrony/chrony.conf <<'CHRONYCONF'
+
+makestep 1.0 3
+CHRONYCONF
+rc-update add chronyd default 2>/dev/null || rc-update add chrony default 2>/dev/null || true
+rc-update add hwclock boot 2>/dev/null || true
+
+rc-update add elogind boot 2>/dev/null || rc-update add elogind default 2>/dev/null || true
+rc-update add dbus boot 2>/dev/null || rc-update add dbus default 2>/dev/null || true
+
+mkdir -p /etc/polkit-1/rules.d
+cat > /etc/polkit-1/rules.d/50-boreal-power.rules <<'POLKITRULES'
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.suspend" ||
+         action.id == "org.freedesktop.login1.suspend-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.hibernate" ||
+         action.id == "org.freedesktop.login1.hibernate-multiple-sessions") &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});
+POLKITRULES
 CHROOT
 
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
@@ -1084,8 +1181,18 @@ menuentry "BorealOS Live (safe mode)" {
 GRUB
 
 echo "==> Building ISO..."
+GRUB_MKRESCUE_LOG="$WORK/grub-mkrescue.log"
 grub-mkrescue -o "$OUTPUT" "$WORK/iso" \
-    --modules="normal iso9660 linux ext2 fat search search_label all_video gfxterm png" \
-    2>/dev/null || die "grub-mkrescue failed"
+    --modules="normal iso9660 linux ext2 fat search search_label part_gpt part_msdos efi_gop efi_uga all_video gfxterm png" \
+    2>&1 | tee "$GRUB_MKRESCUE_LOG"
+[ ${PIPESTATUS[0]} -eq 0 ] || die "grub-mkrescue failed (see $GRUB_MKRESCUE_LOG)"
+if grep -qi "No EFI boot images\|efi.img.*not found\|cannot find efi" "$GRUB_MKRESCUE_LOG"; then
+    die "grub-mkrescue built a BIOS-only ISO (no EFI El Torito image) — see $GRUB_MKRESCUE_LOG. Re-check grub-efi-amd64-bin installation."
+fi
+
+if command -v xorriso >/dev/null 2>&1; then
+    xorriso -indev "$OUTPUT" -report_el_torito plain 2>/dev/null | grep -qi "El Torito boot img.*platform.*EFI\|EFI System Partition" \
+        || warn "Could not confirm an EFI El Torito entry on $OUTPUT — verify UEFI boot manually before shipping this ISO."
+fi
 
 ok "==> Done: $OUTPUT ($(du -sh "$OUTPUT" | cut -f1))"
