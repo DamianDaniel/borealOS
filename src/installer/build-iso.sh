@@ -857,7 +857,7 @@ apt-get install -y --no-install-recommends \
     os-prober python3 rsync \
     fonts-dejavu-core \
     wpasupplicant \
-    elogind libpam-elogind policykit-1 \
+    elogind libpam-elogind polkitd pkexec \
     chrony \
     $SHELL_PKG
 

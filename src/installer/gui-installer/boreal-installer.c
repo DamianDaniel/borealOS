@@ -894,7 +894,7 @@ static gboolean configure_system(void) {
     
     STEP("Configuring time sync and seat management");
     bind_mounts();
-    run_cmd("chroot /mnt apt-get install -y --no-install-recommends chrony elogind libpam-elogind policykit-1");
+    run_cmd("chroot /mnt apt-get install -y --no-install-recommends chrony elogind libpam-elogind polkitd pkexec");
     write_file("/mnt/etc/adjtime", "0.0 0 0.0\n0\nUTC\n");
     run_cmd("chroot /mnt hwclock --systohc --utc 2>/dev/null || true");
     run_cmd("test -f /mnt/etc/chrony/chrony.conf && ! grep -q '^makestep' /mnt/etc/chrony/chrony.conf && "

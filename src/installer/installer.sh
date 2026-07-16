@@ -479,7 +479,7 @@ fi
 rc-update add chronyd default 2>/dev/null || rc-update add chrony default 2>/dev/null || true
 rc-update add hwclock boot 2>/dev/null || true
 
-apt-get install -y --no-install-recommends elogind libpam-elogind policykit-1 \
+apt-get install -y --no-install-recommends elogind libpam-elogind polkitd pkexec \
     || warn "elogind/policykit install failed — shutdown/restart will stay greyed out"
 rc-update add elogind boot 2>/dev/null || rc-update add elogind default 2>/dev/null || true
 rc-update add dbus boot 2>/dev/null || rc-update add dbus default 2>/dev/null || true
