@@ -77,8 +77,6 @@ typedef struct {
     GtkWidget *steps_popover;
     GtkWidget *auto_revealer, *custom_revealer, *luks_revealer;
     GtkWidget *log_scroll;
-    GtkWidget *catchup_btn;
-    gboolean log_autoscroll;
 
     GList *extra_users;
 
@@ -121,12 +119,10 @@ static gboolean log_idle(gpointer data) {
     gtk_text_buffer_insert(app.log_buffer, &end, m->text, -1);
     gtk_text_buffer_insert(app.log_buffer, &end, "\n", -1);
 
-    if (app.log_autoscroll) {
-        gtk_text_buffer_get_end_iter(app.log_buffer, &end);
-        gtk_text_buffer_place_cursor(app.log_buffer, &end);
-        GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
-        gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
-    }
+    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
+    gtk_text_buffer_place_cursor(app.log_buffer, &end);
+    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
     g_free(m->text);
     g_free(m);
     return FALSE;
@@ -220,30 +216,6 @@ static void write_file(const char *path, const char *content) {
 }
 
 typedef struct { gboolean *result; char *msg; } ErrMsg;
-
-static void on_catchup_clicked(GtkButton *btn, gpointer data) {
-    (void)btn; (void)data;
-    app.log_autoscroll = TRUE;
-    gtk_widget_hide(app.catchup_btn);
-    GtkTextIter end;
-    gtk_text_buffer_get_end_iter(app.log_buffer, &end);
-    gtk_text_buffer_place_cursor(app.log_buffer, &end);
-    GtkTextMark *mark = gtk_text_buffer_get_insert(app.log_buffer);
-    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(app.log_view), mark, 0.0, FALSE, 0, 0);
-}
-
-static void on_log_vadj_changed(GtkAdjustment *adj, gpointer data) {
-    (void)data;
-    double value = gtk_adjustment_get_value(adj);
-    double page = gtk_adjustment_get_page_size(adj);
-    double upper = gtk_adjustment_get_upper(adj);
-    gboolean at_bottom = (value + page >= upper - 24.0);
-    app.log_autoscroll = at_bottom;
-    if (app.catchup_btn) {
-        if (at_bottom) gtk_widget_hide(app.catchup_btn);
-        else gtk_widget_show(app.catchup_btn);
-    }
-}
 
 static void on_dialog_realize(GtkWidget *widget, gpointer data) {
     (void)data;
@@ -599,7 +571,6 @@ static gboolean partition_disk(void) {
         }
         if (!is_percent) cursor_mib = end_mib;
     }
-
     snprintf(cmd, sizeof(cmd), "partprobe %s", app.disk);
     run_cmd(cmd);
     sleep(2);
@@ -654,7 +625,6 @@ static gboolean partition_disk(void) {
         run_cmd("shred -u /tmp/borealkey");
         if (open_rc != 0) { fail_install("luksOpen failed"); return FALSE; }
         strncpy(app.final_root_dev, "/dev/mapper/borealcrypt", sizeof(app.final_root_dev) - 1);
-
         snprintf(cmd, sizeof(cmd), "cryptsetup luksUUID %s", app.root_part);
         char *lu = run_capture(cmd);
         if (lu) { g_strstrip(lu); strncpy(app.luks_uuid, lu, sizeof(app.luks_uuid) - 1); g_free(lu); }
@@ -682,7 +652,6 @@ static gboolean partition_disk(void) {
     else snprintf(cmd, sizeof(cmd), "mkfs.ext4 -F -L borealOS %s", app.final_root_dev);
     if (run_cmd(cmd) != 0) { fail_install("mkfs failed for root"); return FALSE; }
     sleep(1);
-
     snprintf(cmd, sizeof(cmd), "blkid -s UUID -o value %s", app.final_root_dev);
     char *u = run_capture(cmd);
     if (u) { g_strstrip(u); strncpy(app.root_uuid, u, sizeof(app.root_uuid) - 1); g_free(u); }
@@ -775,22 +744,16 @@ static gboolean install_bundled_packages(void) {
     bind_mounts();
     run_cmd("cp /etc/resolv.conf /mnt/etc/resolv.conf");
 
-    /* Prefer the .debs cached at ISO build time (fully offline, no network
-       needed on the target). Falls back to a live network install only if
-       no cached debs are present. */
+    /* The display manager itself is installed normally in the live env
+       (see build-iso.sh) and rides onto the target via the rsync copy -
+       no separate install needed here. This step now only installs any
+       extra custom .deb packages dropped in <repo>/packages/. */
     if (run_cmd("ls /opt/borealOS/debs/*.deb >/dev/null 2>&1") == 0) {
         run_cmd("mkdir -p /mnt/var/cache/boreal-debs");
         run_cmd("cp /opt/borealOS/debs/*.deb /mnt/var/cache/boreal-debs/");
-        run_cmd("rm -f /mnt/var/cache/boreal-debs/plymouth*.deb /mnt/var/cache/boreal-debs/libplymouth*.deb");
         if (run_cmd("chroot /mnt bash -c 'dpkg -i /var/cache/boreal-debs/*.deb; apt-get install -f -y'") != 0)
-            log_line("WARN: offline display manager install had errors, see log");
+            log_line("WARN: custom package install had errors, see log");
         run_cmd("rm -rf /mnt/var/cache/boreal-debs");
-    } else {
-        const char *dm = "lightdm lightdm-gtk-greeter";
-        if (strcmp(app.de_choice, "KDE Plasma") == 0) dm = "sddm";
-        char cmd[256];
-        snprintf(cmd, sizeof(cmd), "chroot /mnt apt-get install -y %s", dm);
-        if (run_cmd(cmd) != 0) log_line("WARN: display manager install failed, target may boot to TTY");
     }
 
     unbind_mounts();
@@ -839,7 +802,6 @@ static gboolean write_network(void) {
     run_cmd("rm -rf /mnt/etc/network/interfaces.d/*");
 
     if (strcmp(app.net_type, "skip") == 0) return TRUE;
-
     run_cmd("mkdir -p /mnt/etc/rc2.d /mnt/etc/runlevels/default");
 
     if (strcmp(app.net_type, "dhcp") == 0) {
@@ -926,9 +888,38 @@ static gboolean configure_system(void) {
         fail_install("System configuration failed");
         return FALSE;
     }
-
     run_cmd("find /mnt/usr/share \\( -name '*debian*' -not -path '*/dpkg/*' -not -path '*/apt/*' -not -path '*/python3/*' \\) -delete");
     run_cmd("rm -rf /mnt/usr/share/images/desktop-base /mnt/usr/share/images/vendor-logos");
+
+    
+    STEP("Configuring time sync and seat management");
+    bind_mounts();
+    run_cmd("chroot /mnt apt-get install -y --no-install-recommends chrony elogind libpam-elogind polkitd pkexec");
+    write_file("/mnt/etc/adjtime", "0.0 0 0.0\n0\nUTC\n");
+    run_cmd("chroot /mnt hwclock --systohc --utc 2>/dev/null || true");
+    run_cmd("test -f /mnt/etc/chrony/chrony.conf && ! grep -q '^makestep' /mnt/etc/chrony/chrony.conf && "
+            "echo 'makestep 1.0 3' >> /mnt/etc/chrony/chrony.conf || true");
+    run_cmd("chroot /mnt rc-update add chronyd default 2>/dev/null || chroot /mnt rc-update add chrony default 2>/dev/null || true");
+    run_cmd("chroot /mnt rc-update add hwclock boot 2>/dev/null || true");
+
+    run_cmd("chroot /mnt rc-update add elogind boot 2>/dev/null || chroot /mnt rc-update add elogind default 2>/dev/null || true");
+    run_cmd("chroot /mnt rc-update add dbus boot 2>/dev/null || chroot /mnt rc-update add dbus default 2>/dev/null || true");
+    run_cmd("mkdir -p /mnt/etc/polkit-1/rules.d");
+    write_file("/mnt/etc/polkit-1/rules.d/50-boreal-power.rules",
+        "polkit.addRule(function(action, subject) {\n"
+        "    if ((action.id == \"org.freedesktop.login1.power-off\" ||\n"
+        "         action.id == \"org.freedesktop.login1.power-off-multiple-sessions\" ||\n"
+        "         action.id == \"org.freedesktop.login1.reboot\" ||\n"
+        "         action.id == \"org.freedesktop.login1.reboot-multiple-sessions\" ||\n"
+        "         action.id == \"org.freedesktop.login1.suspend\" ||\n"
+        "         action.id == \"org.freedesktop.login1.suspend-multiple-sessions\" ||\n"
+        "         action.id == \"org.freedesktop.login1.hibernate\" ||\n"
+        "         action.id == \"org.freedesktop.login1.hibernate-multiple-sessions\") &&\n"
+        "        subject.local && subject.active) {\n"
+        "        return polkit.Result.YES;\n"
+        "    }\n"
+        "});\n");
+    unbind_mounts();
 
     if (run_cmd("test -s /mnt/usr/share/python3/debian_defaults") != 0) {
         char *pyver = run_capture("ls /mnt/usr/lib/ | grep -oP '^python3\\.[0-9]+$' | sort -V | tail -1");
@@ -1032,6 +1023,91 @@ static gboolean restore_inittab(void) {
     return TRUE;
 }
 
+static void write_xfce_config_to(const char *dest, gboolean is_system_xdg) {
+    char dir[512], path[600];
+    if (is_system_xdg) {
+        snprintf(dir, sizeof(dir), "%s/xfce4/xfconf/xfce-perchannel-xml", dest);
+    } else {
+        snprintf(dir, sizeof(dir), "%s/.config/xfce4/xfconf/xfce-perchannel-xml", dest);
+    }
+    char mkcmd[560];
+    snprintf(mkcmd, sizeof(mkcmd), "mkdir -p '%s'", dir);
+    run_cmd(mkcmd);
+
+    const char *mons[] = {"Virtual-1","Virtual-0","VGA-1","VGA-0","HDMI-1","HDMI-0",
+                           "DP-1","DP-0","eDP-1","eDP-0","DVI-I-1","DVI-D-1", NULL};
+    GString *xml = g_string_new(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-desktop\" version=\"1.0\">\n"
+        "  <property name=\"backdrop\" type=\"empty\">\n    <property name=\"screen0\" type=\"empty\">\n"
+        "      <property name=\"monitor0\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
+        "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
+        "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n"
+        "        </property>\n      </property>\n");
+    for (int i = 0; mons[i]; i++) {
+        g_string_append_printf(xml,
+            "      <property name=\"%s\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
+            "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
+            "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n        </property>\n      </property>\n", mons[i]);
+    }
+    g_string_append(xml,
+        "    </property>\n  </property>\n"
+        "  <property name=\"desktop-icons\" type=\"empty\">\n    <property name=\"style\" type=\"int\" value=\"2\"/>\n  </property>\n"
+        "</channel>\n");
+    snprintf(path, sizeof(path), "%s/xfce4-desktop.xml", dir);
+    write_file(path, xml->str);
+    g_string_free(xml, TRUE);
+
+    snprintf(path, sizeof(path), "%s/xfwm4.xml", dir);
+    write_file(path,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfwm4\" version=\"1.0\">\n"
+        "  <property name=\"general\" type=\"empty\">\n"
+        "    <property name=\"theme\" type=\"string\" value=\"Materia-dark\"/>\n"
+        "    <property name=\"title_font\" type=\"string\" value=\"IBM Plex Sans Bold 10\"/>\n"
+        "    <property name=\"double_click_action\" type=\"string\" value=\"maximize\"/>\n"
+        "    <property name=\"double_click_time\" type=\"int\" value=\"400\"/>\n"
+        "    <property name=\"double_click_distance\" type=\"int\" value=\"5\"/>\n"
+        "    <property name=\"click_to_focus\" type=\"bool\" value=\"true\"/>\n"
+        "    <property name=\"wrap_workspaces\" type=\"bool\" value=\"true\"/>\n"
+        "    <property name=\"box_move\" type=\"bool\" value=\"false\"/>\n"
+        "    <property name=\"box_resize\" type=\"bool\" value=\"false\"/>\n"
+        "  </property>\n</channel>\n");
+    snprintf(path, sizeof(path), "%s/xsettings.xml", dir);
+    write_file(path,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
+        "  <property name=\"Net\" type=\"empty\">\n"
+        "    <property name=\"ThemeName\" type=\"string\" value=\"Materia-dark\"/>\n"
+        "    <property name=\"IconThemeName\" type=\"string\" value=\"Papirus-Dark\"/>\n"
+        "    <property name=\"DoubleClickTime\" type=\"int\" value=\"400\"/>\n"
+        "    <property name=\"DoubleClickDistance\" type=\"int\" value=\"5\"/>\n"
+        "  </property>\n"
+        "  <property name=\"Gtk\" type=\"empty\">\n"
+        "    <property name=\"CursorThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
+        "    <property name=\"FontName\" type=\"string\" value=\"IBM Plex Sans 10\"/>\n"
+        "    <property name=\"MonospaceFontName\" type=\"string\" value=\"IBM Plex Mono 10\"/>\n"
+        "  </property>\n</channel>\n");
+
+    snprintf(path, sizeof(path), "%s/xfce4-session.xml", dir);
+    write_file(path,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-session\" version=\"1.0\">\n"
+        "  <property name=\"general\" type=\"empty\">\n"
+        "    <property name=\"FailsafeSessionName\" type=\"string\" value=\"Failsafe\"/>\n"
+        "    <property name=\"SaveOnExit\" type=\"bool\" value=\"false\"/>\n"
+        "    <property name=\"LockScreen\" type=\"string\" value=\"xflock4\"/>\n"
+        "  </property>\n"
+        "  <property name=\"shutdown\" type=\"empty\">\n"
+        "    <property name=\"ShowOnLogout\" type=\"bool\" value=\"true\"/>\n"
+        "  </property>\n"
+        "  <property name=\"sessions\" type=\"empty\">\n"
+        "    <property name=\"Failsafe\" type=\"empty\">\n"
+        "      <property name=\"Client0_Command\" type=\"array\"><value type=\"string\" value=\"xfwm4\"/></property>\n"
+        "      <property name=\"Client1_Command\" type=\"array\"><value type=\"string\" value=\"xfce4-panel\"/></property>\n"
+        "      <property name=\"Client2_Command\" type=\"array\"><value type=\"string\" value=\"xfdesktop\"/></property>\n"
+        "      <property name=\"Client3_Command\" type=\"array\"><value type=\"string\" value=\"xfsettingsd\"/></property>\n"
+        "      <property name=\"Count\" type=\"int\" value=\"4\"/>\n"
+        "    </property>\n"
+        "  </property>\n</channel>\n");
+}
+
 static gboolean setup_de(void) {
     STEP("Configuring desktop environment");
     run_cmd("mkdir -p /mnt/etc/runlevels/default /mnt/etc/rc2.d");
@@ -1048,56 +1124,78 @@ static gboolean setup_de(void) {
         run_cmd("mkdir -p /mnt/etc/xdg");
         write_file("/mnt/etc/xdg/mimeapps.list",
             "[Default Applications]\ninode/directory=thunar.desktop\n");
+        run_cmd("mkdir -p /mnt/etc/runlevels/default");
         run_cmd("ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm");
         run_cmd("ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm");
+
+        STEP("Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)");
+        bind_mounts();
+        run_cmd("chroot /mnt apt-get install -y --no-install-recommends fonts-ibm-plex papirus-icon-theme materia-gtk-theme");
+        unbind_mounts();
         run_cmd("mkdir -p /mnt/etc/lightdm");
         if (run_cmd("ls /opt/borealOS/lightdm/* >/dev/null 2>&1") == 0) {
             run_cmd("cp -r /opt/borealOS/lightdm/. /mnt/etc/lightdm/");
         } else {
             write_file("/mnt/etc/lightdm/lightdm-gtk-greeter.conf",
-                "[greeter]\nbackground=/usr/share/boreal-artwork/wallpaper-default.png\n");
+                "[greeter]\nbackground=/usr/share/boreal-artwork/wallpaper-default.png\n"
+                "theme-name=Materia-dark\nicon-theme-name=Papirus-Dark\nfont-name=IBM Plex Sans 10\n");
         }
-        run_cmd("mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml");
-        const char *mons[] = {"Virtual-1","Virtual-0","VGA-1","VGA-0","HDMI-1","HDMI-0",
-                               "DP-1","DP-0","eDP-1","eDP-0","DVI-I-1","DVI-D-1", NULL};
-        GString *xml = g_string_new(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-desktop\" version=\"1.0\">\n"
-            "  <property name=\"backdrop\" type=\"empty\">\n    <property name=\"screen0\" type=\"empty\">\n"
-            "      <property name=\"monitor0\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
-            "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
-            "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n"
-            "        </property>\n      </property>\n");
-        for (int i = 0; mons[i]; i++) {
-            g_string_append_printf(xml,
-                "      <property name=\"%s\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
-                "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
-                "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n        </property>\n      </property>\n", mons[i]);
+        run_cmd("mkdir -p /mnt/etc/lightdm/lightdm.conf.d");
+        write_file("/mnt/etc/lightdm/lightdm.conf.d/60-boreal.conf",
+            "[LightDM]\nlogind-check-graphical=true\n\n[Seat:*]\ngreeter-session=lightdm-gtk-greeter\n");
+
+        STEP("Writing complete XFCE config (desktop, window manager, theme, session)");
+        
+        write_xfce_config_to("/mnt/etc/xdg", TRUE);
+        
+        write_xfce_config_to("/mnt/etc/skel", FALSE);
+        
+        write_xfce_config_to("/mnt/root", FALSE);
+        run_cmd("chroot /mnt chown -R root:root /root/.config 2>/dev/null || true");
+        
+        for (GList *l = app.extra_users; l; l = l->next) {
+            ExtraUser *u = l->data;
+            char home[300], chowncmd[400];
+            snprintf(home, sizeof(home), "/mnt/home/%s", u->name);
+            if (g_file_test(home, G_FILE_TEST_IS_DIR)) {
+                write_xfce_config_to(home, FALSE);
+                snprintf(chowncmd, sizeof(chowncmd), "chroot /mnt chown -R %s:%s /home/%s/.config 2>/dev/null || true",
+                         u->name, u->name, u->name);
+                run_cmd(chowncmd);
+            }
         }
-        g_string_append(xml, "    </property>\n  </property>\n</channel>\n");
-        write_file("/mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml", xml->str);
-        run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
-        run_cmd("cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml "
-                "/mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml");
-
-        run_cmd("mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml");
-        write_file("/mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
-            "  <property name=\"Net\" type=\"empty\">\n"
-            "    <property name=\"IconThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
-            "  </property>\n</channel>\n");
-        run_cmd("mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml");
-        run_cmd("cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml "
-                "/mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml");
-
         run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
                 "-type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \\) -exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
         run_cmd("mkdir -p /mnt/etc/skel/.config/autostart");
+        write_file("/mnt/usr/local/bin/boreal-set-wallpaper.sh",
+            "#!/bin/sh\n"
+            "# xfdesktop keys its wallpaper by the *actual* connected monitor name,\n"
+            "# which varies by hardware/driver - a static guess-list can miss it.\n"
+            "# Ask xrandr what's really connected and set it directly, every time.\n"
+            "WALLPAPER=/usr/share/boreal-artwork/wallpaper-default.png\n"
+            "[ -f \"$WALLPAPER\" ] || exit 0\n"
+            "sleep 3\n"
+            "MONS=$(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')\n"
+            "for mon in $MONS monitor0; do\n"
+            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/last-image \\\n"
+            "        -n -t string -s \"$WALLPAPER\" 2>/dev/null\n"
+            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/image-style \\\n"
+            "        -n -t int -s 5 2>/dev/null\n"
+            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/color-style \\\n"
+            "        -n -t int -s 0 2>/dev/null\n"
+            "done\n"
+            "sleep 1\n"
+            "xfdesktop --reload 2>/dev/null || xfdesktop &\n");
+        run_cmd("chmod 755 /mnt/usr/local/bin/boreal-set-wallpaper.sh");
+        write_file("/mnt/etc/skel/.config/autostart/boreal-set-wallpaper.desktop",
+            "[Desktop Entry]\nType=Application\nName=BorealOS Wallpaper\n"
+            "Exec=/usr/local/bin/boreal-set-wallpaper.sh\nHidden=false\nNoDisplay=true\n"
+            "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
         run_cmd("cp /usr/local/bin/boreal-panel-icon.sh /mnt/usr/local/bin/boreal-panel-icon.sh");
         write_file("/mnt/etc/skel/.config/autostart/boreal-panel-icon.desktop",
             "[Desktop Entry]\nType=Application\nName=BorealOS Panel Icon\n"
             "Exec=/usr/local/bin/boreal-panel-icon.sh\nHidden=false\nNoDisplay=true\n"
             "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
-        g_string_free(xml, TRUE);
         run_cmd("cp /mnt/usr/share/boreal-artwork/logo.png /mnt/etc/skel/.face 2>/dev/null || true");
         run_cmd("cp /mnt/usr/share/boreal-artwork/logo.png /mnt/root/.face 2>/dev/null || true");
         run_cmd("find /mnt/home -maxdepth 1 -mindepth 1 -type d -exec cp /mnt/usr/share/boreal-artwork/logo.png {}/.face \\; 2>/dev/null || true");
@@ -1163,7 +1261,6 @@ static gboolean install_grub(void) {
     gboolean separate_boot = app.boot_uuid[0] != 0;
     const char *boot_path_prefix = separate_boot ? "" : "/boot";
     const char *search_uuid = separate_boot ? app.boot_uuid : app.root_uuid;
-
     run_cmd("mkdir -p /mnt/boot/efi/EFI/BOOT");
     char unlock[256] = "";
     if (app.use_luks && !separate_boot) {
@@ -1183,7 +1280,6 @@ static gboolean install_grub(void) {
         "%ssearch --no-floppy --fs-uuid --set=root %s\nset prefix=($root)%s/grub\nconfigfile ($root)%s/grub/grub.cfg\n",
         unlock, search_uuid, boot_path_prefix, boot_path_prefix);
     write_file("/mnt/boot/efi/EFI/BOOT/grub.cfg", buf);
-
     run_cmd("mkdir -p /mnt/boot/grub");
     snprintf(buf, sizeof(buf),
         "insmod all_video\ninsmod gfxterm\ninsmod png\nset gfxmode=auto\nterminal_output gfxterm\n\n"
@@ -1777,8 +1873,6 @@ static void on_wifi_scan(GtkButton *btn, gpointer data) {
     refresh_wifi_list();
 }
 
-
-
 static void on_net_static_toggled(GtkToggleButton *btn, gpointer data) {
     (void)data;
     if (gtk_toggle_button_get_active(btn)) {
@@ -2055,10 +2149,12 @@ static void refresh_part_list_view(void) {
         PlannedPart *p = l->data;
         GtkTreeIter it;
         gtk_list_store_append(app.part_store, &it);
+        char fs_label[64];
+        snprintf(fs_label, sizeof(fs_label), "%s%s", p->fs_type, p->format ? "  (format)" : "");
         gtk_list_store_set(app.part_store, &it,
             0, p->is_new ? "(new)" : p->device,
             1, p->size_spec,
-            2, p->fs_type,
+            2, fs_label,
             3, p->mountpoint,
             4, p->format,
             -1);
@@ -2158,6 +2254,21 @@ static void on_add_custom_partition(GtkButton *btn, gpointer data) {
     gtk_widget_destroy(dlg);
 }
 
+static void on_toggle_format_selected(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view));
+    GtkTreeModel *model;
+    GList *rows = gtk_tree_selection_get_selected_rows(sel, &model);
+    if (!rows) return;
+    for (GList *l = rows; l; l = l->next) {
+        int *indices = gtk_tree_path_get_indices((GtkTreePath *)l->data);
+        PlannedPart *p = g_list_nth_data(app.planned_parts, indices[0]);
+        if (p) p->format = !p->format;
+    }
+    g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+    refresh_part_list_view();
+}
+
 static void on_remove_custom_partition(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(app.part_tree_view));
@@ -2179,13 +2290,6 @@ static void on_remove_custom_partition(GtkButton *btn, gpointer data) {
     }
     g_list_free(to_remove);
     refresh_part_list_view();
-}
-
-static void on_part_format_toggled(GtkCellRendererToggle *cell, gchar *path_str, gpointer data) {
-    (void)cell; (void)data;
-    int idx = atoi(path_str);
-    PlannedPart *p = g_list_nth_data(app.planned_parts, idx);
-    if (p) { p->format = !p->format; refresh_part_list_view(); }
 }
 
 static void on_part_mountpoint_edited(GtkCellRendererText *cell, gchar *path_str, gchar *new_text, gpointer data) {
@@ -2213,6 +2317,9 @@ static GtkWidget *page_partitioning(void) {
     app.auto_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_name(app.auto_box, "part-group");
     gtk_widget_set_margin_start(app.auto_box, 20);
+    gtk_widget_set_margin_end(app.auto_box, 20);
+    gtk_widget_set_hexpand(app.auto_box, TRUE);
+    gtk_widget_set_halign(app.auto_box, GTK_ALIGN_FILL);
 
     GtkWidget *wipe_hdr = gtk_label_new("Where to install");
     gtk_widget_set_name(wipe_hdr, "group-label");
@@ -2263,6 +2370,9 @@ static GtkWidget *page_partitioning(void) {
     app.custom_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_name(app.custom_box, "part-group");
     gtk_widget_set_margin_start(app.custom_box, 20);
+    gtk_widget_set_margin_end(app.custom_box, 20);
+    gtk_widget_set_hexpand(app.custom_box, TRUE);
+    gtk_widget_set_halign(app.custom_box, GTK_ALIGN_FILL);
     app.part_store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
     app.part_tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(app.part_store));
     gtk_widget_set_name(app.part_tree_view, "dark-listbox");
@@ -2278,9 +2388,6 @@ static GtkWidget *page_partitioning(void) {
     g_object_set(r3, "editable", TRUE, NULL);
     g_signal_connect(r3, "edited", G_CALLBACK(on_part_mountpoint_edited), NULL);
     gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Mountpoint", r3, "text", 3, NULL);
-    GtkCellRenderer *r4 = gtk_cell_renderer_toggle_new();
-    g_signal_connect(r4, "toggled", G_CALLBACK(on_part_format_toggled), NULL);
-    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(app.part_tree_view), -1, "Format", r4, "active", 4, NULL);
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(scroll, 640, 240);
@@ -2297,9 +2404,13 @@ static GtkWidget *page_partitioning(void) {
     GtkWidget *rescan_btn = gtk_button_new_with_label("Rescan disk");
     gtk_widget_set_name(rescan_btn, "nav-button");
     g_signal_connect_swapped(rescan_btn, "clicked", G_CALLBACK(rescan_existing_partitions), NULL);
+    GtkWidget *toggle_fmt_btn = gtk_button_new_with_label("Toggle format");
+    gtk_widget_set_name(toggle_fmt_btn, "nav-button");
+    g_signal_connect(toggle_fmt_btn, "clicked", G_CALLBACK(on_toggle_format_selected), NULL);
     gtk_box_pack_start(GTK_BOX(part_btn_row), add_part_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(part_btn_row), remove_part_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(part_btn_row), rescan_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(part_btn_row), toggle_fmt_btn, FALSE, FALSE, 0);
 
     GtkWidget *custom_info = gtk_label_new("Existing partitions need a mountpoint to be used. New partitions are created in free space.");
     gtk_widget_set_halign(custom_info, GTK_ALIGN_START);
@@ -2316,6 +2427,9 @@ static GtkWidget *page_partitioning(void) {
 
     GtkWidget *crypt_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_widget_set_margin_start(crypt_row, 20);
+    gtk_widget_set_margin_end(crypt_row, 20);
+    gtk_widget_set_hexpand(crypt_row, TRUE);
+    gtk_widget_set_halign(crypt_row, GTK_ALIGN_FILL);
     gtk_widget_set_margin_top(crypt_row, 12);
 
     GtkWidget *lvm_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -2610,7 +2724,6 @@ static GtkWidget *page_progress(void) {
     gtk_widget_set_name(scroll, "log-scroll");
     gtk_widget_set_size_request(scroll, 700, 400);
     app.log_scroll = scroll;
-    app.log_autoscroll = TRUE;
     app.log_view = gtk_text_view_new();
     gtk_widget_set_name(app.log_view, "log-view");
     gtk_text_view_set_editable(GTK_TEXT_VIEW(app.log_view), FALSE);
@@ -2618,27 +2731,9 @@ static GtkWidget *page_progress(void) {
     app.log_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app.log_view));
     gtk_container_add(GTK_CONTAINER(scroll), app.log_view);
 
-    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
-    g_signal_connect(vadj, "value-changed", G_CALLBACK(on_log_vadj_changed), NULL);
-    g_signal_connect(vadj, "changed", G_CALLBACK(on_log_vadj_changed), NULL);
-
-    app.catchup_btn = gtk_button_new_with_label("Catch up");
-    gtk_widget_set_name(app.catchup_btn, "primary-button");
-    gtk_widget_set_halign(app.catchup_btn, GTK_ALIGN_END);
-    gtk_widget_set_valign(app.catchup_btn, GTK_ALIGN_END);
-    gtk_widget_set_margin_end(app.catchup_btn, 16);
-    gtk_widget_set_margin_bottom(app.catchup_btn, 16);
-    gtk_widget_set_no_show_all(app.catchup_btn, TRUE);
-    gtk_widget_hide(app.catchup_btn);
-    g_signal_connect(app.catchup_btn, "clicked", G_CALLBACK(on_catchup_clicked), NULL);
-
-    GtkWidget *log_overlay = gtk_overlay_new();
-    gtk_container_add(GTK_CONTAINER(log_overlay), scroll);
-    gtk_overlay_add_overlay(GTK_OVERLAY(log_overlay), app.catchup_btn);
-
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), app.progress_bar, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(box), log_overlay, TRUE, TRUE, 8);
+    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 8);
     return box;
 }
 
@@ -2678,7 +2773,7 @@ static GtkWidget *wrap_page(GtkWidget *content) {
     gtk_widget_set_halign(panel, GTK_ALIGN_CENTER);
     gtk_container_set_border_width(GTK_CONTAINER(panel), 8);
     gtk_box_pack_start(GTK_BOX(panel), content, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, TRUE, 24);
+    gtk_box_pack_start(GTK_BOX(outer), panel, TRUE, FALSE, 24);
     return outer;
 }
 

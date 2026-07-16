@@ -461,6 +461,44 @@ LSB
 echo "BorealOS"     > /etc/issue
 echo "BorealOS alpha" > /etc/issue.net
 echo "BorealOS"     > /etc/debian_version
+
+apt-get install -y --no-install-recommends chrony || warn "chrony install failed"
+cat > /etc/adjtime <<'ADJTIME'
+0.0 0 0.0
+0
+UTC
+ADJTIME
+hwclock --systohc --utc 2>/dev/null || true
+mkdir -p /etc/chrony
+if [ -f /etc/chrony/chrony.conf ] && ! grep -q "^makestep" /etc/chrony/chrony.conf; then
+    cat >> /etc/chrony/chrony.conf <<'CHRONYCONF'
+
+makestep 1.0 3
+CHRONYCONF
+fi
+rc-update add chronyd default 2>/dev/null || rc-update add chrony default 2>/dev/null || true
+rc-update add hwclock boot 2>/dev/null || true
+
+apt-get install -y --no-install-recommends elogind libpam-elogind polkitd pkexec \
+    || warn "elogind/policykit install failed — shutdown/restart will stay greyed out"
+rc-update add elogind boot 2>/dev/null || rc-update add elogind default 2>/dev/null || true
+rc-update add dbus boot 2>/dev/null || rc-update add dbus default 2>/dev/null || true
+mkdir -p /etc/polkit-1/rules.d
+cat > /etc/polkit-1/rules.d/50-boreal-power.rules <<'POLKITRULES'
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.suspend" ||
+         action.id == "org.freedesktop.login1.suspend-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.hibernate" ||
+         action.id == "org.freedesktop.login1.hibernate-multiple-sessions") &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});
+POLKITRULES
 CHROOT
 
     step "Finalizing system branding..."
@@ -603,6 +641,12 @@ SDDM
         "XFCE")
             ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm 2>/dev/null || true
             ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm 2>/dev/null || true
+
+            step "Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)..."
+            chroot /mnt apt-get install -y --no-install-recommends \
+                fonts-ibm-plex papirus-icon-theme materia-gtk-theme \
+                2>/dev/null || warn "Theming package install failed — falling back to whatever GTK theme is already installed"
+
             mkdir -p /mnt/etc/lightdm
             if ls /opt/borealOS/lightdm/* >/dev/null 2>&1; then
                 cp -r /opt/borealOS/lightdm/. /mnt/etc/lightdm/
@@ -611,40 +655,139 @@ SDDM
                 cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
 background=/usr/share/boreal-artwork/wallpaper-default.png
+theme-name=Materia-dark
+icon-theme-name=Papirus-Dark
+font-name=IBM Plex Sans 10
 LDM
             fi
-            mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
-            {
-            echo '<?xml version="1.0" encoding="UTF-8"?>'
-            echo '<channel name="xfce4-desktop" version="1.0">'
-            echo '  <property name="backdrop" type="empty">'
-            echo '    <property name="screen0" type="empty">'
-            echo '      <property name="monitor0" type="empty">'
-            echo '        <property name="workspace0" type="empty">'
-            echo '          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>'
-            echo '          <property name="image-style" type="int" value="5"/>'
-            echo '        </property>'
-            echo '      </property>'
-            for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0 DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
-                echo "      <property name=\"${mon}\" type=\"empty\">"
+            mkdir -p /mnt/etc/lightdm/lightdm.conf.d
+            cat > /mnt/etc/lightdm/lightdm.conf.d/60-boreal.conf <<LIGHTDMCONF
+[LightDM]
+logind-check-graphical=true
+
+[Seat:*]
+greeter-session=lightdm-gtk-greeter
+LIGHTDMCONF
+
+            step "Writing complete XFCE config (desktop, window manager, theme, session)..."
+
+            write_xfce_config() {
+                local dest="$1"
+                local xfconf="$dest/.config/xfce4/xfconf/xfce-perchannel-xml"
+                mkdir -p "$xfconf"
+
+                {
+                echo '<?xml version="1.0" encoding="UTF-8"?>'
+                echo '<channel name="xfce4-desktop" version="1.0">'
+                echo '  <property name="backdrop" type="empty">'
+                echo '    <property name="screen0" type="empty">'
+                echo '      <property name="monitor0" type="empty">'
                 echo '        <property name="workspace0" type="empty">'
                 echo '          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>'
                 echo '          <property name="image-style" type="int" value="5"/>'
                 echo '        </property>'
                 echo '      </property>'
+                for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0 DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
+                    echo "      <property name=\"${mon}\" type=\"empty\">"
+                    echo '        <property name="workspace0" type="empty">'
+                    echo '          <property name="last-image" type="string" value="/usr/share/boreal-artwork/wallpaper-default.png"/>'
+                    echo '          <property name="image-style" type="int" value="5"/>'
+                    echo '        </property>'
+                    echo '      </property>'
+                done
+                echo '    </property>'
+                echo '  </property>'
+                echo '  <property name="desktop-icons" type="empty">'
+                echo '    <property name="style" type="int" value="2"/>'
+                echo '  </property>'
+                echo '</channel>'
+                } > "$xfconf/xfce4-desktop.xml"
+
+                cat > "$xfconf/xfwm4.xml" <<'XFWM4'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Materia-dark"/>
+    <property name="title_font" type="string" value="IBM Plex Sans Bold 10"/>
+    <property name="double_click_action" type="string" value="maximize"/>
+    <property name="double_click_time" type="int" value="400"/>
+    <property name="double_click_distance" type="int" value="5"/>
+    <property name="click_to_focus" type="bool" value="true"/>
+    <property name="wrap_workspaces" type="bool" value="true"/>
+    <property name="box_move" type="bool" value="false"/>
+    <property name="box_resize" type="bool" value="false"/>
+  </property>
+</channel>
+XFWM4
+
+                cat > "$xfconf/xsettings.xml" <<'XSETTINGS'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Materia-dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="DoubleClickTime" type="int" value="400"/>
+    <property name="DoubleClickDistance" type="int" value="5"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="FontName" type="string" value="IBM Plex Sans 10"/>
+    <property name="MonospaceFontName" type="string" value="IBM Plex Mono 10"/>
+  </property>
+</channel>
+XSETTINGS
+
+                cat > "$xfconf/xfce4-session.xml" <<'XFSESSION'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-session" version="1.0">
+  <property name="general" type="empty">
+    <property name="FailsafeSessionName" type="string" value="Failsafe"/>
+    <property name="SaveOnExit" type="bool" value="false"/>
+    <property name="LockScreen" type="string" value="xflock4"/>
+  </property>
+  <property name="shutdown" type="empty">
+    <property name="ShowOnLogout" type="bool" value="true"/>
+  </property>
+  <property name="sessions" type="empty">
+    <property name="Failsafe" type="empty">
+      <property name="Client0_Command" type="array">
+        <value type="string" value="xfwm4"/>
+      </property>
+      <property name="Client1_Command" type="array">
+        <value type="string" value="xfce4-panel"/>
+      </property>
+      <property name="Client2_Command" type="array">
+        <value type="string" value="xfdesktop"/>
+      </property>
+      <property name="Client3_Command" type="array">
+        <value type="string" value="xfsettingsd"/>
+      </property>
+      <property name="Count" type="int" value="4"/>
+    </property>
+  </property>
+</channel>
+XFSESSION
+            }
+
+            mkdir -p /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+            SCRATCH=$(mktemp -d)
+            write_xfce_config "$SCRATCH"
+            cp "$SCRATCH/.config/xfce4/xfconf/xfce-perchannel-xml/"*.xml \
+               /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/
+            rm -rf "$SCRATCH"
+
+            write_xfce_config /mnt/etc/skel
+
+            write_xfce_config /mnt/root
+            chroot /mnt chown -R root:root /root/.config 2>/dev/null || true
+
+            for u in "${EXTRA_USERS[@]}"; do
+                local uname="${u%%|*}"
+                [ -d "/mnt/home/${uname}" ] || continue
+                write_xfce_config "/mnt/home/${uname}"
+                chroot /mnt chown -R "${uname}:${uname}" "/home/${uname}/.config" 2>/dev/null || true
             done
-            echo '    </property>'
-            echo '  </property>'
-            echo '</channel>'
-            } > /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
-            # Also write to skel so any installed user actually gets it — the
-            # system-default file above only applies when no per-user config
-            # exists, and is silently ignored by some xfdesktop versions once
-            # a session has run once.
-            mkdir -p /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
-            cp /mnt/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
-               /mnt/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
-            # Also drop the panel-icon autostart fixer (see live env section)
+
             # into skel so the panel logo applies for installed users too.
             mkdir -p /mnt/etc/skel/.config/autostart
             cp /usr/local/bin/boreal-panel-icon.sh /mnt/usr/local/bin/boreal-panel-icon.sh 2>/dev/null || true
