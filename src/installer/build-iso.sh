@@ -1183,7 +1183,7 @@ GRUB
 echo "==> Building ISO..."
 GRUB_MKRESCUE_LOG="$WORK/grub-mkrescue.log"
 grub-mkrescue -o "$OUTPUT" "$WORK/iso" \
-    --modules="normal iso9660 linux ext2 fat search search_label part_gpt part_msdos efi_gop efi_uga all_video gfxterm png" \
+    --modules="normal iso9660 linux ext2 fat search search_label part_gpt part_msdos all_video gfxterm png" \
     2>&1 | tee "$GRUB_MKRESCUE_LOG"
 [ ${PIPESTATUS[0]} -eq 0 ] || die "grub-mkrescue failed (see $GRUB_MKRESCUE_LOG)"
 if grep -qi "No EFI boot images\|efi.img.*not found\|cannot find efi" "$GRUB_MKRESCUE_LOG"; then
