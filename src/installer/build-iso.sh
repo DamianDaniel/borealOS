@@ -40,7 +40,7 @@ command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools  || die
 command -v unzip         >/dev/null || apt-get install -y unzip           || die "Failed to install unzip"
 
 EFI_PLATFORM_DIR="$(find /usr/lib/grub -maxdepth 1 -type d -name 'x86_64-efi' 2>/dev/null | head -1)"
-[ -n "$EFI_PLATFORM_DIR" ] || die "grub x86_64-efi platform directory not found — grub-efi-amd64-bin did not install correctly, EFI ISO cannot be built"
+[ -n "$EFI_PLATFORM_DIR" ] || die "grub x86_64-efi platform directory not found - grub-efi-amd64-bin did not install correctly, EFI ISO cannot be built"
 
 echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
@@ -1187,12 +1187,12 @@ grub-mkrescue -o "$OUTPUT" "$WORK/iso" \
     2>&1 | tee "$GRUB_MKRESCUE_LOG"
 [ ${PIPESTATUS[0]} -eq 0 ] || die "grub-mkrescue failed (see $GRUB_MKRESCUE_LOG)"
 if grep -qi "No EFI boot images\|efi.img.*not found\|cannot find efi" "$GRUB_MKRESCUE_LOG"; then
-    die "grub-mkrescue built a BIOS-only ISO (no EFI El Torito image) — see $GRUB_MKRESCUE_LOG. Re-check grub-efi-amd64-bin installation."
+    die "grub-mkrescue built a BIOS-only ISO (no EFI El Torito image) - see $GRUB_MKRESCUE_LOG. Re-check grub-efi-amd64-bin installation."
 fi
 
 if command -v xorriso >/dev/null 2>&1; then
-    xorriso -indev "$OUTPUT" -report_el_torito plain 2>/dev/null | grep -qi "El Torito boot img.*platform.*EFI\|EFI System Partition" \
-        || warn "Could not confirm an EFI El Torito entry on $OUTPUT — verify UEFI boot manually before shipping this ISO."
+    xorriso -indev "$OUTPUT" -report_el_torito plain 2>/dev/null | grep -qi "El Torito boot img.*UEFI" \
+        || warn "Could not confirm an EFI El Torito entry on $OUTPUT - verify UEFI boot manually before shipping this ISO."
 fi
 
 ok "==> Done: $OUTPUT ($(du -sh "$OUTPUT" | cut -f1))"

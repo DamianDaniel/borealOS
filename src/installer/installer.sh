@@ -480,7 +480,7 @@ rc-update add chronyd default 2>/dev/null || rc-update add chrony default 2>/dev
 rc-update add hwclock boot 2>/dev/null || true
 
 apt-get install -y --no-install-recommends elogind libpam-elogind polkitd pkexec \
-    || warn "elogind/policykit install failed — shutdown/restart will stay greyed out"
+    || warn "elogind/policykit install failed - shutdown/restart will stay greyed out"
 rc-update add elogind boot 2>/dev/null || rc-update add elogind default 2>/dev/null || true
 rc-update add dbus boot 2>/dev/null || rc-update add dbus default 2>/dev/null || true
 mkdir -p /etc/polkit-1/rules.d
@@ -645,7 +645,7 @@ SDDM
             step "Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)..."
             chroot /mnt apt-get install -y --no-install-recommends \
                 fonts-ibm-plex papirus-icon-theme materia-gtk-theme \
-                2>/dev/null || warn "Theming package install failed — falling back to whatever GTK theme is already installed"
+                2>/dev/null || warn "Theming package install failed - falling back to whatever GTK theme is already installed"
 
             mkdir -p /mnt/etc/lightdm
             if ls /opt/borealOS/lightdm/* >/dev/null 2>&1; then
