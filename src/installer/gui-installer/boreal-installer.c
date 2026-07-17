@@ -1004,6 +1004,12 @@ static gboolean remove_live_boot(void) {
     STEP("Rebuilding initramfs");
     if (run_cmd("chroot /mnt update-initramfs -u -k all") != 0) { fail_install("update-initramfs failed"); return FALSE; }
     if (run_cmd("ls /mnt/boot/initrd.img-* >/dev/null 2>&1") != 0) { fail_install("no initrd after rebuild"); return FALSE; }
+
+    STEP("Generating unique machine-id for this install");
+    run_cmd("rm -f /mnt/etc/machine-id /mnt/var/lib/dbus/machine-id");
+    run_cmd("chroot /mnt dbus-uuidgen --ensure=/etc/machine-id");
+    run_cmd("mkdir -p /mnt/var/lib/dbus");
+    run_cmd("ln -sf /etc/machine-id /mnt/var/lib/dbus/machine-id");
     return TRUE;
 }
 

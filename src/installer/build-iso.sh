@@ -856,7 +856,7 @@ apt-get install -y --no-install-recommends \
     xinit xauth x11-xserver-utils x11-utils xterm xwayland \
     libinput-tools \
     libgl1-mesa-dri libgl1 mesa-utils \
-    dbus dbus-x11 at-spi2-core \
+    dbus dbus-bin dbus-x11 at-spi2-core \
     adwaita-icon-theme gnome-themes-extra \
     libinput10 libinput-dev \
     udev
@@ -937,6 +937,11 @@ done
 # Remove the file that tells Xorg/PAM which DM to use
 rm -f /etc/X11/default-display-manager 2>/dev/null || true
 
+rm -f /etc/machine-id /var/lib/dbus/machine-id
+dbus-uuidgen --ensure=/etc/machine-id
+mkdir -p /var/lib/dbus
+ln -sf /etc/machine-id /var/lib/dbus/machine-id
+
 echo "==> Configuring UTC hwclock + chrony..."
 cat > /etc/adjtime <<'ADJTIME'
 0.0 0 0.0
@@ -1004,6 +1009,8 @@ set -e
 gcc \$(pkg-config --cflags gtk+-3.0) -O2 -o /usr/local/bin/boreal-installer /tmp/boreal-installer.c \$(pkg-config --libs gtk+-3.0) -lpthread
 chmod +x /usr/local/bin/boreal-installer
 rm -f /tmp/boreal-installer.c
+apt-get remove -y --purge gcc gcc-12 gcc-13 gcc-14 cpp cpp-12 cpp-13 cpp-14 make libgtk-3-dev libglib2.0-dev libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev libatk1.0-dev pkg-config 2>/dev/null || true
+apt-get autoremove -y --purge 2>/dev/null || true
 GUIBUILD
 ok "boreal-installer built."
 fi
@@ -1117,13 +1124,15 @@ cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-shapes.png" 2
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-verticals.png" 2>/dev/null || true
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-stripes.png" 2>/dev/null || true
 
-echo "==> Slimming down image (apt cache, docs, man pages)..."
+echo "==> Slimming down image (apt cache, docs, man pages, locales)..."
 chroot "$WORK/squashfs-root" apt-get clean 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/var/lib/apt/lists/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/doc/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/man/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/info/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/lintian/"* 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/locale" -mindepth 1 -maxdepth 1 -type d -not -name 'en*' -exec rm -rf {} + 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/locale-langpack" -mindepth 1 -maxdepth 1 -type d -not -name 'en*' -exec rm -rf {} + 2>/dev/null || true
 find "$WORK/squashfs-root/var/log" -type f -delete 2>/dev/null || true
 find "$WORK/squashfs-root/var/cache" -maxdepth 1 -type d -not -name apt -exec rm -rf {} + 2>/dev/null || true
 

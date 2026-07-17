@@ -595,6 +595,12 @@ remove_live_boot() {
     chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
     ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd after rebuild"
     ok "live-boot removed, initramfs rebuilt."
+
+    step "Generating unique machine-id for this install..."
+    rm -f /mnt/etc/machine-id /mnt/var/lib/dbus/machine-id
+    chroot /mnt dbus-uuidgen --ensure=/etc/machine-id
+    mkdir -p /mnt/var/lib/dbus
+    ln -sf /etc/machine-id /mnt/var/lib/dbus/machine-id
 }
 
 restore_inittab() {
