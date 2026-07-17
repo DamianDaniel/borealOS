@@ -53,7 +53,7 @@ while true; do
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
-        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra fonts-ibm-plex papirus-icon-theme materia-gtk-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
+        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra"; DE_EXTRA_PKGS="fonts-ibm-plex papirus-icon-theme materia-gtk-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
         3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
         4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
@@ -816,6 +816,7 @@ chmod +x "$WORK/squashfs-root/usr/sbin/policy-rc.d"
 
 chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation failed"
 set -e
+echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list
 PYVER=\$(ls /usr/lib/ | grep -oP '^python3\.[0-9]+\$' | sort -V | tail -1)
 if [ -n "\$PYVER" ]; then
     mkdir -p /usr/share/python3
@@ -898,9 +899,12 @@ fi
 
 # Install the user's chosen DE
 if [ -n "$DE_PKGS" ]; then
-    apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
+    apt-get install -y --no-install-recommends $DE_PKGS || { echo "FATAL: DE package install failed ($DE_PKGS), see error above"; exit 1; }
     if [ -n "$DM_PKGS" ]; then
-        apt-get install -y --no-install-recommends $DM_PKGS || echo "WARN: DM install failed"
+        apt-get install -y --no-install-recommends $DM_PKGS || { echo "FATAL: DM package install failed ($DM_PKGS), see error above"; exit 1; }
+    fi
+    if [ -n "$DE_EXTRA_PKGS" ]; then
+        apt-get install -y --no-install-recommends $DE_EXTRA_PKGS || echo "WARN: theming packages failed ($DE_EXTRA_PKGS) - desktop will use default theme/icons/fonts"
     fi
 fi
 
