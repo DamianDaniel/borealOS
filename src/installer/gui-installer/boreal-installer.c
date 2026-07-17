@@ -1004,6 +1004,12 @@ static gboolean remove_live_boot(void) {
     STEP("Rebuilding initramfs");
     if (run_cmd("chroot /mnt update-initramfs -u -k all") != 0) { fail_install("update-initramfs failed"); return FALSE; }
     if (run_cmd("ls /mnt/boot/initrd.img-* >/dev/null 2>&1") != 0) { fail_install("no initrd after rebuild"); return FALSE; }
+
+    STEP("Generating unique machine-id for this install");
+    run_cmd("rm -f /mnt/etc/machine-id /mnt/var/lib/dbus/machine-id");
+    run_cmd("chroot /mnt dbus-uuidgen --ensure=/etc/machine-id");
+    run_cmd("mkdir -p /mnt/var/lib/dbus");
+    run_cmd("ln -sf /etc/machine-id /mnt/var/lib/dbus/machine-id");
     return TRUE;
 }
 
@@ -1090,21 +1096,11 @@ static void write_xfce_config_to(const char *dest, gboolean is_system_xdg) {
     write_file(path,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-session\" version=\"1.0\">\n"
         "  <property name=\"general\" type=\"empty\">\n"
-        "    <property name=\"FailsafeSessionName\" type=\"string\" value=\"Failsafe\"/>\n"
         "    <property name=\"SaveOnExit\" type=\"bool\" value=\"false\"/>\n"
         "    <property name=\"LockScreen\" type=\"string\" value=\"xflock4\"/>\n"
         "  </property>\n"
         "  <property name=\"shutdown\" type=\"empty\">\n"
         "    <property name=\"ShowOnLogout\" type=\"bool\" value=\"true\"/>\n"
-        "  </property>\n"
-        "  <property name=\"sessions\" type=\"empty\">\n"
-        "    <property name=\"Failsafe\" type=\"empty\">\n"
-        "      <property name=\"Client0_Command\" type=\"array\"><value type=\"string\" value=\"xfwm4\"/></property>\n"
-        "      <property name=\"Client1_Command\" type=\"array\"><value type=\"string\" value=\"xfce4-panel\"/></property>\n"
-        "      <property name=\"Client2_Command\" type=\"array\"><value type=\"string\" value=\"xfdesktop\"/></property>\n"
-        "      <property name=\"Client3_Command\" type=\"array\"><value type=\"string\" value=\"xfsettingsd\"/></property>\n"
-        "      <property name=\"Count\" type=\"int\" value=\"4\"/>\n"
-        "    </property>\n"
         "  </property>\n</channel>\n");
 }
 

@@ -40,7 +40,7 @@ command -v mksquashfs    >/dev/null || apt-get install -y squashfs-tools  || die
 command -v unzip         >/dev/null || apt-get install -y unzip           || die "Failed to install unzip"
 
 EFI_PLATFORM_DIR="$(find /usr/lib/grub -maxdepth 1 -type d -name 'x86_64-efi' 2>/dev/null | head -1)"
-[ -n "$EFI_PLATFORM_DIR" ] || die "grub x86_64-efi platform directory not found — grub-efi-amd64-bin did not install correctly, EFI ISO cannot be built"
+[ -n "$EFI_PLATFORM_DIR" ] || die "grub x86_64-efi platform directory not found - grub-efi-amd64-bin did not install correctly, EFI ISO cannot be built"
 
 echo ""
 echo -e "${BLD}Select DE/WM to include in ISO:${RST}"
@@ -53,7 +53,7 @@ while true; do
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
-        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra fonts-ibm-plex papirus-icon-theme materia-gtk-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
+        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra"; DE_EXTRA_PKGS="fonts-ibm-plex papirus-icon-theme materia-gtk-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
         3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
         4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
@@ -419,29 +419,11 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-s
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-session" version="1.0">
   <property name="general" type="empty">
-    <property name="FailsafeSessionName" type="string" value="Failsafe"/>
     <property name="SaveOnExit" type="bool" value="false"/>
     <property name="LockScreen" type="string" value="xflock4"/>
   </property>
   <property name="shutdown" type="empty">
     <property name="ShowOnLogout" type="bool" value="true"/>
-  </property>
-  <property name="sessions" type="empty">
-    <property name="Failsafe" type="empty">
-      <property name="Client0_Command" type="array">
-        <value type="string" value="xfwm4"/>
-      </property>
-      <property name="Client1_Command" type="array">
-        <value type="string" value="xfce4-panel"/>
-      </property>
-      <property name="Client2_Command" type="array">
-        <value type="string" value="xfdesktop"/>
-      </property>
-      <property name="Client3_Command" type="array">
-        <value type="string" value="xfsettingsd"/>
-      </property>
-      <property name="Count" type="int" value="4"/>
-    </property>
   </property>
 </channel>
 XFSESSION
@@ -816,6 +798,7 @@ chmod +x "$WORK/squashfs-root/usr/sbin/policy-rc.d"
 
 chroot "$WORK/squashfs-root" /bin/bash <<CHROOT || die "Package installation failed"
 set -e
+echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list
 PYVER=\$(ls /usr/lib/ | grep -oP '^python3\.[0-9]+\$' | sort -V | tail -1)
 if [ -n "\$PYVER" ]; then
     mkdir -p /usr/share/python3
@@ -873,7 +856,7 @@ apt-get install -y --no-install-recommends \
     xinit xauth x11-xserver-utils x11-utils xterm xwayland \
     libinput-tools \
     libgl1-mesa-dri libgl1 mesa-utils \
-    dbus dbus-x11 at-spi2-core \
+    dbus dbus-bin dbus-x11 at-spi2-core \
     adwaita-icon-theme gnome-themes-extra \
     libinput10 libinput-dev \
     udev
@@ -898,9 +881,12 @@ fi
 
 # Install the user's chosen DE
 if [ -n "$DE_PKGS" ]; then
-    apt-get install -y --no-install-recommends $DE_PKGS || echo "WARN: some DE packages failed"
+    apt-get install -y --no-install-recommends $DE_PKGS || { echo "FATAL: DE package install failed ($DE_PKGS), see error above"; exit 1; }
     if [ -n "$DM_PKGS" ]; then
-        apt-get install -y --no-install-recommends $DM_PKGS || echo "WARN: DM install failed"
+        apt-get install -y --no-install-recommends $DM_PKGS || { echo "FATAL: DM package install failed ($DM_PKGS), see error above"; exit 1; }
+    fi
+    if [ -n "$DE_EXTRA_PKGS" ]; then
+        apt-get install -y --no-install-recommends $DE_EXTRA_PKGS || echo "WARN: theming packages failed ($DE_EXTRA_PKGS) - desktop will use default theme/icons/fonts"
     fi
 fi
 
@@ -950,6 +936,11 @@ done
 
 # Remove the file that tells Xorg/PAM which DM to use
 rm -f /etc/X11/default-display-manager 2>/dev/null || true
+
+rm -f /etc/machine-id /var/lib/dbus/machine-id
+dbus-uuidgen --ensure=/etc/machine-id
+mkdir -p /var/lib/dbus
+ln -sf /etc/machine-id /var/lib/dbus/machine-id
 
 echo "==> Configuring UTC hwclock + chrony..."
 cat > /etc/adjtime <<'ADJTIME'
@@ -1018,6 +1009,8 @@ set -e
 gcc \$(pkg-config --cflags gtk+-3.0) -O2 -o /usr/local/bin/boreal-installer /tmp/boreal-installer.c \$(pkg-config --libs gtk+-3.0) -lpthread
 chmod +x /usr/local/bin/boreal-installer
 rm -f /tmp/boreal-installer.c
+apt-get remove -y --purge gcc gcc-12 gcc-13 gcc-14 cpp cpp-12 cpp-13 cpp-14 make libgtk-3-dev libglib2.0-dev libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev libatk1.0-dev pkg-config 2>/dev/null || true
+apt-get autoremove -y --purge 2>/dev/null || true
 GUIBUILD
 ok "boreal-installer built."
 fi
@@ -1131,13 +1124,15 @@ cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-shapes.png" 2
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-verticals.png" 2>/dev/null || true
 cp "$WP_MAIN" "$WORK/squashfs-root/usr/share/backgrounds/xfce/xfce-stripes.png" 2>/dev/null || true
 
-echo "==> Slimming down image (apt cache, docs, man pages)..."
+echo "==> Slimming down image (apt cache, docs, man pages, locales)..."
 chroot "$WORK/squashfs-root" apt-get clean 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/var/lib/apt/lists/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/doc/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/man/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/info/"* 2>/dev/null || true
 rm -rf "$WORK/squashfs-root/usr/share/lintian/"* 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/locale" -mindepth 1 -maxdepth 1 -type d -not -name 'en*' -exec rm -rf {} + 2>/dev/null || true
+find "$WORK/squashfs-root/usr/share/locale-langpack" -mindepth 1 -maxdepth 1 -type d -not -name 'en*' -exec rm -rf {} + 2>/dev/null || true
 find "$WORK/squashfs-root/var/log" -type f -delete 2>/dev/null || true
 find "$WORK/squashfs-root/var/cache" -maxdepth 1 -type d -not -name apt -exec rm -rf {} + 2>/dev/null || true
 
@@ -1187,12 +1182,12 @@ grub-mkrescue -o "$OUTPUT" "$WORK/iso" \
     2>&1 | tee "$GRUB_MKRESCUE_LOG"
 [ ${PIPESTATUS[0]} -eq 0 ] || die "grub-mkrescue failed (see $GRUB_MKRESCUE_LOG)"
 if grep -qi "No EFI boot images\|efi.img.*not found\|cannot find efi" "$GRUB_MKRESCUE_LOG"; then
-    die "grub-mkrescue built a BIOS-only ISO (no EFI El Torito image) — see $GRUB_MKRESCUE_LOG. Re-check grub-efi-amd64-bin installation."
+    die "grub-mkrescue built a BIOS-only ISO (no EFI El Torito image) - see $GRUB_MKRESCUE_LOG. Re-check grub-efi-amd64-bin installation."
 fi
 
 if command -v xorriso >/dev/null 2>&1; then
-    xorriso -indev "$OUTPUT" -report_el_torito plain 2>/dev/null | grep -qi "El Torito boot img.*platform.*EFI\|EFI System Partition" \
-        || warn "Could not confirm an EFI El Torito entry on $OUTPUT — verify UEFI boot manually before shipping this ISO."
+    xorriso -indev "$OUTPUT" -report_el_torito plain 2>/dev/null | grep -qi "El Torito boot img.*UEFI" \
+        || warn "Could not confirm an EFI El Torito entry on $OUTPUT - verify UEFI boot manually before shipping this ISO."
 fi
 
 ok "==> Done: $OUTPUT ($(du -sh "$OUTPUT" | cut -f1))"

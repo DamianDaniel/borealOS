@@ -480,7 +480,7 @@ rc-update add chronyd default 2>/dev/null || rc-update add chrony default 2>/dev
 rc-update add hwclock boot 2>/dev/null || true
 
 apt-get install -y --no-install-recommends elogind libpam-elogind polkitd pkexec \
-    || warn "elogind/policykit install failed — shutdown/restart will stay greyed out"
+    || warn "elogind/policykit install failed - shutdown/restart will stay greyed out"
 rc-update add elogind boot 2>/dev/null || rc-update add elogind default 2>/dev/null || true
 rc-update add dbus boot 2>/dev/null || rc-update add dbus default 2>/dev/null || true
 mkdir -p /etc/polkit-1/rules.d
@@ -595,6 +595,12 @@ remove_live_boot() {
     chroot /mnt update-initramfs -u -k all 2>&1 || die "update-initramfs failed"
     ls /mnt/boot/initrd.img-* >/dev/null 2>&1 || die "No initrd after rebuild"
     ok "live-boot removed, initramfs rebuilt."
+
+    step "Generating unique machine-id for this install..."
+    rm -f /mnt/etc/machine-id /mnt/var/lib/dbus/machine-id
+    chroot /mnt dbus-uuidgen --ensure=/etc/machine-id
+    mkdir -p /mnt/var/lib/dbus
+    ln -sf /etc/machine-id /mnt/var/lib/dbus/machine-id
 }
 
 restore_inittab() {
@@ -645,7 +651,7 @@ SDDM
             step "Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)..."
             chroot /mnt apt-get install -y --no-install-recommends \
                 fonts-ibm-plex papirus-icon-theme materia-gtk-theme \
-                2>/dev/null || warn "Theming package install failed — falling back to whatever GTK theme is already installed"
+                2>/dev/null || warn "Theming package install failed - falling back to whatever GTK theme is already installed"
 
             mkdir -p /mnt/etc/lightdm
             if ls /opt/borealOS/lightdm/* >/dev/null 2>&1; then
@@ -741,29 +747,11 @@ XSETTINGS
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-session" version="1.0">
   <property name="general" type="empty">
-    <property name="FailsafeSessionName" type="string" value="Failsafe"/>
     <property name="SaveOnExit" type="bool" value="false"/>
     <property name="LockScreen" type="string" value="xflock4"/>
   </property>
   <property name="shutdown" type="empty">
     <property name="ShowOnLogout" type="bool" value="true"/>
-  </property>
-  <property name="sessions" type="empty">
-    <property name="Failsafe" type="empty">
-      <property name="Client0_Command" type="array">
-        <value type="string" value="xfwm4"/>
-      </property>
-      <property name="Client1_Command" type="array">
-        <value type="string" value="xfce4-panel"/>
-      </property>
-      <property name="Client2_Command" type="array">
-        <value type="string" value="xfdesktop"/>
-      </property>
-      <property name="Client3_Command" type="array">
-        <value type="string" value="xfsettingsd"/>
-      </property>
-      <property name="Count" type="int" value="4"/>
-    </property>
   </property>
 </channel>
 XFSESSION
