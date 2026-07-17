@@ -419,29 +419,11 @@ cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-s
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-session" version="1.0">
   <property name="general" type="empty">
-    <property name="FailsafeSessionName" type="string" value="Failsafe"/>
     <property name="SaveOnExit" type="bool" value="false"/>
     <property name="LockScreen" type="string" value="xflock4"/>
   </property>
   <property name="shutdown" type="empty">
     <property name="ShowOnLogout" type="bool" value="true"/>
-  </property>
-  <property name="sessions" type="empty">
-    <property name="Failsafe" type="empty">
-      <property name="Client0_Command" type="array">
-        <value type="string" value="xfwm4"/>
-      </property>
-      <property name="Client1_Command" type="array">
-        <value type="string" value="xfce4-panel"/>
-      </property>
-      <property name="Client2_Command" type="array">
-        <value type="string" value="xfdesktop"/>
-      </property>
-      <property name="Client3_Command" type="array">
-        <value type="string" value="xfsettingsd"/>
-      </property>
-      <property name="Count" type="int" value="4"/>
-    </property>
   </property>
 </channel>
 XFSESSION

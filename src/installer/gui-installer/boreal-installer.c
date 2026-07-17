@@ -1090,21 +1090,11 @@ static void write_xfce_config_to(const char *dest, gboolean is_system_xdg) {
     write_file(path,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-session\" version=\"1.0\">\n"
         "  <property name=\"general\" type=\"empty\">\n"
-        "    <property name=\"FailsafeSessionName\" type=\"string\" value=\"Failsafe\"/>\n"
         "    <property name=\"SaveOnExit\" type=\"bool\" value=\"false\"/>\n"
         "    <property name=\"LockScreen\" type=\"string\" value=\"xflock4\"/>\n"
         "  </property>\n"
         "  <property name=\"shutdown\" type=\"empty\">\n"
         "    <property name=\"ShowOnLogout\" type=\"bool\" value=\"true\"/>\n"
-        "  </property>\n"
-        "  <property name=\"sessions\" type=\"empty\">\n"
-        "    <property name=\"Failsafe\" type=\"empty\">\n"
-        "      <property name=\"Client0_Command\" type=\"array\"><value type=\"string\" value=\"xfwm4\"/></property>\n"
-        "      <property name=\"Client1_Command\" type=\"array\"><value type=\"string\" value=\"xfce4-panel\"/></property>\n"
-        "      <property name=\"Client2_Command\" type=\"array\"><value type=\"string\" value=\"xfdesktop\"/></property>\n"
-        "      <property name=\"Client3_Command\" type=\"array\"><value type=\"string\" value=\"xfsettingsd\"/></property>\n"
-        "      <property name=\"Count\" type=\"int\" value=\"4\"/>\n"
-        "    </property>\n"
         "  </property>\n</channel>\n");
 }
 
