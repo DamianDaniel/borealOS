@@ -53,7 +53,7 @@ while true; do
     read -r de_choice
     case "$de_choice" in
         1) DE_PKGS="kde-plasma-desktop"; DM_PKGS="sddm"; DE_NAME="KDE Plasma"; DE_START="startplasma-x11"; break ;;
-        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra"; DE_EXTRA_PKGS="fonts-ibm-plex papirus-icon-theme materia-gtk-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
+        2) DE_PKGS="xfce4 xfce4-goodies gvfs gvfs-backends tumbler tumbler-plugins-extra xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin xfce4-power-manager pavucontrol"; DE_EXTRA_PKGS="fonts-ibm-plex papirus-icon-theme materia-gtk-theme adwaita-icon-theme"; DM_PKGS="lightdm lightdm-gtk-greeter"; DE_NAME="XFCE"; DE_START="startxfce4"; break ;;
         3) DE_PKGS="foot"; DM_PKGS=""; DE_NAME="Niri"; DE_START="niri-session"; break ;;
         4) DE_PKGS=""; DM_PKGS=""; DE_NAME="None"; DE_START=""; break ;;
         *) echo -e "${RED}Invalid.${RST}" ;;
@@ -130,33 +130,6 @@ WP_MAIN="${WALLPAPER_MAIN:-$WALLPAPER_DEFAULT}"
 cp "$WP_MAIN"           "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png"
 cp "$WALLPAPER_DEFAULT" "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-waves.png"
 cp "$WALLPAPER_ALT"     "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-alt.png"
-
-
-# Set it as the xfdesktop default via the defaults config
-mkdir -p "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
-{
-echo '<?xml version="1.0" encoding="UTF-8"?>'
-echo '<channel name="xfce4-desktop" version="1.0">'
-echo '  <property name="backdrop" type="empty">'
-echo '    <property name="screen0" type="empty">'
-echo '      <property name="monitor0" type="empty">'
-echo '        <property name="workspace0" type="empty">'
-echo '          <property name="last-image" type="string" value="/usr/share/xfce4/backdrops/BorealOS.png"/>'
-echo '          <property name="image-style" type="int" value="5"/>'
-echo '        </property>'
-echo '      </property>'
-for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0 DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
-    echo "      <property name=\"${mon}\" type=\"empty\">"
-    echo '        <property name="workspace0" type="empty">'
-    echo '          <property name="last-image" type="string" value="/usr/share/xfce4/backdrops/BorealOS.png"/>'
-    echo '          <property name="image-style" type="int" value="5"/>'
-    echo '        </property>'
-    echo '      </property>'
-done
-echo '    </property>'
-echo '  </property>'
-echo '</channel>'
-} > "$WORK/squashfs-root/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 cp "$LOGO"              "$WORK/squashfs-root/usr/share/boreal-artwork/logo.png"
 [ -f "$GHOST_LOGO" ] && cp "$GHOST_LOGO" "$WORK/squashfs-root/usr/share/boreal-artwork/logo-ghost.png"
 cp "$BANNER"            "$WORK/squashfs-root/usr/share/boreal-artwork/banner.png"
@@ -379,94 +352,68 @@ for size in 16 24 32 48 64 96 128; do
     cp "$dir/xfce4-logo.png" "$dir/xfce-logo.png" 2>/dev/null || true
 done
 
-mkdir -p "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml"
-cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml" <<'XSETTINGS'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xsettings" version="1.0">
-  <property name="Net" type="empty">
-    <property name="ThemeName" type="string" value="Materia-dark"/>
-    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
-    <property name="DoubleClickTime" type="int" value="400"/>
-    <property name="DoubleClickDistance" type="int" value="5"/>
-  </property>
-  <property name="Gtk" type="empty">
-    <property name="CursorThemeName" type="string" value="Adwaita"/>
-    <property name="FontName" type="string" value="IBM Plex Sans 10"/>
-    <property name="MonospaceFontName" type="string" value="IBM Plex Mono 10"/>
-  </property>
-</channel>
-XSETTINGS
-
-mkdir -p "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml"
-cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml" <<'XFWM4'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfwm4" version="1.0">
-  <property name="general" type="empty">
-    <property name="theme" type="string" value="Materia-dark"/>
-    <property name="title_font" type="string" value="IBM Plex Sans Bold 10"/>
-    <property name="double_click_action" type="string" value="maximize"/>
-    <property name="double_click_time" type="int" value="400"/>
-    <property name="double_click_distance" type="int" value="5"/>
-    <property name="click_to_focus" type="bool" value="true"/>
-    <property name="wrap_workspaces" type="bool" value="true"/>
-    <property name="box_move" type="bool" value="false"/>
-    <property name="box_resize" type="bool" value="false"/>
-  </property>
-</channel>
-XFWM4
-
-cat > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml" <<'XFSESSION'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-session" version="1.0">
-  <property name="general" type="empty">
-    <property name="SaveOnExit" type="bool" value="false"/>
-    <property name="LockScreen" type="string" value="xflock4"/>
-  </property>
-  <property name="shutdown" type="empty">
-    <property name="ShowOnLogout" type="bool" value="true"/>
-  </property>
-</channel>
-XFSESSION
-
-# xfce4-desktop channel: wallpaper for all common monitor connectors + no system icons
-# xfdesktop4 stores wallpaper under the raw connector name (e.g. "Virtual-1"),
-# NOT prefixed with "monitor". Cover every common name so it works everywhere.
-WP=/usr/share/boreal-artwork/wallpaper-default.png
-{
-cat << XFDESKTOP_HEAD
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-desktop" version="1.0">
-  <property name="backdrop" type="empty">
-    <property name="screen0" type="empty">
-XFDESKTOP_HEAD
-for mon in Virtual-1 Virtual-0 VGA-1 VGA-0 HDMI-1 HDMI-0            DP-1 DP-0 eDP-1 eDP-0 DVI-I-1 DVI-D-1; do
-cat << MONBLOCK
-      <property name="${mon}" type="empty">
-        <property name="workspace0" type="empty">
-          <property name="last-image"  type="string" value="${WP}"/>
-          <property name="image-style" type="int"    value="5"/>
-          <property name="color-style" type="int"    value="0"/>
-        </property>
-      </property>
-MONBLOCK
+mkdir -p "$WORK/squashfs-root/usr/local/bin"
+cat > "$WORK/squashfs-root/usr/local/bin/boreal-apply-theme.sh" <<'THEMESCRIPT'
+#!/bin/sh
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    command -v xfconf-query >/dev/null 2>&1 && xfconf-query -c xfwm4 -p /general -l >/dev/null 2>&1 && break
+    sleep 1
 done
-cat << XFDESKTOP_FOOT
-    </property>
-  </property>
-  <property name="desktop-icons" type="empty">
-    <property name="style"             type="int"  value="2"/>
-    <property name="file-icons" type="empty">
-      <property name="show-home"       type="bool" value="false"/>
-      <property name="show-filesystem" type="bool" value="false"/>
-      <property name="show-removable"  type="bool" value="false"/>
-      <property name="show-trash"      type="bool" value="false"/>
-    </property>
-  </property>
-</channel>
-XFDESKTOP_FOOT
-} > "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
-# Copy to skel too
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"    "$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" 2>/dev/null || true
+
+set_prop() {
+    xfconf-query -c "$1" -p "$2" -n -t "$3" -s "$4" 2>/dev/null \
+        || xfconf-query -c "$1" -p "$2" -t "$3" -s "$4" 2>/dev/null
+}
+
+set_prop xsettings /Net/ThemeName string Materia
+set_prop xsettings /Net/IconThemeName string Papirus
+set_prop xsettings /Net/DoubleClickTime int 400
+set_prop xsettings /Gtk/CursorThemeName string Adwaita
+set_prop xsettings /Gtk/FontName string "IBM Plex Sans 10"
+set_prop xsettings /Gtk/MonospaceFontName string "IBM Plex Mono 10"
+
+set_prop xfwm4 /general/theme string Materia
+set_prop xfwm4 /general/title_font string "IBM Plex Sans Bold 10"
+set_prop xfwm4 /general/double_click_action string maximize
+set_prop xfwm4 /general/click_to_focus bool true
+
+set_prop xfce4-session /general/SaveOnExit bool false
+set_prop xfce4-session /general/LockScreen string xflock4
+set_prop xfce4-session /shutdown/ShowOnLogout bool true
+
+MARKER="$HOME/.config/.boreal-panel-setup-done"
+if [ ! -f "$MARKER" ]; then
+    command -v xfce4-panel >/dev/null 2>&1 && xfce4-panel -p >/dev/null 2>&1
+    xfce4-panel --add=whiskermenu 2>/dev/null
+    xfce4-panel --add=pulseaudio 2>/dev/null
+    xfce4-panel --add=power-manager-plugin 2>/dev/null
+    mkdir -p "$(dirname "$MARKER")"
+    touch "$MARKER"
+fi
+
+IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)
+for id in $IDS; do
+    val=$(xfconf-query -c xfce4-panel -p "/plugins/$id" 2>/dev/null)
+    if [ "$val" = "applicationsmenu" ] || [ "$val" = "whiskermenu" ]; then
+        set_prop xfce4-panel "/plugins/${id}/button-icon" string /usr/share/pixmaps/boreal-logo-ghost.png
+    fi
+done
+THEMESCRIPT
+chmod 755 "$WORK/squashfs-root/usr/local/bin/boreal-apply-theme.sh"
+
+mkdir -p "$WORK/squashfs-root/root/.config/autostart" "$WORK/squashfs-root/etc/skel/.config/autostart"
+cat > "$WORK/squashfs-root/etc/skel/.config/autostart/boreal-apply-theme.desktop" <<'THEMEAUTOSTART'
+[Desktop Entry]
+Type=Application
+Name=BorealOS Theme
+Exec=/usr/local/bin/boreal-apply-theme.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+THEMEAUTOSTART
+cp "$WORK/squashfs-root/etc/skel/.config/autostart/boreal-apply-theme.desktop" \
+   "$WORK/squashfs-root/root/.config/autostart/boreal-apply-theme.desktop"
 
 # TTY install wrapper — runs the terminal installer
 cat > "$WORK/squashfs-root/usr/local/bin/boreal-tty-install" <<'TTYINSTALL'
@@ -508,83 +455,6 @@ if [ -d "$RICE_DIR/kitty" ]; then
     echo "  kitty rice copied to live root"
 fi
 
-# Patch the rice panel config to set the logo icon on applicationsmenu.
-# We do NOT rewrite the whole panel XML — the rice config worked, we just need to:
-#   1. Set the app menu button icon to the BorealOS logo
-#   2. Remove power-manager-plugin if the rice included it (it's not installed)
-PANEL_XML="$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
-SKEL_PANEL_XML="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
-
-# Remove power-manager-plugin from panel XML using grep/awk — no Python quoting issues.
-# Strategy: skip any line containing power-manager-plugin AND the next closing </property>
-# if it immediately follows (for multi-line blocks).
-# Remove power-manager-plugin from panel XML entirely using awk.
-# awk handles multi-line blocks and the orphaned array entry in one pass.
-patch_panel_xml_simple() {
-    local f="$1"
-    [ -f "$f" ] || return 0
-
-    # Step 1: collect plugin IDs that are power-manager-plugin using grep + sed
-    # (POSIX-compatible, no gawk needed)
-    local bad_ids
-    bad_ids=$(grep 'value="power-manager-plugin"' "$f" | \
-              sed 's/.*name="plugin-\([0-9]*\)".*/\1/' | \
-              grep '^[0-9]*$' || true)
-
-    # Step 2: remove the power-manager-plugin property block (self-closing form)
-    sed -i '/value="power-manager-plugin"/d' "$f"
-
-    # Step 3: remove orphaned <value type="int" value="N"/> for each bad ID
-    for pid in $bad_ids; do
-        sed -i "/type=\"int\" value=\"${pid}\"/d" "$f"
-    done
-
-    echo "  patched: $f (removed plugin IDs: ${bad_ids:-none})"
-}
-
-patch_panel_xml_simple "$PANEL_XML"
-patch_panel_xml_simple "$SKEL_PANEL_XML"
-ok "Panel XML patched (power-manager removed)"
-
-# Reliable taskbar/menu-button icon fix. The previous approach overwrote
-# generic icon-theme filenames (xfce4-logo.png etc.) guessing what icon name
-# the applicationsmenu plugin requests — that name differs across Xfce
-# versions (4.16 uses "xfce4-logo", 4.18 often defaults to
-# "org.xfce.panel.applicationsmenu" or a generic "start-here" fallback), so
-# the guess silently misses depending on which Xfce is actually installed.
-# Set it explicitly via xfconf instead, which works regardless of version.
-cat > "$WORK/squashfs-root/usr/local/bin/boreal-panel-icon.sh" <<'PANELICON'
-#!/bin/bash
-for i in 1 2 3 4 5 6; do
-    command -v xfconf-query >/dev/null 2>&1 && xfconf-query -c xfce4-panel -p /plugins -l >/dev/null 2>&1 && break
-    sleep 2
-done
-IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)
-for id in $IDS; do
-    val=$(xfconf-query -c xfce4-panel -p "/plugins/$id" 2>/dev/null)
-    if [ "$val" = "applicationsmenu" ] || [ "$val" = "whiskermenu" ]; then
-        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -n -t string -s /usr/share/pixmaps/boreal-logo-ghost.png 2>/dev/null || \
-        xfconf-query -c xfce4-panel -p "/plugins/${id}/button-icon" -t string -s /usr/share/pixmaps/boreal-logo-ghost.png 2>/dev/null
-    fi
-done
-PANELICON
-chmod +x "$WORK/squashfs-root/usr/local/bin/boreal-panel-icon.sh"
-
-mkdir -p "$WORK/squashfs-root/root/.config/autostart"
-cat > "$WORK/squashfs-root/root/.config/autostart/boreal-panel-icon.desktop" <<'PANELAUTOSTART'
-[Desktop Entry]
-Type=Application
-Name=BorealOS Panel Icon
-Exec=/usr/local/bin/boreal-panel-icon.sh
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-StartupNotify=false
-PANELAUTOSTART
-mkdir -p "$WORK/squashfs-root/etc/skel/.config/autostart"
-cp "$WORK/squashfs-root/root/.config/autostart/boreal-panel-icon.desktop" \
-   "$WORK/squashfs-root/etc/skel/.config/autostart/boreal-panel-icon.desktop"
-
 # Create a .desktop for the installer launcher on the panel
 mkdir -p "$WORK/squashfs-root/usr/share/applications"
 cat > "$WORK/squashfs-root/usr/share/applications/boreal-installer.desktop" <<'DESKTOP'
@@ -597,15 +467,6 @@ StartupWMClass=boreal-installer
 Type=Application
 Categories=System;
 DESKTOP
-
-# Copy the same xfconf XMLs to /etc/skel so installed users get them too
-SKEL_XFCONF="$WORK/squashfs-root/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
-mkdir -p "$SKEL_XFCONF"
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"  "$SKEL_XFCONF/" 2>/dev/null || true
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"      "$SKEL_XFCONF/" 2>/dev/null || true
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"          "$SKEL_XFCONF/" 2>/dev/null || true
-cp "$WORK/squashfs-root/root/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml"  "$SKEL_XFCONF/" 2>/dev/null || true
-# Don't copy panel.xml to skel — installed users can have their own panel layout
 ok "BorealOS XFCE branding applied."
 
 echo "==> Applying branding..."
@@ -956,6 +817,7 @@ CHRONYCONF
 rc-update add chronyd default 2>/dev/null || rc-update add chrony default 2>/dev/null || true
 rc-update add hwclock boot 2>/dev/null || true
 
+pam-auth-update --enable elogind 2>/dev/null || true
 rc-update add elogind boot 2>/dev/null || rc-update add elogind default 2>/dev/null || true
 rc-update add dbus boot 2>/dev/null || rc-update add dbus default 2>/dev/null || true
 
@@ -979,6 +841,11 @@ CHROOT
 
 umount "$WORK/squashfs-root/sys" "$WORK/squashfs-root/proc" "$WORK/squashfs-root/dev"
 ok "==> Packages installed."
+
+find "$WORK/squashfs-root/usr/share/backgrounds" "$WORK/squashfs-root/usr/share/wallpapers" \
+     "$WORK/squashfs-root/usr/share/xfce4/backdrops" "$WORK/squashfs-root/usr/share/images/desktop-base" \
+     -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.svg' \) \
+     -exec cp "$WORK/squashfs-root/usr/share/boreal-artwork/wallpaper-default.png" {} \; 2>/dev/null || true
 
 # Bundle any custom .deb packages for fully offline install on the target.
 # Drop them in <repo>/packages/ (i.e. ../../packages relative to this

@@ -902,6 +902,7 @@ static gboolean configure_system(void) {
     run_cmd("chroot /mnt rc-update add chronyd default 2>/dev/null || chroot /mnt rc-update add chrony default 2>/dev/null || true");
     run_cmd("chroot /mnt rc-update add hwclock boot 2>/dev/null || true");
 
+    run_cmd("chroot /mnt pam-auth-update --enable elogind 2>/dev/null || true");
     run_cmd("chroot /mnt rc-update add elogind boot 2>/dev/null || chroot /mnt rc-update add elogind default 2>/dev/null || true");
     run_cmd("chroot /mnt rc-update add dbus boot 2>/dev/null || chroot /mnt rc-update add dbus default 2>/dev/null || true");
     run_cmd("mkdir -p /mnt/etc/polkit-1/rules.d");
@@ -1029,80 +1030,53 @@ static gboolean restore_inittab(void) {
     return TRUE;
 }
 
-static void write_xfce_config_to(const char *dest, gboolean is_system_xdg) {
-    char dir[512], path[600];
-    if (is_system_xdg) {
-        snprintf(dir, sizeof(dir), "%s/xfce4/xfconf/xfce-perchannel-xml", dest);
-    } else {
-        snprintf(dir, sizeof(dir), "%s/.config/xfce4/xfconf/xfce-perchannel-xml", dest);
-    }
-    char mkcmd[560];
-    snprintf(mkcmd, sizeof(mkcmd), "mkdir -p '%s'", dir);
-    run_cmd(mkcmd);
-
-    const char *mons[] = {"Virtual-1","Virtual-0","VGA-1","VGA-0","HDMI-1","HDMI-0",
-                           "DP-1","DP-0","eDP-1","eDP-0","DVI-I-1","DVI-D-1", NULL};
-    GString *xml = g_string_new(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-desktop\" version=\"1.0\">\n"
-        "  <property name=\"backdrop\" type=\"empty\">\n    <property name=\"screen0\" type=\"empty\">\n"
-        "      <property name=\"monitor0\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
-        "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
-        "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n"
-        "        </property>\n      </property>\n");
-    for (int i = 0; mons[i]; i++) {
-        g_string_append_printf(xml,
-            "      <property name=\"%s\" type=\"empty\">\n        <property name=\"workspace0\" type=\"empty\">\n"
-            "          <property name=\"last-image\" type=\"string\" value=\"/usr/share/boreal-artwork/wallpaper-default.png\"/>\n"
-            "          <property name=\"image-style\" type=\"int\" value=\"5\"/>\n        </property>\n      </property>\n", mons[i]);
-    }
-    g_string_append(xml,
-        "    </property>\n  </property>\n"
-        "  <property name=\"desktop-icons\" type=\"empty\">\n    <property name=\"style\" type=\"int\" value=\"2\"/>\n  </property>\n"
-        "</channel>\n");
-    snprintf(path, sizeof(path), "%s/xfce4-desktop.xml", dir);
-    write_file(path, xml->str);
-    g_string_free(xml, TRUE);
-
-    snprintf(path, sizeof(path), "%s/xfwm4.xml", dir);
-    write_file(path,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfwm4\" version=\"1.0\">\n"
-        "  <property name=\"general\" type=\"empty\">\n"
-        "    <property name=\"theme\" type=\"string\" value=\"Materia-dark\"/>\n"
-        "    <property name=\"title_font\" type=\"string\" value=\"IBM Plex Sans Bold 10\"/>\n"
-        "    <property name=\"double_click_action\" type=\"string\" value=\"maximize\"/>\n"
-        "    <property name=\"double_click_time\" type=\"int\" value=\"400\"/>\n"
-        "    <property name=\"double_click_distance\" type=\"int\" value=\"5\"/>\n"
-        "    <property name=\"click_to_focus\" type=\"bool\" value=\"true\"/>\n"
-        "    <property name=\"wrap_workspaces\" type=\"bool\" value=\"true\"/>\n"
-        "    <property name=\"box_move\" type=\"bool\" value=\"false\"/>\n"
-        "    <property name=\"box_resize\" type=\"bool\" value=\"false\"/>\n"
-        "  </property>\n</channel>\n");
-    snprintf(path, sizeof(path), "%s/xsettings.xml", dir);
-    write_file(path,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xsettings\" version=\"1.0\">\n"
-        "  <property name=\"Net\" type=\"empty\">\n"
-        "    <property name=\"ThemeName\" type=\"string\" value=\"Materia-dark\"/>\n"
-        "    <property name=\"IconThemeName\" type=\"string\" value=\"Papirus-Dark\"/>\n"
-        "    <property name=\"DoubleClickTime\" type=\"int\" value=\"400\"/>\n"
-        "    <property name=\"DoubleClickDistance\" type=\"int\" value=\"5\"/>\n"
-        "  </property>\n"
-        "  <property name=\"Gtk\" type=\"empty\">\n"
-        "    <property name=\"CursorThemeName\" type=\"string\" value=\"Adwaita\"/>\n"
-        "    <property name=\"FontName\" type=\"string\" value=\"IBM Plex Sans 10\"/>\n"
-        "    <property name=\"MonospaceFontName\" type=\"string\" value=\"IBM Plex Mono 10\"/>\n"
-        "  </property>\n</channel>\n");
-
-    snprintf(path, sizeof(path), "%s/xfce4-session.xml", dir);
-    write_file(path,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channel name=\"xfce4-session\" version=\"1.0\">\n"
-        "  <property name=\"general\" type=\"empty\">\n"
-        "    <property name=\"SaveOnExit\" type=\"bool\" value=\"false\"/>\n"
-        "    <property name=\"LockScreen\" type=\"string\" value=\"xflock4\"/>\n"
-        "  </property>\n"
-        "  <property name=\"shutdown\" type=\"empty\">\n"
-        "    <property name=\"ShowOnLogout\" type=\"bool\" value=\"true\"/>\n"
-        "  </property>\n</channel>\n");
+static void write_boreal_theme_script(void) {
+    write_file("/mnt/usr/local/bin/boreal-apply-theme.sh",
+        "#!/bin/sh\n"
+        "for i in 1 2 3 4 5 6 7 8 9 10; do\n"
+        "    command -v xfconf-query >/dev/null 2>&1 && xfconf-query -c xfwm4 -p /general -l >/dev/null 2>&1 && break\n"
+        "    sleep 1\n"
+        "done\n\n"
+        "set_prop() {\n"
+        "    xfconf-query -c \"$1\" -p \"$2\" -n -t \"$3\" -s \"$4\" 2>/dev/null \\\n"
+        "        || xfconf-query -c \"$1\" -p \"$2\" -t \"$3\" -s \"$4\" 2>/dev/null\n"
+        "}\n\n"
+        "set_prop xsettings /Net/ThemeName string Materia\n"
+        "set_prop xsettings /Net/IconThemeName string Papirus\n"
+        "set_prop xsettings /Net/DoubleClickTime int 400\n"
+        "set_prop xsettings /Gtk/CursorThemeName string Adwaita\n"
+        "set_prop xsettings /Gtk/FontName string \"IBM Plex Sans 10\"\n"
+        "set_prop xsettings /Gtk/MonospaceFontName string \"IBM Plex Mono 10\"\n\n"
+        "set_prop xfwm4 /general/theme string Materia\n"
+        "set_prop xfwm4 /general/title_font string \"IBM Plex Sans Bold 10\"\n"
+        "set_prop xfwm4 /general/double_click_action string maximize\n"
+        "set_prop xfwm4 /general/click_to_focus bool true\n\n"
+        "set_prop xfce4-session /general/SaveOnExit bool false\n"
+        "set_prop xfce4-session /general/LockScreen string xflock4\n"
+        "set_prop xfce4-session /shutdown/ShowOnLogout bool true\n\n"
+        "MARKER=\"$HOME/.config/.boreal-panel-setup-done\"\n"
+        "if [ ! -f \"$MARKER\" ]; then\n"
+        "    command -v xfce4-panel >/dev/null 2>&1 && xfce4-panel -p >/dev/null 2>&1\n"
+        "    xfce4-panel --add=whiskermenu 2>/dev/null\n"
+        "    xfce4-panel --add=pulseaudio 2>/dev/null\n"
+        "    xfce4-panel --add=power-manager-plugin 2>/dev/null\n"
+        "    mkdir -p \"$(dirname \"$MARKER\")\"\n"
+        "    touch \"$MARKER\"\n"
+        "fi\n\n"
+        "IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)\n"
+        "for id in $IDS; do\n"
+        "    val=$(xfconf-query -c xfce4-panel -p \"/plugins/$id\" 2>/dev/null)\n"
+        "    if [ \"$val\" = \"applicationsmenu\" ] || [ \"$val\" = \"whiskermenu\" ]; then\n"
+        "        set_prop xfce4-panel \"/plugins/${id}/button-icon\" string /usr/share/pixmaps/boreal-logo-ghost.png\n"
+        "    fi\n"
+        "done\n");
+    run_cmd("chmod 755 /mnt/usr/local/bin/boreal-apply-theme.sh");
+    write_file("/mnt/etc/skel/.config/autostart/boreal-apply-theme.desktop",
+        "[Desktop Entry]\nType=Application\nName=BorealOS Theme\n"
+        "Exec=/usr/local/bin/boreal-apply-theme.sh\nHidden=false\nNoDisplay=true\n"
+        "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
 }
+
 
 static gboolean setup_de(void) {
     STEP("Configuring desktop environment");
@@ -1126,7 +1100,7 @@ static gboolean setup_de(void) {
 
         STEP("Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)");
         bind_mounts();
-        run_cmd("chroot /mnt apt-get install -y --no-install-recommends fonts-ibm-plex papirus-icon-theme materia-gtk-theme");
+        run_cmd("chroot /mnt apt-get install -y --no-install-recommends fonts-ibm-plex papirus-icon-theme materia-gtk-theme adwaita-icon-theme xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin xfce4-power-manager pavucontrol");
         unbind_mounts();
         run_cmd("mkdir -p /mnt/etc/lightdm");
         if (run_cmd("ls /opt/borealOS/lightdm/* >/dev/null 2>&1") == 0) {
@@ -1134,64 +1108,37 @@ static gboolean setup_de(void) {
         } else {
             write_file("/mnt/etc/lightdm/lightdm-gtk-greeter.conf",
                 "[greeter]\nbackground=/usr/share/boreal-artwork/wallpaper-default.png\n"
-                "theme-name=Materia-dark\nicon-theme-name=Papirus-Dark\nfont-name=IBM Plex Sans 10\n");
+                "theme-name=Materia\nicon-theme-name=Papirus\nfont-name=IBM Plex Sans 10\n");
         }
         run_cmd("mkdir -p /mnt/etc/lightdm/lightdm.conf.d");
         write_file("/mnt/etc/lightdm/lightdm.conf.d/60-boreal.conf",
             "[LightDM]\nlogind-check-graphical=true\n\n[Seat:*]\ngreeter-session=lightdm-gtk-greeter\n");
 
-        STEP("Writing complete XFCE config (desktop, window manager, theme, session)");
-        
-        write_xfce_config_to("/mnt/etc/xdg", TRUE);
-        
-        write_xfce_config_to("/mnt/etc/skel", FALSE);
-        
-        write_xfce_config_to("/mnt/root", FALSE);
+        STEP("Fixing default wallpaper");
+        run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
+                "/mnt/usr/share/images/desktop-base -type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.svg' \\) "
+                "-exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
+
+        STEP("Writing theme config (native xfconf/panel API, applied at each login)");
+        run_cmd("mkdir -p /mnt/etc/skel/.config/autostart");
+        write_boreal_theme_script();
+
+        run_cmd("mkdir -p /mnt/root/.config/autostart");
+        run_cmd("cp /mnt/etc/skel/.config/autostart/boreal-apply-theme.desktop /mnt/root/.config/autostart/");
         run_cmd("chroot /mnt chown -R root:root /root/.config 2>/dev/null || true");
-        
         for (GList *l = app.extra_users; l; l = l->next) {
             ExtraUser *u = l->data;
-            char home[300], chowncmd[400];
+            char home[300], mkcmd[350], cp1[400], chowncmd[400];
             snprintf(home, sizeof(home), "/mnt/home/%s", u->name);
-            if (g_file_test(home, G_FILE_TEST_IS_DIR)) {
-                write_xfce_config_to(home, FALSE);
-                snprintf(chowncmd, sizeof(chowncmd), "chroot /mnt chown -R %s:%s /home/%s/.config 2>/dev/null || true",
-                         u->name, u->name, u->name);
-                run_cmd(chowncmd);
-            }
+            if (!g_file_test(home, G_FILE_TEST_IS_DIR)) continue;
+            snprintf(mkcmd, sizeof(mkcmd), "mkdir -p '%s/.config/autostart'", home);
+            run_cmd(mkcmd);
+            snprintf(cp1, sizeof(cp1), "cp /mnt/etc/skel/.config/autostart/boreal-apply-theme.desktop '%s/.config/autostart/'", home);
+            run_cmd(cp1);
+            snprintf(chowncmd, sizeof(chowncmd), "chroot /mnt chown -R %s:%s /home/%s/.config 2>/dev/null || true",
+                     u->name, u->name, u->name);
+            run_cmd(chowncmd);
         }
-        run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
-                "-type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \\) -exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
-        run_cmd("mkdir -p /mnt/etc/skel/.config/autostart");
-        write_file("/mnt/usr/local/bin/boreal-set-wallpaper.sh",
-            "#!/bin/sh\n"
-            "# xfdesktop keys its wallpaper by the *actual* connected monitor name,\n"
-            "# which varies by hardware/driver - a static guess-list can miss it.\n"
-            "# Ask xrandr what's really connected and set it directly, every time.\n"
-            "WALLPAPER=/usr/share/boreal-artwork/wallpaper-default.png\n"
-            "[ -f \"$WALLPAPER\" ] || exit 0\n"
-            "sleep 3\n"
-            "MONS=$(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')\n"
-            "for mon in $MONS monitor0; do\n"
-            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/last-image \\\n"
-            "        -n -t string -s \"$WALLPAPER\" 2>/dev/null\n"
-            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/image-style \\\n"
-            "        -n -t int -s 5 2>/dev/null\n"
-            "    xfconf-query -c xfce4-desktop -p /backdrop/screen0/$mon/workspace0/color-style \\\n"
-            "        -n -t int -s 0 2>/dev/null\n"
-            "done\n"
-            "sleep 1\n"
-            "xfdesktop --reload 2>/dev/null || xfdesktop &\n");
-        run_cmd("chmod 755 /mnt/usr/local/bin/boreal-set-wallpaper.sh");
-        write_file("/mnt/etc/skel/.config/autostart/boreal-set-wallpaper.desktop",
-            "[Desktop Entry]\nType=Application\nName=BorealOS Wallpaper\n"
-            "Exec=/usr/local/bin/boreal-set-wallpaper.sh\nHidden=false\nNoDisplay=true\n"
-            "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
-        run_cmd("cp /usr/local/bin/boreal-panel-icon.sh /mnt/usr/local/bin/boreal-panel-icon.sh");
-        write_file("/mnt/etc/skel/.config/autostart/boreal-panel-icon.desktop",
-            "[Desktop Entry]\nType=Application\nName=BorealOS Panel Icon\n"
-            "Exec=/usr/local/bin/boreal-panel-icon.sh\nHidden=false\nNoDisplay=true\n"
-            "X-GNOME-Autostart-enabled=true\nStartupNotify=false\n");
         run_cmd("cp /mnt/usr/share/boreal-artwork/logo.png /mnt/etc/skel/.face 2>/dev/null || true");
         run_cmd("cp /mnt/usr/share/boreal-artwork/logo.png /mnt/root/.face 2>/dev/null || true");
         run_cmd("find /mnt/home -maxdepth 1 -mindepth 1 -type d -exec cp /mnt/usr/share/boreal-artwork/logo.png {}/.face \\; 2>/dev/null || true");
