@@ -856,6 +856,9 @@ static gboolean configure_system(void) {
         "deb http://deb.debian.org/debian-security trixie-security main contrib non-free non-free-firmware\n"
         "deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\n");
     run_cmd("rm -f /mnt/etc/apt/sources.list.d/*.list");
+    run_cmd("mkdir -p /mnt/etc/apt/apt.conf.d");
+    write_file("/mnt/etc/apt/apt.conf.d/70boreal-noninteractive",
+        "DPkg::Options {\n   \"--force-confdef\";\n   \"--force-confold\";\n}\n");
 
     /* The live ISO strips /var/lib/apt/lists to save space, and that empty
        state gets rsynced onto the target - so apt has no package index at
@@ -1041,28 +1044,25 @@ static void write_boreal_theme_script(void) {
         "    xfconf-query -c \"$1\" -p \"$2\" -n -t \"$3\" -s \"$4\" 2>/dev/null \\\n"
         "        || xfconf-query -c \"$1\" -p \"$2\" -t \"$3\" -s \"$4\" 2>/dev/null\n"
         "}\n\n"
-        "set_prop xsettings /Net/ThemeName string Materia\n"
+        "set_prop xsettings /Net/ThemeName string Materia-light\n"
         "set_prop xsettings /Net/IconThemeName string Papirus\n"
         "set_prop xsettings /Net/DoubleClickTime int 400\n"
         "set_prop xsettings /Gtk/CursorThemeName string Adwaita\n"
         "set_prop xsettings /Gtk/FontName string \"IBM Plex Sans 10\"\n"
         "set_prop xsettings /Gtk/MonospaceFontName string \"IBM Plex Mono 10\"\n\n"
-        "set_prop xfwm4 /general/theme string Materia\n"
+        "set_prop xfwm4 /general/theme string Materia-light\n"
         "set_prop xfwm4 /general/title_font string \"IBM Plex Sans Bold 10\"\n"
         "set_prop xfwm4 /general/double_click_action string maximize\n"
         "set_prop xfwm4 /general/click_to_focus bool true\n\n"
         "set_prop xfce4-session /general/SaveOnExit bool false\n"
         "set_prop xfce4-session /general/LockScreen string xflock4\n"
         "set_prop xfce4-session /shutdown/ShowOnLogout bool true\n\n"
-        "MARKER=\"$HOME/.config/.boreal-panel-setup-done\"\n"
-        "if [ ! -f \"$MARKER\" ]; then\n"
-        "    command -v xfce4-panel >/dev/null 2>&1 && xfce4-panel -p >/dev/null 2>&1\n"
-        "    xfce4-panel --add=whiskermenu 2>/dev/null\n"
-        "    xfce4-panel --add=pulseaudio 2>/dev/null\n"
-        "    xfce4-panel --add=power-manager-plugin 2>/dev/null\n"
-        "    mkdir -p \"$(dirname \"$MARKER\")\"\n"
-        "    touch \"$MARKER\"\n"
-        "fi\n\n"
+        "EXISTING_TYPES=$(for id in $(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+'); do\n"
+        "    xfconf-query -c xfce4-panel -p \"/plugins/$id\" 2>/dev/null\n"
+        "done)\n"
+        "echo \"$EXISTING_TYPES\" | grep -qE '^(whiskermenu|applicationsmenu)$' || xfce4-panel --add=whiskermenu 2>/dev/null\n"
+        "echo \"$EXISTING_TYPES\" | grep -q '^pulseaudio$'                     || xfce4-panel --add=pulseaudio 2>/dev/null\n"
+        "echo \"$EXISTING_TYPES\" | grep -q '^power-manager-plugin$'           || xfce4-panel --add=power-manager-plugin 2>/dev/null\n\n"
         "IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)\n"
         "for id in $IDS; do\n"
         "    val=$(xfconf-query -c xfce4-panel -p \"/plugins/$id\" 2>/dev/null)\n"
@@ -1100,7 +1100,7 @@ static gboolean setup_de(void) {
 
         STEP("Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)");
         bind_mounts();
-        run_cmd("chroot /mnt apt-get install -y --no-install-recommends fonts-ibm-plex papirus-icon-theme materia-gtk-theme adwaita-icon-theme xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin xfce4-power-manager pavucontrol");
+        run_cmd("chroot /mnt apt-get install -y --no-install-recommends fonts-ibm-plex papirus-icon-theme materia-gtk-theme gtk2-engines-murrine adwaita-icon-theme xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin xfce4-power-manager xfce4-power-manager-plugins pavucontrol");
         unbind_mounts();
         run_cmd("mkdir -p /mnt/etc/lightdm");
         if (run_cmd("ls /opt/borealOS/lightdm/* >/dev/null 2>&1") == 0) {
@@ -1108,7 +1108,7 @@ static gboolean setup_de(void) {
         } else {
             write_file("/mnt/etc/lightdm/lightdm-gtk-greeter.conf",
                 "[greeter]\nbackground=/usr/share/boreal-artwork/wallpaper-default.png\n"
-                "theme-name=Materia\nicon-theme-name=Papirus\nfont-name=IBM Plex Sans 10\n");
+                "theme-name=Materia-light\nicon-theme-name=Papirus\nfont-name=IBM Plex Sans 10\n");
         }
         run_cmd("mkdir -p /mnt/etc/lightdm/lightdm.conf.d");
         write_file("/mnt/etc/lightdm/lightdm.conf.d/60-boreal.conf",
@@ -1116,7 +1116,7 @@ static gboolean setup_de(void) {
 
         STEP("Fixing default wallpaper");
         run_cmd("find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers /mnt/usr/share/xfce4/backdrops "
-                "/mnt/usr/share/images/desktop-base -type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.svg' \\) "
+                "/mnt/usr/share/images/desktop-base -type f \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \\) "
                 "-exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \\; 2>/dev/null || true");
 
         STEP("Writing theme config (native xfconf/panel API, applied at each login)");

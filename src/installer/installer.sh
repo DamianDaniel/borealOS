@@ -323,7 +323,9 @@ install_bundled_packages() {
     # Install the DM directly into the target via apt — no pre-cached debs needed.
     # lightdm is the default; sddm for KDE (set by $DM_PKGS).
     local dm_to_install="${DM_PKGS:-lightdm lightdm-gtk-greeter}"
-    chroot /mnt apt-get install -y $dm_to_install 2>/dev/null ||         warn "DM install failed — target may boot to TTY"
+    chroot /mnt env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+        $dm_to_install 2>/dev/null || warn "DM install failed - target may boot to TTY"
 
     # Install any other cached debs (bundled drivers, etc.)
     local deb_count
@@ -431,6 +433,14 @@ SOURCES
 
     chroot /mnt /bin/bash <<CHROOT || die "System configuration failed"
 set -e
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/apt/apt.conf.d
+cat > /etc/apt/apt.conf.d/70boreal-noninteractive <<'APTCONF'
+DPkg::Options {
+   "--force-confdef";
+   "--force-confold";
+}
+APTCONF
 echo "${HOSTNAME}" > /etc/hostname
 cat > /etc/hosts <<HOSTS
 127.0.0.1   localhost
@@ -649,10 +659,10 @@ SDDM
             ln -sf /etc/init.d/lightdm /mnt/etc/runlevels/default/lightdm 2>/dev/null || true
             ln -sf ../init.d/lightdm /mnt/etc/rc2.d/S03lightdm 2>/dev/null || true
 
-            step "Installing XFCE theming (fonts-ibm-plex, papirus-icon-theme, materia-gtk-theme)..."
-            chroot /mnt apt-get install -y --no-install-recommends \
-                fonts-ibm-plex papirus-icon-theme materia-gtk-theme adwaita-icon-theme \
-                xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin xfce4-power-manager pavucontrol \
+            step "Installing XFCE theming and panel plugins..."
+            chroot /mnt env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                fonts-ibm-plex papirus-icon-theme materia-gtk-theme gtk2-engines-murrine adwaita-icon-theme \
+                xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin xfce4-power-manager xfce4-power-manager-plugins pavucontrol \
                 2>/dev/null || warn "Theming package install failed - falling back to whatever GTK theme is already installed"
 
             mkdir -p /mnt/etc/lightdm
@@ -663,7 +673,7 @@ SDDM
                 cat > /mnt/etc/lightdm/lightdm-gtk-greeter.conf <<LDM
 [greeter]
 background=/usr/share/boreal-artwork/wallpaper-default.png
-theme-name=Materia
+theme-name=Materia-light
 icon-theme-name=Papirus
 font-name=IBM Plex Sans 10
 LDM
@@ -680,7 +690,7 @@ LIGHTDMCONF
             step "Fixing default wallpaper..."
             find /mnt/usr/share/backgrounds /mnt/usr/share/wallpapers \
                  /mnt/usr/share/xfce4/backdrops /mnt/usr/share/images/desktop-base \
-                 -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.svg' \) \
+                 -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \) \
                  -exec cp /mnt/usr/share/boreal-artwork/wallpaper-default.png {} \; 2>/dev/null || true
 
             step "Applying theme (native xfconf/panel API, applied at each login)..."
@@ -696,14 +706,14 @@ set_prop() {
         || xfconf-query -c "$1" -p "$2" -t "$3" -s "$4" 2>/dev/null
 }
 
-set_prop xsettings /Net/ThemeName string Materia
+set_prop xsettings /Net/ThemeName string Materia-light
 set_prop xsettings /Net/IconThemeName string Papirus
 set_prop xsettings /Net/DoubleClickTime int 400
 set_prop xsettings /Gtk/CursorThemeName string Adwaita
 set_prop xsettings /Gtk/FontName string "IBM Plex Sans 10"
 set_prop xsettings /Gtk/MonospaceFontName string "IBM Plex Mono 10"
 
-set_prop xfwm4 /general/theme string Materia
+set_prop xfwm4 /general/theme string Materia-light
 set_prop xfwm4 /general/title_font string "IBM Plex Sans Bold 10"
 set_prop xfwm4 /general/double_click_action string maximize
 set_prop xfwm4 /general/click_to_focus bool true
@@ -712,15 +722,12 @@ set_prop xfce4-session /general/SaveOnExit bool false
 set_prop xfce4-session /general/LockScreen string xflock4
 set_prop xfce4-session /shutdown/ShowOnLogout bool true
 
-MARKER="$HOME/.config/.boreal-panel-setup-done"
-if [ ! -f "$MARKER" ]; then
-    command -v xfce4-panel >/dev/null 2>&1 && xfce4-panel -p >/dev/null 2>&1
-    xfce4-panel --add=whiskermenu 2>/dev/null
-    xfce4-panel --add=pulseaudio 2>/dev/null
-    xfce4-panel --add=power-manager-plugin 2>/dev/null
-    mkdir -p "$(dirname "$MARKER")"
-    touch "$MARKER"
-fi
+EXISTING_TYPES=$(for id in $(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+'); do
+    xfconf-query -c xfce4-panel -p "/plugins/$id" 2>/dev/null
+done)
+echo "$EXISTING_TYPES" | grep -qE '^(whiskermenu|applicationsmenu)$' || xfce4-panel --add=whiskermenu 2>/dev/null
+echo "$EXISTING_TYPES" | grep -q '^pulseaudio$'                     || xfce4-panel --add=pulseaudio 2>/dev/null
+echo "$EXISTING_TYPES" | grep -q '^power-manager-plugin$'           || xfce4-panel --add=power-manager-plugin 2>/dev/null
 
 IDS=$(xfconf-query -c xfce4-panel -p /plugins -l 2>/dev/null | grep -oE 'plugin-[0-9]+' | sort -u)
 for id in $IDS; do
