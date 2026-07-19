@@ -18,7 +18,7 @@ Please avoid opening PRs directly into `main`.
 ### 1. Fork and clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/borealOS.git
+git clone https://github.com/DamianDaniel/borealOS.git
 cd borealOS
 ```
 
