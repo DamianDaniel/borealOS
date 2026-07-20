@@ -1,0 +1,3 @@
+[submodule "external/laked"]
+	path = external/laked
+	url = https://gitlab.com/Se1d228/laked
