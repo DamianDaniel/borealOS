@@ -720,7 +720,7 @@ static void render_info_panel(double t) {
         {"Shell",    g_shell},
         {"Desktop",  g_desktop},
         {"Packages", g_pkgs},
-        {"Repo",     "github.com/DamianDaniel/borealOS"},
+        {"Repo",     "github.com/boreal-project/borealOS"},
         {NULL, NULL}
     };
     int nsw = 0;

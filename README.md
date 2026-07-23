@@ -33,7 +33,7 @@ BorealOS plans to offer a choice of four graphical interfaces during setup:
 - KDE Plasma
 - XFCE
 - Niri
-- <a href="https://github.com/m4rn-progs/TaigaWM">TaigaWM</a>
+- <a href="https://github.com/boreal-project/TaigaWM">TaigaWM</a>
 
 <br>
 
