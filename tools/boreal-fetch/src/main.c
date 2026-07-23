@@ -106,10 +106,10 @@ static void detect_shell(void) {
         if (!read_first_line(path, comm, sizeof(comm))) break;
 
         static const char *shells[] = {
-            "bash","zsh","fish","sh","dash","ksh","tcsh","csh","nu","elvish", NULL
+            "bash","zsh","fish","sh","dash","ksh","tcsh","csh","nu","elvish","ion", NULL
         };
         for (int j = 0; shells[j]; j++)
-            if (!strcmp(comm, shells[j])) { strncpy(g_shell, comm, sizeof(g_shell) - 1); return; }
+            if (strstr(comm, shells[j])) { strncpy(g_shell, comm, sizeof(g_shell) - 1); return; }
 
         char stat[256];
         snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);

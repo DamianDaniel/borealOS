@@ -33,3 +33,11 @@ __pycache__/
 
 # ISO Script Artifacts
 src/installer/iso-work
+
+# boreal-fetch
+tools/boreal-fetch/CMakeFiles/
+tools/boreal-fetch/boreal-fetch
+tools/boreal-fetch/cmake_install.cmake
+tools/boreal-fetch/install_manifest.txt
+tools/boreal-fetch/CMakeCache.txt
+tools/boreal-fetch/Makefile
