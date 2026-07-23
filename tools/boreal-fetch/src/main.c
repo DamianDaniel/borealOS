@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <pthread.h>
 #include <dirent.h>
+#include <sys/utsname.h>
 
 /* ── ANSI basics ─────────────────────────────────────────────────────────── */
 #define RESET "\033[0m"
@@ -88,6 +89,8 @@ static char g_cpu    [80] = "Unknown";
 static char g_gpu    [80] = "Unknown";
 static char g_kernel [32] = "Unknown";
 static char g_pkgs  [512] = "";
+static char g_arch[64] = "Unknown";
+static char g_os[128] = "Unknown";
 
 static void detect_shell(void) {
     const char *s = getenv("SHELL");
@@ -132,32 +135,19 @@ static void detect_desktop(void) {
             return;
         }
     }
-    char buf[4096];
-    run_cmd("ps -e -o comm= 2>/dev/null", buf, sizeof(buf));
-    static const struct { const char *proc, *name; } wm[] = {
-        {"plasmashell","KDE"}, {"xfce4-session","XFCE"}, {"niri","Niri"},
-        {"taigawm","TaigaWM"}, {"gnome-shell","GNOME"},  {"sway","Sway"},
-        {"i3","i3"},           {"openbox","Openbox"},    {NULL,NULL}
-    };
-    for (int i = 0; wm[i].proc; i++)
-        if (strstr(buf, wm[i].proc)) { strncpy(g_desktop, wm[i].name, sizeof(g_desktop) - 1); return; }
 }
 
 static void detect_init(void) {
     char comm[32];
     if (read_first_line("/proc/1/comm", comm, sizeof(comm))) {
-        if (strstr(comm, "systemd")) { strcpy(g_init, "systemd"); return; }
-        if (strstr(comm, "openrc"))  { strcpy(g_init, "OpenRC");  return; }
-        if (strstr(comm, "runit"))   { strcpy(g_init, "runit");   return; }
-        if (strstr(comm, "s6"))      { strcpy(g_init, "s6");      return; }
-        if (strstr(comm, "dinit"))   { strcpy(g_init, "dinit");   return; }
+        if (strstr(comm, "systemd")) { strcpy(g_init, "SystemD"); return; }
+        else if (strstr(comm, "openrc"))  { strcpy(g_init, "OpenRC");  return; }
+        else if (strstr(comm, "runit"))   { strcpy(g_init, "runit");   return; }
+        else if (strstr(comm, "s6"))      { strcpy(g_init, "s6");      return; }
+        else if (strstr(comm, "dinit"))   { strcpy(g_init, "dinit");   return; }
+        else if (strstr(comm, "laked") || strstr(comm, "laked-run"))   { strcpy(g_init, "LakeD");   return; }
+        else { strcpy(g_init, comm);   return; }
     }
-    if (!access("/run/systemd/private", F_OK)) { strcpy(g_init, "systemd"); return; }
-    if (!access("/run/openrc", F_OK))          { strcpy(g_init, "OpenRC");  return; }
-    if (!access("/run/runit", F_OK))           { strcpy(g_init, "runit");   return; }
-    if (!access("/etc/dinit.d", F_OK))         { strcpy(g_init, "dinit");   return; }
-    if (!system("systemctl is-system-running >/dev/null 2>&1")) { strcpy(g_init, "systemd"); return; }
-    if (!system("rc-status >/dev/null 2>&1"))                   { strcpy(g_init, "OpenRC");  return; }
 }
 
 static void detect_cpu(void) {
@@ -243,6 +233,7 @@ static void detect_packages(void) {
         {"snap list 2>/dev/null | tail -n +2 | wc -l", "snap"},
         {"flatpak list 2>/dev/null | wc -l",           "flatpak"},
         {"nix-env -q 2>/dev/null | wc -l",             "nix"},
+        {"apk list --installed | wc -l",               "apk"},
         {NULL, NULL}
     };
     char parts[512] = "";
@@ -260,13 +251,49 @@ static void detect_packages(void) {
     strncpy(g_pkgs, np ? parts : "Unknown", sizeof(g_pkgs) - 1);
 }
 
+static void detect_arch(void) {
+    struct utsname buffer;
+    if (uname(&buffer) == 0) {
+        strncpy(g_arch, buffer.machine, sizeof(g_arch) - 1);
+    } else {
+        strncpy(g_arch, "unknown", sizeof(g_arch) - 1);
+    }
+}
+
+static void detect_os(void) {
+    char line[256];
+    FILE *f = fopen("/etc/os-release", "r");
+    if (!f) {
+        strncpy(g_os, "Linux", sizeof(g_os) - 1);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "PRETTY_NAME=", 12) == 0 || strncmp(line, "NAME=", 5) == 0) {
+            char *p = strchr(line, '=');
+            if (p) {
+                p++;
+                size_t len = strlen(p);
+                if (len > 0 && p[len - 1] == '\n') p[--len] = '\0';
+                if (len > 0 && p[len - 1] == '\"') p[--len] = '\0';
+                if (*p == '\"') p++;
+
+                strncpy(g_os, p, sizeof(g_os) - 1);
+                fclose(f);
+                return;
+            }
+        }
+    }
+    fclose(f);
+    strncpy(g_os, "Generic Linux", sizeof(g_os) - 1);
+}
 /* Run all one-shot detectors in parallel, bounded by DETECT_TIMEOUT_S so a
  * hung external command (e.g. a stalled package manager) can't stall boot
  * forever. */
 static void *thr_fn(void *fn) { ((void (*)(void))fn)(); return NULL; }
 static void gather_static(void) {
     void (*fns[])(void) = {
-        detect_shell, detect_desktop, detect_init,
+        detect_os, detect_shell, detect_arch, detect_desktop, detect_init,
         detect_cpu, detect_gpu, detect_kernel, detect_packages, NULL
     };
     pthread_t t[16];
@@ -687,9 +714,9 @@ static void render_info_panel(double t) {
 
     /* software (left) rows */
     struct { const char *label, *value; } sw[] = {
-        {"Base",     "Debian stable"},
+        {"Base",     g_os},
         {"Init",     g_init},
-        {"Arch",     "x86_64"},
+        {"Arch",     g_arch},
         {"Shell",    g_shell},
         {"Desktop",  g_desktop},
         {"Packages", g_pkgs},
