@@ -6,7 +6,7 @@
 	"logo": {
 		"source": "/usr/share/boreal-artwork/fastfetch-picture-logo.png",
 		"type": "kitty-direct",
-		"width": 35,
+		"width": 40,
 		"height": 17
 	},
     "modules": [
